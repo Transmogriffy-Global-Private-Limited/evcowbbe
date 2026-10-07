@@ -155,6 +155,84 @@ func TestMigrationLockSerializesConcurrentAccessWithDisposablePostgreSQL(t *test
 	}
 }
 
+func TestRollbackCompatibilityWithDisposablePostgreSQL(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL not set; disposable PostgreSQL migration integration test skipped")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open disposable PostgreSQL: %v", err)
+	}
+	defer pool.Close()
+
+	for _, test := range []struct {
+		name          string
+		futureFloor   int64
+		expectedReady bool
+	}{
+		{name: "newer additive migration permits rollback", futureFloor: 1, expectedReady: true},
+		{name: "newer incompatible migration blocks rollback", futureFloor: 2, expectedReady: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ledgerTable := "evcowbbe_test_rollback_compat_migrations"
+			cleanupManagerTables(t, ctx, pool, ledgerTable)
+			_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS public.evcowbbe_rollback_compat_probe`)
+			t.Cleanup(func() {
+				cleanupManagerTables(t, context.Background(), pool, ledgerTable)
+				_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS public.evcowbbe_rollback_compat_probe`)
+			})
+
+			migrationOne := Migration{
+				Version:                    1,
+				Name:                       "create_probe",
+				SQL:                        `CREATE TABLE public.evcowbbe_rollback_compat_probe (id INTEGER PRIMARY KEY);`,
+				Checksum:                   "1111111111111111111111111111111111111111111111111111111111111111",
+				MinCompatibleBinaryVersion: 0,
+			}
+			olderBinary := &Manager{
+				pool:        pool,
+				migrations:  []Migration{migrationOne},
+				ledgerTable: ledgerTable,
+				lockID:      advisoryLockID + 4,
+			}
+			newerBinary := &Manager{
+				pool: pool,
+				migrations: []Migration{
+					migrationOne,
+					{
+						Version:                    2,
+						Name:                       "add_note",
+						SQL:                        `ALTER TABLE public.evcowbbe_rollback_compat_probe ADD COLUMN note TEXT;`,
+						Checksum:                   "2222222222222222222222222222222222222222222222222222222222222222",
+						MinCompatibleBinaryVersion: test.futureFloor,
+					},
+				},
+				ledgerTable: ledgerTable,
+				lockID:      advisoryLockID + 4,
+			}
+
+			if err := olderBinary.Apply(ctx, ""); err != nil {
+				t.Fatalf("apply older migration view: %v", err)
+			}
+			if err := newerBinary.Apply(ctx, ""); err != nil {
+				t.Fatalf("apply newer migration view: %v", err)
+			}
+
+			err := olderBinary.CheckReady(ctx)
+			if test.expectedReady && err != nil {
+				t.Fatalf("expected older binary readiness after compatible future migration: %v", err)
+			}
+			if !test.expectedReady && !errors.Is(err, ErrFutureMigrationIncompatible) {
+				t.Fatalf("expected incompatible future migration to block readiness, got %v", err)
+			}
+		})
+	}
+}
+
 func cleanupManagerTables(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ledgerTable string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, (&Manager{ledgerTable: ledgerTable}).quotedLedgerTable())); err != nil {

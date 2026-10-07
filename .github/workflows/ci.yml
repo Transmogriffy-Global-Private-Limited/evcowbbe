@@ -24,10 +24,18 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Build server
-        run: go build ./cmd/server
+        run: go build -o "$RUNNER_TEMP/evcowbbe-server-check" ./cmd/server
       - name: Build migrator
-        run: go build ./cmd/migrate
+        run: go build -o "$RUNNER_TEMP/evcowbbe-migrate-check" ./cmd/migrate
       - name: Verify embedded migration files
         run: go run ./cmd/migrate verify --files-only
+      - name: Build canonical release
+        run: |
+          release_output="$RUNNER_TEMP/evcowbbe"
+          release_report="$(bash scripts/build-release.sh --output "$release_output")"
+          printf '%s\n' "$release_report"
+          test -s "$release_output"
+          test -x "$release_output"
+          test "$(printf '%s\n' "$release_report" | sed -n 's/^release_git_sha=//p')" = "$GITHUB_SHA"
       - name: Check whitespace errors
         run: git diff --check

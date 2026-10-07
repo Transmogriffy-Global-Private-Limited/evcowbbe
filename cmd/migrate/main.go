@@ -80,9 +80,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "migration status failed: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "ledger_present=%t applied=%d pending=%d\n", status.LedgerPresent, len(status.Applied), len(status.Pending))
+		fmt.Fprintf(stdout, "ledger_present=%t known_applied=%d pending=%d future_compatible=%d future_incompatible=%d\n", status.LedgerPresent, len(status.KnownApplied), len(status.Pending), len(status.FutureCompatible), len(status.FutureIncompatible))
 		for _, migration := range status.Pending {
 			fmt.Fprintf(stdout, "pending=%d_%s\n", migration.Version, migration.Name)
+		}
+		for _, migration := range status.FutureCompatible {
+			fmt.Fprintf(stdout, "future_compatible=%d_%s\n", migration.Version, migration.Name)
+		}
+		for _, migration := range status.FutureIncompatible {
+			fmt.Fprintf(stdout, "future_incompatible=%d_%s\n", migration.Version, migration.Name)
 		}
 		return 0
 	}

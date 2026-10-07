@@ -58,14 +58,22 @@ All three routes are unauthenticated loopback application endpoints intended for
 | Route | Success | Meaning |
 | --- | --- | --- |
 | `GET /health/live` | `200 {"status":"live"}` | Lightweight process liveness. It does not query PostgreSQL and remains live during a temporary database outage. |
-| `GET /health/ready` | `200 {"status":"ready"}` | PostgreSQL is reachable and the immutable migration set embedded in this binary matches an existing ledger with no pending migration. |
+| `GET /health/ready` | `200 {"status":"ready"}` | PostgreSQL is reachable and the ledger is valid and compatible with this binary's schema version, with no known pending migration. |
 | `GET /version` | `200` JSON with `version`, `git_sha`, and `build_time` | Running binary identity. Response is `Cache-Control: no-store` and contains no secret configuration. |
 
-Readiness returns `503 {"status":"not_ready"}` for database failure, a missing ledger, ledger/file checksum disagreement, an applied migration unknown to this binary, a pending migration, or a migration operation holding the PostgreSQL advisory lock. The HTTP response intentionally omits database errors, DSNs, SQL, and stack traces; the process logs safe diagnostic context. Readiness does not create the migration table or apply changes.
+Readiness returns `503 {"status":"not_ready"}` for database failure, a missing ledger, known migration identity/checksum/compatibility disagreement, history conflict, an incompatible future migration, a pending known migration, or a migration operation holding the PostgreSQL advisory lock. The HTTP response intentionally omits database errors, DSNs, SQL, and stack traces. Health probes do not log every readiness error, to avoid probe-driven log spam. Operators should use `migrate status` and `migrate verify` for migration diagnostics; readiness does not create the migration table or apply changes.
 
 ## Migration contract
 
-Migration source is in `db/migrations/`. There are deliberately zero domain/application migrations today. Future migration files must be immutable, forward-only SQL files named `<positive-integer>_<lowercase_name>.sql`, for example `000001_create_example.sql`. The running binary embeds these files, sorts them by numeric version, and computes SHA-256 checksums from their exact bytes.
+Migration source is in `db/migrations/`. There are deliberately zero domain/application migrations today. A binary's schema version is `0` when it embeds no application migrations, otherwise it is the highest embedded migration version. Future migration files must be immutable, forward-only SQL files named `<positive-integer>_<lowercase_name>.sql`, for example `000001_create_example.sql`.
+
+Every future migration must declare exactly one compatibility floor on its own line:
+
+```sql
+-- evcowbbe:min-compatible-binary-version=0
+```
+
+The value means the oldest binary schema version allowed to operate after that migration. It must be an integer satisfying `0 <= floor <= migration version`; missing, duplicate, malformed, negative, or out-of-range directives reject the migration file. The directive is part of the exact SQL bytes and therefore part of the SHA-256 checksum.
 
 The `public.evcowbbe_schema_migrations` ledger is initialized only by:
 
@@ -75,7 +83,11 @@ go run ./cmd/migrate up
 
 In a deployed release, run the release's migrator binary with the same runtime environment instead. `up` obtains a PostgreSQL session advisory lock, creates the ledger idempotently, verifies every already-applied migration against the embedded filename metadata and checksum, then applies each pending migration and ledger record in one transaction. A failed migration rolls back its SQL and does not gain a ledger entry. Concurrent `up` calls serialize on the same database-native lock.
 
-The ledger records migration version, name, checksum, `applied_at`, and `source_git_sha`. A valid embedded SHA is stored when available. Honest local development builds with no real embedded SHA store `NULL`; they do not pretend that `dev` is a Git revision. Staging and production are rejected before migration work unless the release identity invariant holds.
+The ledger records migration version, name, checksum, `applied_at`, `source_git_sha`, and `min_compatible_binary_version`. `migrate up` evolves the foundation ledger by adding the compatibility column if absent; it never deletes or recreates ledger history. Existing historical rows without this metadata fail verification rather than receiving an invented compatibility classification. A valid embedded SHA is stored when available. Honest local development builds with no real embedded SHA store `NULL`; they do not pretend that `dev` is a Git revision. Staging and production are rejected before migration work unless the release identity invariant holds.
+
+For a migration the current binary knows, the ledger name, checksum, and compatibility floor must all exactly match the embedded migration. A known but unapplied migration is pending and blocks readiness. For an applied migration newer than the current binary's schema version, an older binary cannot verify that future migration's SQL or checksum because it does not embed that source. It can only trust the durable, range-validated compatibility floor: it remains compatible if the floor is less than or equal to its own schema version, and becomes unready if the floor requires a newer binary. An unknown applied migration at or below the binary's schema version is always a history conflict and fails.
+
+This permits safe binary rollback after an explicitly backward-compatible forward migration without automatic database DOWN migration. A breaking migration records a floor above an older binary's schema version and deliberately blocks that rollback candidate from becoming ready. Database rollback remains a separate, deliberate recovery decision.
 
 Available commands are:
 
@@ -86,7 +98,7 @@ go run ./cmd/migrate verify
 go run ./cmd/migrate verify --files-only
 ```
 
-`status` reports only ledger presence and applied/pending counts/names. `verify` checks the existing durable ledger without applying or creating anything. `verify --files-only` validates embedded migration-file metadata without any database connection and is the CI-safe static migration check.
+`status` reports ledger presence plus known applied, known pending, future compatible, and future incompatible migrations without SQL or DSN output. `verify` checks the existing durable ledger without applying or creating anything and succeeds only when the current binary has no known pending migration and every applied migration is valid and compatible under the rules above. `verify --files-only` validates embedded migration-file names, checksums, and required compatibility metadata without any database connection and is the CI-safe static migration check.
 
 Deployment rollback must never blindly run database DOWN migrations. Binary rollback and database rollback are separate decisions. For an incompatible or destructive schema change, preserve database truth and use a deliberate forward fix or a separately authorized recovery procedure after impact analysis.
 
@@ -96,4 +108,4 @@ The future VPS framework should build a clean exact SHA, configure the process w
 
 The server handles `SIGINT` and `SIGTERM` by stopping new HTTP work and calling graceful shutdown for the configured timeout. Database pools close when the process exits.
 
-Source CI is defined in `.github/workflows/ci.yml`. It checks formatting without changing source, `go mod verify`, tests, vetting, both command builds, static migration validation, and whitespace errors. PostgreSQL integration tests remain gated solely by `TEST_DATABASE_URL`; they never fall back to `DATABASE_URL`. Source CI currently supplies no disposable PostgreSQL service, so database integration execution is an explicit separate verification boundary.
+Source CI is defined in `.github/workflows/ci.yml`. It checks formatting without changing source, `go mod verify`, tests, vetting, both command builds into runner-temporary paths, static migration validation, the canonical `scripts/build-release.sh` interface, release-binary existence/executability, and that the release builder reports the workflow's exact `GITHUB_SHA`. It does not deploy or publish an artifact. PostgreSQL integration tests remain gated solely by `TEST_DATABASE_URL`; they never fall back to `DATABASE_URL`. Source CI currently supplies no disposable PostgreSQL service, so database integration execution is an explicit separate verification boundary.

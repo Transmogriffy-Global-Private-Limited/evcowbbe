@@ -25,32 +25,45 @@ const (
 )
 
 var (
-	ErrLedgerMissing    = errors.New("migration ledger is missing")
-	ErrChecksumMismatch = errors.New("migration checksum mismatch")
-	ErrMigrationPending = errors.New("migration is pending")
-	ErrLockBusy         = errors.New("migration lock is busy")
-	fileNameRegexp      = regexp.MustCompile(`^([0-9]+)_([a-z0-9][a-z0-9_]*)\.sql$`)
+	ErrLedgerMissing                 = errors.New("migration ledger is missing")
+	ErrChecksumMismatch              = errors.New("migration checksum mismatch")
+	ErrCompatibilityMetadataMismatch = errors.New("migration compatibility metadata mismatch")
+	ErrMigrationHistoryConflict      = errors.New("migration history conflicts with this binary")
+	ErrFutureMigrationIncompatible   = errors.New("future migration is incompatible with this binary")
+	ErrMigrationPending              = errors.New("migration is pending")
+	ErrLockBusy                      = errors.New("migration lock is busy")
+	fileNameRegexp                   = regexp.MustCompile(`^([0-9]+)_([a-z0-9][a-z0-9_]*)\.sql$`)
+	compatibilityDirectiveRegexp     = regexp.MustCompile(`(?m)^--[ \t]*evcowbbe:min-compatible-binary-version=([0-9]+)[ \t]*$`)
 )
 
 type Migration struct {
-	Version  int64
-	Name     string
-	SQL      string
-	Checksum string
+	Version                    int64
+	Name                       string
+	SQL                        string
+	Checksum                   string
+	MinCompatibleBinaryVersion int64
 }
 
 type AppliedMigration struct {
-	Version      int64
-	Name         string
-	Checksum     string
-	AppliedAt    time.Time
-	SourceGitSHA *string
+	Version                    int64
+	Name                       string
+	Checksum                   string
+	AppliedAt                  time.Time
+	SourceGitSHA               *string
+	MinCompatibleBinaryVersion *int64
 }
 
 type Status struct {
-	LedgerPresent bool
-	Applied       []AppliedMigration
-	Pending       []Migration
+	LedgerPresent      bool
+	KnownApplied       []AppliedMigration
+	Pending            []Migration
+	FutureCompatible   []AppliedMigration
+	FutureIncompatible []AppliedMigration
+}
+
+type Compatibility struct {
+	FutureCompatible   []AppliedMigration
+	FutureIncompatible []AppliedMigration
 }
 
 // Manager owns migration ledger integrity and application for one database.
@@ -118,13 +131,18 @@ func LoadFiles(filesystem fs.FS) ([]Migration, error) {
 		if len(contents) == 0 {
 			return nil, fmt.Errorf("migration %q is empty", entry.Name())
 		}
+		floor, err := parseMinCompatibleBinaryVersion(contents, version, entry.Name())
+		if err != nil {
+			return nil, err
+		}
 
 		checksum := sha256.Sum256(contents)
 		migrations = append(migrations, Migration{
-			Version:  version,
-			Name:     match[2],
-			SQL:      string(contents),
-			Checksum: hex.EncodeToString(checksum[:]),
+			Version:                    version,
+			Name:                       match[2],
+			SQL:                        string(contents),
+			Checksum:                   hex.EncodeToString(checksum[:]),
+			MinCompatibleBinaryVersion: floor,
 		})
 		seenVersions[version] = struct{}{}
 	}
@@ -134,6 +152,18 @@ func LoadFiles(filesystem fs.FS) ([]Migration, error) {
 	})
 
 	return migrations, nil
+}
+
+// BinarySchemaVersion is the highest application migration version known to a
+// binary, or zero when it embeds no application migrations.
+func BinarySchemaVersion(migrations []Migration) int64 {
+	var version int64
+	for _, migration := range migrations {
+		if migration.Version > version {
+			version = migration.Version
+		}
+	}
+	return version
 }
 
 // VerifyFiles verifies the embedded migration metadata without a database.
@@ -159,7 +189,11 @@ func (m *Manager) Apply(ctx context.Context, releaseSHA string) error {
 		if err != nil {
 			return err
 		}
-		if err := m.verifyApplied(applied); err != nil {
+		compatibility, err := m.evaluateApplied(applied)
+		if err != nil {
+			return err
+		}
+		if err := rejectIncompatibleFutureMigrations(compatibility); err != nil {
 			return err
 		}
 
@@ -193,7 +227,7 @@ func (m *Manager) Verify(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		return m.verifyApplied(applied)
+		return m.validateReadyState(applied)
 	})
 }
 
@@ -214,16 +248,15 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 		if err != nil {
 			return err
 		}
-		if err := m.verifyApplied(applied); err != nil {
+		compatibility, err := m.evaluateApplied(applied)
+		if err != nil {
 			return err
 		}
 
-		status.Applied = orderedApplied(applied)
-		for _, migration := range m.migrations {
-			if _, exists := applied[migration.Version]; !exists {
-				status.Pending = append(status.Pending, migration)
-			}
-		}
+		status.KnownApplied = orderedKnownApplied(applied, m.migrations)
+		status.Pending = pendingMigrations(applied, m.migrations)
+		status.FutureCompatible = compatibility.FutureCompatible
+		status.FutureIncompatible = compatibility.FutureIncompatible
 		return nil
 	})
 
@@ -247,16 +280,7 @@ func (m *Manager) CheckReady(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := m.verifyApplied(applied); err != nil {
-			return err
-		}
-		for _, migration := range m.migrations {
-			if _, exists := applied[migration.Version]; !exists {
-				return fmt.Errorf("%w: %d_%s", ErrMigrationPending, migration.Version, migration.Name)
-			}
-		}
-
-		return nil
+		return m.validateReadyState(applied)
 	})
 }
 
@@ -278,11 +302,12 @@ func (m *Manager) applyOne(
 
 	if _, err := tx.Exec(
 		ctx,
-		fmt.Sprintf(`INSERT INTO %s (version, name, checksum, source_git_sha) VALUES ($1, $2, $3, $4)`, m.quotedLedgerTable()),
+		fmt.Sprintf(`INSERT INTO %s (version, name, checksum, source_git_sha, min_compatible_binary_version) VALUES ($1, $2, $3, $4, $5)`, m.quotedLedgerTable()),
 		migration.Version,
 		migration.Name,
 		migration.Checksum,
 		nullableReleaseSHA(releaseSHA),
+		migration.MinCompatibleBinaryVersion,
 	); err != nil {
 		return fmt.Errorf("record migration %d_%s: %w", migration.Version, migration.Name, err)
 	}
@@ -300,10 +325,17 @@ func (m *Manager) ensureLedger(ctx context.Context, conn *pgxpool.Conn) error {
 		name TEXT NOT NULL CHECK (name <> ''),
 		checksum CHAR(64) NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		source_git_sha CHAR(40) NULL CHECK (source_git_sha IS NULL OR source_git_sha ~ '^[0-9a-f]{40}$')
+		source_git_sha CHAR(40) NULL CHECK (source_git_sha IS NULL OR source_git_sha ~ '^[0-9a-f]{40}$'),
+		min_compatible_binary_version BIGINT NOT NULL CHECK (min_compatible_binary_version >= 0)
 	)`, m.quotedLedgerTable())
 	if _, err := conn.Exec(ctx, query); err != nil {
 		return fmt.Errorf("create migration ledger: %w", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS min_compatible_binary_version BIGINT`, m.quotedLedgerTable()),
+	); err != nil {
+		return fmt.Errorf("add migration compatibility metadata column: %w", err)
 	}
 	return nil
 }
@@ -323,7 +355,7 @@ func (m *Manager) ledgerExists(ctx context.Context, conn *pgxpool.Conn) (bool, e
 func (m *Manager) applied(ctx context.Context, conn *pgxpool.Conn) (map[int64]AppliedMigration, error) {
 	rows, err := conn.Query(
 		ctx,
-		fmt.Sprintf(`SELECT version, name, checksum, applied_at, source_git_sha FROM %s ORDER BY version`, m.quotedLedgerTable()),
+		fmt.Sprintf(`SELECT version, name, checksum, applied_at, source_git_sha, min_compatible_binary_version FROM %s ORDER BY version`, m.quotedLedgerTable()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("read migration ledger: %w", err)
@@ -339,6 +371,7 @@ func (m *Manager) applied(ctx context.Context, conn *pgxpool.Conn) (map[int64]Ap
 			&record.Checksum,
 			&record.AppliedAt,
 			&record.SourceGitSHA,
+			&record.MinCompatibleBinaryVersion,
 		); err != nil {
 			return nil, fmt.Errorf("scan migration ledger: %w", err)
 		}
@@ -350,23 +383,81 @@ func (m *Manager) applied(ctx context.Context, conn *pgxpool.Conn) (map[int64]Ap
 	return applied, nil
 }
 
-func (m *Manager) verifyApplied(applied map[int64]AppliedMigration) error {
+func (m *Manager) validateReadyState(applied map[int64]AppliedMigration) error {
+	compatibility, err := m.evaluateApplied(applied)
+	if err != nil {
+		return err
+	}
+	if err := rejectIncompatibleFutureMigrations(compatibility); err != nil {
+		return err
+	}
+	for _, migration := range pendingMigrations(applied, m.migrations) {
+		return fmt.Errorf("%w: %d_%s", ErrMigrationPending, migration.Version, migration.Name)
+	}
+	return nil
+}
+
+func (m *Manager) evaluateApplied(applied map[int64]AppliedMigration) (Compatibility, error) {
+	compatibility := Compatibility{}
 	known := make(map[int64]Migration, len(m.migrations))
 	for _, migration := range m.migrations {
 		known[migration.Version] = migration
 	}
+	binarySchemaVersion := BinarySchemaVersion(m.migrations)
 
 	for version, record := range applied {
 		migration, exists := known[version]
-		if !exists {
-			return fmt.Errorf("%w: applied version %d is not present in this binary", ErrChecksumMismatch, version)
+		if exists {
+			if record.Name != migration.Name || record.Checksum != migration.Checksum {
+				return Compatibility{}, fmt.Errorf("%w: version %d", ErrChecksumMismatch, version)
+			}
+			if record.MinCompatibleBinaryVersion == nil ||
+				*record.MinCompatibleBinaryVersion != migration.MinCompatibleBinaryVersion {
+				return Compatibility{}, fmt.Errorf("%w: version %d", ErrCompatibilityMetadataMismatch, version)
+			}
+			continue
 		}
-		if record.Name != migration.Name || record.Checksum != migration.Checksum {
-			return fmt.Errorf("%w: version %d", ErrChecksumMismatch, version)
+
+		if version <= binarySchemaVersion {
+			return Compatibility{}, fmt.Errorf("%w: applied version %d is absent from this binary", ErrMigrationHistoryConflict, version)
+		}
+		if record.MinCompatibleBinaryVersion == nil ||
+			*record.MinCompatibleBinaryVersion < 0 ||
+			*record.MinCompatibleBinaryVersion > version {
+			return Compatibility{}, fmt.Errorf("%w: future version %d", ErrCompatibilityMetadataMismatch, version)
+		}
+		if *record.MinCompatibleBinaryVersion <= binarySchemaVersion {
+			compatibility.FutureCompatible = append(compatibility.FutureCompatible, record)
+		} else {
+			compatibility.FutureIncompatible = append(compatibility.FutureIncompatible, record)
 		}
 	}
 
-	return nil
+	sort.Slice(compatibility.FutureCompatible, func(i, j int) bool {
+		return compatibility.FutureCompatible[i].Version < compatibility.FutureCompatible[j].Version
+	})
+	sort.Slice(compatibility.FutureIncompatible, func(i, j int) bool {
+		return compatibility.FutureIncompatible[i].Version < compatibility.FutureIncompatible[j].Version
+	})
+	return compatibility, nil
+}
+
+func rejectIncompatibleFutureMigrations(compatibility Compatibility) error {
+	if len(compatibility.FutureIncompatible) == 0 {
+		return nil
+	}
+	migration := compatibility.FutureIncompatible[0]
+	return fmt.Errorf("%w: version %d requires binary schema version %d", ErrFutureMigrationIncompatible, migration.Version, *migration.MinCompatibleBinaryVersion)
+}
+
+func pendingMigrations(applied map[int64]AppliedMigration, migrations []Migration) []Migration {
+	pending := make([]Migration, 0)
+	for _, migration := range migrations {
+		if _, exists := applied[migration.Version]; !exists {
+			pending = append(pending, migration)
+		}
+	}
+	return pending
 }
 
 func (m *Manager) withLock(
@@ -410,13 +501,26 @@ func quoteIdentifier(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
-func orderedApplied(applied map[int64]AppliedMigration) []AppliedMigration {
-	result := make([]AppliedMigration, 0, len(applied))
-	for _, migration := range applied {
-		result = append(result, migration)
+func orderedKnownApplied(applied map[int64]AppliedMigration, migrations []Migration) []AppliedMigration {
+	result := make([]AppliedMigration, 0, len(migrations))
+	for _, migration := range migrations {
+		if record, exists := applied[migration.Version]; exists {
+			result = append(result, record)
+		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
 	return result
+}
+
+func parseMinCompatibleBinaryVersion(contents []byte, migrationVersion int64, filename string) (int64, error) {
+	matches := compatibilityDirectiveRegexp.FindAllSubmatch(contents, -1)
+	if len(matches) != 1 {
+		return 0, fmt.Errorf("migration %q must contain exactly one -- evcowbbe:min-compatible-binary-version=<non-negative integer> directive", filename)
+	}
+	floor, err := strconv.ParseInt(string(matches[0][1]), 10, 64)
+	if err != nil || floor < 0 || floor > migrationVersion {
+		return 0, fmt.Errorf("migration %q has invalid min compatible binary version", filename)
+	}
+	return floor, nil
 }
 
 func validateOptionalReleaseSHA(value string) error {
