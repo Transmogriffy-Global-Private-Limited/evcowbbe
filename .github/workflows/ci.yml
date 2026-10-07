@@ -1,0 +1,33 @@
+name: Source CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Verify formatting
+        run: test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+      - name: Verify module checksums
+        run: go mod verify
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build server
+        run: go build ./cmd/server
+      - name: Build migrator
+        run: go build ./cmd/migrate
+      - name: Verify embedded migration files
+        run: go run ./cmd/migrate verify --files-only
+      - name: Check whitespace errors
+        run: git diff --check

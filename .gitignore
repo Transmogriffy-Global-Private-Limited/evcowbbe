@@ -1,0 +1,25 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Go build/test output
+bin/
+dist/
+tmp/
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+
+# IDE/editor
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local logs
+*.log
