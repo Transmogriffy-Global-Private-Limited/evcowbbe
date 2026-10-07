@@ -71,6 +71,36 @@ func TestLoadFilesAcceptsOneExactCompatibilityDirective(t *testing.T) {
 	}
 }
 
+func TestLoadFilesAcceptsIndentedCompatibilityDirective(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "spaces", data: []byte("  -- evcowbbe:min-compatible-binary-version=0\nSELECT 1;\n")},
+		{name: "tab", data: []byte("\t-- evcowbbe:min-compatible-binary-version=0\nSELECT 1;\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			migrations, err := LoadFiles(fstest.MapFS{"000001_example.sql": {Data: test.data}})
+			if err != nil {
+				t.Fatalf("LoadFiles returned error: %v", err)
+			}
+			if len(migrations) != 1 || migrations[0].MinCompatibleBinaryVersion != 0 {
+				t.Fatalf("unexpected migration metadata: %#v", migrations)
+			}
+		})
+	}
+}
+
+func TestLoadFilesRejectsIndentedMalformedCompatibilityDirectiveDuplicate(t *testing.T) {
+	files := fstest.MapFS{
+		"000001_example.sql": {Data: []byte("-- evcowbbe:min-compatible-binary-version=0\n  -- evcowbbe:min-compatible-binary-version=nope\nSELECT 1;\n")},
+	}
+
+	if _, err := LoadFiles(files); err == nil {
+		t.Fatal("expected valid and indented malformed compatibility directives to be rejected as duplicates")
+	}
+}
+
 func TestLoadFilesRejectsInvalidMigrationFiles(t *testing.T) {
 	files := fstest.MapFS{"first.sql": {Data: migrationSQL(0, "SELECT 1;")}}
 	if _, err := LoadFiles(files); err == nil {

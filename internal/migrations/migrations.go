@@ -33,8 +33,8 @@ var (
 	ErrMigrationPending                 = errors.New("migration is pending")
 	ErrLockBusy                         = errors.New("migration lock is busy")
 	fileNameRegexp                      = regexp.MustCompile(`^([0-9]+)_([a-z0-9][a-z0-9_]*)\.sql$`)
-	compatibilityDirectiveAttemptRegexp = regexp.MustCompile(`(?m)^--[ \t]*evcowbbe:min-compatible-binary-version[^\r\n]*\r?$`)
-	compatibilityDirectiveSyntaxRegexp  = regexp.MustCompile(`^--[ \t]*evcowbbe:min-compatible-binary-version=([0-9]+)[ \t]*\r?$`)
+	compatibilityDirectiveAttemptRegexp = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*evcowbbe:min-compatible-binary-version[^\r\n]*\r?$`)
+	compatibilityDirectiveSyntaxRegexp  = regexp.MustCompile(`^[ \t]*--[ \t]*evcowbbe:min-compatible-binary-version=([0-9]+)[ \t]*\r?$`)
 )
 
 type Migration struct {
