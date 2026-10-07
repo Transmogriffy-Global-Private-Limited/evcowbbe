@@ -13,26 +13,30 @@ This repository intentionally does not provide Docker, a VPS release-directory l
 Run this from a clean checkout with Bash and the Go version declared in `go.mod`:
 
 ```bash
-bash scripts/build-release.sh --output /chosen/release/path/evcowbbe --version 0.0.0
+bash scripts/build-release.sh \
+  --server-output /chosen/release/path/evcowbbe \
+  --migrator-output /chosen/release/path/evcowbbe-migrate \
+  --version 0.0.0
 ```
 
-`--output` is required so the VPS chooses the release artifact location. `--version` is optional and defaults to `0.0.0`; it must contain only ASCII letters, digits, `.`, `_`, `+`, or `-`.
+`--server-output` and `--migrator-output` are required, distinct paths chosen by the VPS release framework. A release consists of at least those two executables. `--version` is optional and defaults to `0.0.0`; it must contain only ASCII letters, digits, `.`, `_`, `+`, or `-`.
 
-The script refuses a repository without a committed `HEAD`, any staged, unstaged, or untracked worktree change, and an invalid SHA. It resolves the full `HEAD` SHA, requires exactly 40 lowercase hexadecimal characters, produces a UTC RFC3339 build time, and builds `./cmd/server` with `-trimpath`, `-buildvcs=false`, and linker values for:
+The script refuses a repository without a committed `HEAD`, any staged, unstaged, or untracked worktree change, and an invalid SHA. It resolves the full `HEAD` SHA and one UTC RFC3339 build time once, requires exactly 40 lowercase hexadecimal characters, and builds both `./cmd/server` and `./cmd/migrate` with the same `-trimpath`, `-buildvcs=false`, and linker values for:
 
 - `internal/buildinfo.Version`
 - `internal/buildinfo.GitSHA`
 - `internal/buildinfo.BuildTime`
 
-It writes via a temporary sibling artifact and only moves the completed binary to the selected output path. It does not accept or embed secrets.
+It builds both binaries into temporary sibling paths before changing either selected output. It then moves existing outputs to sibling backups, publishes each completed binary by same-directory rename, and restores the prior pair if later finalization fails. Two independent filesystem paths cannot be atomically replaced as one operation, so an abrupt process or filesystem failure during finalization may still require operator inspection; ordinary build failure cannot publish a new server with an old migrator. The script reports `release_server_output`, `release_migrator_output`, `release_git_sha`, `release_build_time`, and `release_version`. It does not accept or embed secrets.
 
 The exact release invariant outside development is:
 
 ```text
 configured BUILD_REVISION == embedded buildinfo GitSHA == GET /version git_sha
+configured BUILD_REVISION == embedded migrator buildinfo GitSHA
 ```
 
-The server and migrator reject startup/use outside `development` if the embedded SHA is missing or invalid, if `BUILD_REVISION` is missing or invalid, or if the two values differ. A release build is therefore not identified merely by an environment variable.
+The server and migrator reject startup/use outside `development` if the embedded SHA is missing or invalid, if `BUILD_REVISION` is missing or invalid, or if the two values differ. The VPS deployment flow must run `migrate up` with the migrator produced by this same canonical release build, never with an ordinary `go build ./cmd/migrate` binary. A release build is therefore not identified merely by an environment variable.
 
 ## Runtime configuration
 
@@ -104,8 +108,8 @@ Deployment rollback must never blindly run database DOWN migrations. Binary roll
 
 ## Expected deployment sequence and verification failures
 
-The future VPS framework should build a clean exact SHA, configure the process with the matching `BUILD_REVISION`, run `migrate up`, start/reload the selected binary, and then verify both HTTP readiness and `/version` identity. Deployment verification fails if any release-identity check, migration command, process startup, liveness/readiness response, or `/version` SHA comparison fails.
+The future VPS framework should build a clean exact SHA into the paired server and migrator outputs, configure both processes with the matching `BUILD_REVISION`, run `migrate up` using that release migrator, start/reload the paired release server, and then verify both HTTP readiness and `/version` identity. Deployment verification fails if any release-identity check, migration command, process startup, liveness/readiness response, or `/version` SHA comparison fails.
 
 The server handles `SIGINT` and `SIGTERM` by stopping new HTTP work and calling graceful shutdown for the configured timeout. Database pools close when the process exits.
 
-Source CI is defined in `.github/workflows/ci.yml`. It checks formatting without changing source, `go mod verify`, tests, vetting, both command builds into runner-temporary paths, static migration validation, the canonical `scripts/build-release.sh` interface, release-binary existence/executability, and that the release builder reports the workflow's exact `GITHUB_SHA`. It does not deploy or publish an artifact. PostgreSQL integration tests remain gated solely by `TEST_DATABASE_URL`; they never fall back to `DATABASE_URL`. Source CI currently supplies no disposable PostgreSQL service, so database integration execution is an explicit separate verification boundary.
+Source CI is defined in `.github/workflows/ci.yml`. It checks formatting without changing source, `go mod verify`, tests, vetting, both command builds into runner-temporary paths, static migration validation, the canonical paired-release interface, both release-binary existence/executability, and that the release builder reports the workflow's exact `GITHUB_SHA`. It runs the release migrator against a bounded intentionally unreachable loopback PostgreSQL URL: matching `BUILD_REVISION` must reach the normal `database unavailable` result, while a syntactically valid mismatched revision must fail specifically at release-identity validation before database access. It does not deploy or publish an artifact. PostgreSQL integration tests remain gated solely by `TEST_DATABASE_URL`; they never fall back to `DATABASE_URL`. Source CI currently supplies no disposable PostgreSQL service, so database integration execution is an explicit separate verification boundary.

@@ -31,11 +31,37 @@ jobs:
         run: go run ./cmd/migrate verify --files-only
       - name: Build canonical release
         run: |
-          release_output="$RUNNER_TEMP/evcowbbe"
-          release_report="$(bash scripts/build-release.sh --output "$release_output")"
+          release_server_output="$RUNNER_TEMP/evcowbbe"
+          release_migrator_output="$RUNNER_TEMP/evcowbbe-migrate"
+          release_report="$(bash scripts/build-release.sh --server-output "$release_server_output" --migrator-output "$release_migrator_output")"
           printf '%s\n' "$release_report"
-          test -s "$release_output"
-          test -x "$release_output"
+          test -s "$release_server_output"
+          test -x "$release_server_output"
+          test -s "$release_migrator_output"
+          test -x "$release_migrator_output"
           test "$(printf '%s\n' "$release_report" | sed -n 's/^release_git_sha=//p')" = "$GITHUB_SHA"
+      - name: Verify release migrator identity
+        run: |
+          release_migrator_output="$RUNNER_TEMP/evcowbbe-migrate"
+          database_url='postgres://ci:ci@127.0.0.1:1/evcowbbe?connect_timeout=1'
+
+          set +e
+          timeout 10s env APP_ENV=production BUILD_REVISION="$GITHUB_SHA" DATABASE_URL="$database_url" "$release_migrator_output" verify >"$RUNNER_TEMP/migrator-identity-match.stdout" 2>"$RUNNER_TEMP/migrator-identity-match.stderr"
+          matched_status=$?
+          set -e
+          test "$matched_status" -eq 1
+          grep -Fx 'database unavailable' "$RUNNER_TEMP/migrator-identity-match.stderr"
+
+          if [[ "${GITHUB_SHA:0:1}" == "0" ]]; then
+            mismatched_revision="1${GITHUB_SHA:1}"
+          else
+            mismatched_revision="0${GITHUB_SHA:1}"
+          fi
+          set +e
+          timeout 10s env APP_ENV=production BUILD_REVISION="$mismatched_revision" DATABASE_URL="$database_url" "$release_migrator_output" verify >"$RUNNER_TEMP/migrator-identity-mismatch.stdout" 2>"$RUNNER_TEMP/migrator-identity-mismatch.stderr"
+          mismatched_status=$?
+          set -e
+          test "$mismatched_status" -eq 2
+          grep -Fx 'invalid release identity: BUILD_REVISION must equal the embedded Git SHA' "$RUNNER_TEMP/migrator-identity-mismatch.stderr"
       - name: Check whitespace errors
         run: git diff --check
