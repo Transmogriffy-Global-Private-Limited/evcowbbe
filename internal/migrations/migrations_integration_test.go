@@ -24,7 +24,7 @@ func TestManagerWithDisposablePostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open disposable PostgreSQL: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	manager := &Manager{
 		pool:        pool,
@@ -71,7 +71,7 @@ func TestManagerRollsBackFailedMigrationWithDisposablePostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open disposable PostgreSQL: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	manager := &Manager{
 		pool:        pool,
@@ -124,7 +124,7 @@ func TestMigrationLockSerializesConcurrentAccessWithDisposablePostgreSQL(t *test
 	if err != nil {
 		t.Fatalf("open disposable PostgreSQL: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	manager := &Manager{
 		pool:        pool,
@@ -167,7 +167,7 @@ func TestRollbackCompatibilityWithDisposablePostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open disposable PostgreSQL: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	for _, test := range []struct {
 		name          string
@@ -245,7 +245,7 @@ func TestManagerRejectsOutOfOrderMigrationHistoryWithDisposablePostgreSQL(t *tes
 	if err != nil {
 		t.Fatalf("open disposable PostgreSQL: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	manager := &Manager{
 		pool: pool,
