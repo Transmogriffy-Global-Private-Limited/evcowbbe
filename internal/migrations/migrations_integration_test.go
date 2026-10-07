@@ -233,6 +233,72 @@ func TestRollbackCompatibilityWithDisposablePostgreSQL(t *testing.T) {
 	}
 }
 
+func TestManagerRejectsOutOfOrderMigrationHistoryWithDisposablePostgreSQL(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL not set; disposable PostgreSQL migration integration test skipped")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open disposable PostgreSQL: %v", err)
+	}
+	defer pool.Close()
+
+	manager := &Manager{
+		pool: pool,
+		migrations: []Migration{{
+			Version:                    1,
+			Name:                       "create_probe",
+			SQL:                        `CREATE TABLE public.evcowbbe_migration_order_probe (id INTEGER PRIMARY KEY);`,
+			Checksum:                   "3333333333333333333333333333333333333333333333333333333333333333",
+			MinCompatibleBinaryVersion: 0,
+		}},
+		ledgerTable: "evcowbbe_test_order_migrations",
+		lockID:      advisoryLockID + 5,
+	}
+	cleanupManagerTables(t, ctx, pool, manager.ledgerTable)
+	_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS public.evcowbbe_migration_order_probe`)
+	t.Cleanup(func() {
+		cleanupManagerTables(t, context.Background(), pool, manager.ledgerTable)
+		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS public.evcowbbe_migration_order_probe`)
+	})
+
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire database connection: %v", err)
+	}
+	if err := manager.ensureLedger(ctx, conn); err != nil {
+		conn.Release()
+		t.Fatalf("create migration ledger: %v", err)
+	}
+	conn.Release()
+
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (version, name, checksum, min_compatible_binary_version) VALUES (2, 'future', '4444444444444444444444444444444444444444444444444444444444444444', 1)`, manager.quotedLedgerTable())); err != nil {
+		t.Fatalf("insert out-of-order future migration: %v", err)
+	}
+
+	if err := manager.Verify(ctx); !errors.Is(err, ErrMigrationHistoryConflict) {
+		t.Fatalf("expected verify to reject out-of-order history, got %v", err)
+	}
+	if err := manager.CheckReady(ctx); !errors.Is(err, ErrMigrationHistoryConflict) {
+		t.Fatalf("expected readiness to reject out-of-order history, got %v", err)
+	}
+	if err := manager.Apply(ctx, ""); !errors.Is(err, ErrMigrationHistoryConflict) {
+		t.Fatalf("expected apply to reject out-of-order history, got %v", err)
+	}
+
+	var knownApplied int
+	if err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM %s WHERE version = 1`, manager.quotedLedgerTable())).Scan(&knownApplied); err != nil {
+		t.Fatalf("check known migration ledger row: %v", err)
+	}
+	if knownApplied != 0 {
+		t.Fatalf("out-of-order apply recorded missing known migration: %d", knownApplied)
+	}
+}
+
 func cleanupManagerTables(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ledgerTable string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, (&Manager{ledgerTable: ledgerTable}).quotedLedgerTable())); err != nil {

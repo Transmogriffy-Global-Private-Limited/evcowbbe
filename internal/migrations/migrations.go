@@ -25,15 +25,16 @@ const (
 )
 
 var (
-	ErrLedgerMissing                 = errors.New("migration ledger is missing")
-	ErrChecksumMismatch              = errors.New("migration checksum mismatch")
-	ErrCompatibilityMetadataMismatch = errors.New("migration compatibility metadata mismatch")
-	ErrMigrationHistoryConflict      = errors.New("migration history conflicts with this binary")
-	ErrFutureMigrationIncompatible   = errors.New("future migration is incompatible with this binary")
-	ErrMigrationPending              = errors.New("migration is pending")
-	ErrLockBusy                      = errors.New("migration lock is busy")
-	fileNameRegexp                   = regexp.MustCompile(`^([0-9]+)_([a-z0-9][a-z0-9_]*)\.sql$`)
-	compatibilityDirectiveRegexp     = regexp.MustCompile(`(?m)^--[ \t]*evcowbbe:min-compatible-binary-version=([0-9]+)[ \t]*$`)
+	ErrLedgerMissing                    = errors.New("migration ledger is missing")
+	ErrChecksumMismatch                 = errors.New("migration checksum mismatch")
+	ErrCompatibilityMetadataMismatch    = errors.New("migration compatibility metadata mismatch")
+	ErrMigrationHistoryConflict         = errors.New("migration history conflicts with this binary")
+	ErrFutureMigrationIncompatible      = errors.New("future migration is incompatible with this binary")
+	ErrMigrationPending                 = errors.New("migration is pending")
+	ErrLockBusy                         = errors.New("migration lock is busy")
+	fileNameRegexp                      = regexp.MustCompile(`^([0-9]+)_([a-z0-9][a-z0-9_]*)\.sql$`)
+	compatibilityDirectiveAttemptRegexp = regexp.MustCompile(`(?m)^--[ \t]*evcowbbe:min-compatible-binary-version[^\r\n]*\r?$`)
+	compatibilityDirectiveSyntaxRegexp  = regexp.MustCompile(`^--[ \t]*evcowbbe:min-compatible-binary-version=([0-9]+)[ \t]*\r?$`)
 )
 
 type Migration struct {
@@ -191,6 +192,9 @@ func (m *Manager) Apply(ctx context.Context, releaseSHA string) error {
 		}
 		compatibility, err := m.evaluateApplied(applied)
 		if err != nil {
+			return err
+		}
+		if err := validateMigrationHistoryOrder(applied, m.migrations); err != nil {
 			return err
 		}
 		if err := rejectIncompatibleFutureMigrations(compatibility); err != nil {
@@ -388,6 +392,9 @@ func (m *Manager) validateReadyState(applied map[int64]AppliedMigration) error {
 	if err != nil {
 		return err
 	}
+	if err := validateMigrationHistoryOrder(applied, m.migrations); err != nil {
+		return err
+	}
 	if err := rejectIncompatibleFutureMigrations(compatibility); err != nil {
 		return err
 	}
@@ -460,6 +467,21 @@ func pendingMigrations(applied map[int64]AppliedMigration, migrations []Migratio
 	return pending
 }
 
+func validateMigrationHistoryOrder(applied map[int64]AppliedMigration, migrations []Migration) error {
+	var highestAppliedVersion int64
+	for version := range applied {
+		if version > highestAppliedVersion {
+			highestAppliedVersion = version
+		}
+	}
+	for _, migration := range migrations {
+		if _, exists := applied[migration.Version]; !exists && highestAppliedVersion > migration.Version {
+			return fmt.Errorf("%w: missing version %d_%s below applied version %d", ErrMigrationHistoryConflict, migration.Version, migration.Name, highestAppliedVersion)
+		}
+	}
+	return nil
+}
+
 func (m *Manager) withLock(
 	ctx context.Context,
 	try bool,
@@ -512,11 +534,15 @@ func orderedKnownApplied(applied map[int64]AppliedMigration, migrations []Migrat
 }
 
 func parseMinCompatibleBinaryVersion(contents []byte, migrationVersion int64, filename string) (int64, error) {
-	matches := compatibilityDirectiveRegexp.FindAllSubmatch(contents, -1)
-	if len(matches) != 1 {
+	attempts := compatibilityDirectiveAttemptRegexp.FindAll(contents, -1)
+	if len(attempts) != 1 {
 		return 0, fmt.Errorf("migration %q must contain exactly one -- evcowbbe:min-compatible-binary-version=<non-negative integer> directive", filename)
 	}
-	floor, err := strconv.ParseInt(string(matches[0][1]), 10, 64)
+	match := compatibilityDirectiveSyntaxRegexp.FindSubmatch(attempts[0])
+	if match == nil {
+		return 0, fmt.Errorf("migration %q has invalid min compatible binary version directive", filename)
+	}
+	floor, err := strconv.ParseInt(string(match[1]), 10, 64)
 	if err != nil || floor < 0 || floor > migrationVersion {
 		return 0, fmt.Errorf("migration %q has invalid min compatible binary version", filename)
 	}

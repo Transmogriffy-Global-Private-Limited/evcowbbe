@@ -15,6 +15,9 @@ one compatibility declaration on its own line:
 
 The value is the oldest binary schema version that may operate after the
 migration. It must be an integer from `0` through the migration version,
-inclusive. The directive is part of the SQL file checksum. Never edit, rename,
-delete, or reuse a version after that migration has been applied anywhere.
-Create a new forward migration instead.
+inclusive. Any comment line using the reserved
+`evcowbbe:min-compatible-binary-version` prefix is an attempted declaration:
+there must be exactly one, and it must use the exact syntax above with no
+trailing text. The directive is part of the SQL file checksum. Never edit,
+rename, delete, or reuse a version after that migration has been applied
+anywhere. Create a new forward migration instead.

@@ -41,6 +41,9 @@ func TestLoadFilesRejectsInvalidCompatibilityMetadata(t *testing.T) {
 		{name: "malformed", data: []byte("-- evcowbbe:min-compatible-binary-version=nope\nSELECT 1;\n")},
 		{name: "negative", data: []byte("-- evcowbbe:min-compatible-binary-version=-1\nSELECT 1;\n")},
 		{name: "duplicate", data: []byte("-- evcowbbe:min-compatible-binary-version=0\n-- evcowbbe:min-compatible-binary-version=0\nSELECT 1;\n")},
+		{name: "valid plus malformed duplicate", data: []byte("-- evcowbbe:min-compatible-binary-version=0\n-- evcowbbe:min-compatible-binary-version=nope\nSELECT 1;\n")},
+		{name: "malformed plus malformed duplicate", data: []byte("-- evcowbbe:min-compatible-binary-version=nope\n-- evcowbbe:min-compatible-binary-version=-1\nSELECT 1;\n")},
+		{name: "extra trailing junk", data: []byte("-- evcowbbe:min-compatible-binary-version=0 trailing\nSELECT 1;\n")},
 		{name: "above migration version", data: migrationSQL(2, "SELECT 1;\n")},
 	}
 
@@ -51,6 +54,20 @@ func TestLoadFilesRejectsInvalidCompatibilityMetadata(t *testing.T) {
 				t.Fatal("expected invalid compatibility metadata to be rejected")
 			}
 		})
+	}
+}
+
+func TestLoadFilesAcceptsOneExactCompatibilityDirective(t *testing.T) {
+	files := fstest.MapFS{
+		"000001_example.sql": {Data: []byte("-- an ordinary SQL comment\n-- evcowbbe:min-compatible-binary-version=0\nSELECT 1;\n")},
+	}
+
+	migrations, err := LoadFiles(files)
+	if err != nil {
+		t.Fatalf("LoadFiles returned error: %v", err)
+	}
+	if len(migrations) != 1 || migrations[0].MinCompatibleBinaryVersion != 0 {
+		t.Fatalf("unexpected migration metadata: %#v", migrations)
 	}
 }
 
@@ -133,6 +150,20 @@ func TestValidateReadyStateRejectsKnownPendingMigration(t *testing.T) {
 	manager := testManager(Migration{Version: 1, Name: "known", Checksum: "one", MinCompatibleBinaryVersion: 0})
 	if err := manager.validateReadyState(map[int64]AppliedMigration{}); !errors.Is(err, ErrMigrationPending) {
 		t.Fatalf("expected pending migration to make readiness fail, got %v", err)
+	}
+}
+
+func TestValidateReadyStateRejectsOutOfOrderFutureMigration(t *testing.T) {
+	manager := testManager(Migration{Version: 1, Name: "known", Checksum: "one", MinCompatibleBinaryVersion: 0})
+	future := appliedMigration(2, "future", "two", 1)
+
+	if err := manager.validateReadyState(map[int64]AppliedMigration{2: future}); !errors.Is(err, ErrMigrationHistoryConflict) {
+		t.Fatalf("expected out-of-order future migration to be rejected, got %v", err)
+	}
+
+	known := appliedMigration(1, "known", "one", 0)
+	if err := manager.validateReadyState(map[int64]AppliedMigration{1: known, 2: future}); err != nil {
+		t.Fatalf("expected applied known migration followed by compatible future migration to remain valid, got %v", err)
 	}
 }
 
