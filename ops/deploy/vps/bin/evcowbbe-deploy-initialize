@@ -1,0 +1,14 @@
+#!/usr/bin/python3 -I
+"""Initialize or verify Burner 1 SQLite state as evcow-orchestrator."""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+from ops.deploy.control_plane import ControlPlane, ControlPlaneError
+from ops.deploy.vps.common import STATE_DB_PATH
+
+try:
+    ControlPlane(STATE_DB_PATH).initialize()
+except ControlPlaneError as exc:
+    print(exc, file=sys.stderr)
+    raise SystemExit(exc.exit_code)

@@ -265,7 +265,7 @@ class ControlPlaneTest(unittest.TestCase):
         for process in processes:
             process.join(timeout=15)
             self.assertEqual(process.exitcode, 0)
-        self.assertEqual({result[0] for result in results}, {"ok"})
+        self.assertEqual({result[0] for result in results}, {"ok"}, results)
         self.assertEqual(len(set(result[1] for result in results)), 1)
         self.assertEqual(len(self.control_plane.active_controls()), 1)
 

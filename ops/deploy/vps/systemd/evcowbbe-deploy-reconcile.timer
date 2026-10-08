@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic recovery wake for EVCOWBBE passive reconciliation
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=evcowbbe-deploy-reconcile.service
+
+[Install]
+WantedBy=timers.target

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1180,25 +1181,42 @@ class ControlPlane:
         return self._read(lambda connection: [converter(row) for row in connection.execute(query, parameters).fetchall()])
 
     def _connect(self) -> sqlite3.Connection:
-        try:
-            connection = sqlite3.connect(
-                self.state_db,
-                timeout=BUSY_TIMEOUT_MS / 1_000,
-                isolation_level=None,
-                check_same_thread=False,
-            )
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0].lower()
-            if journal_mode != "wal":
-                raise StateIntegrityError(f"SQLite WAL mode could not be enabled (got {journal_mode!r})")
-            connection.execute("PRAGMA synchronous = FULL")
-            connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-            return connection
-        except ControlPlaneError:
-            raise
-        except (OSError, sqlite3.DatabaseError) as exc:
-            raise StateIntegrityError(f"cannot open SQLite control-plane state: {exc}") from exc
+        # Two processes opening a freshly created WAL database concurrently can
+        # race while SQLite acquires the initial journal/schema lock. Retry ONLY
+        # transient BUSY/LOCKED errors, never schema/corruption failures.
+        for attempt in range(3):
+            connection: sqlite3.Connection | None = None
+            try:
+                connection = sqlite3.connect(
+                    self.state_db,
+                    timeout=BUSY_TIMEOUT_MS / 1_000,
+                    isolation_level=None,
+                    check_same_thread=False,
+                )
+                connection.row_factory = sqlite3.Row
+                connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+                connection.execute("PRAGMA foreign_keys = ON")
+                # WAL is durable once enabled. A read avoids repeatedly taking
+                # a journal-mode write lock on every concurrent admission.
+                journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0].lower()
+                if journal_mode != "wal":
+                    journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0].lower()
+                if journal_mode != "wal":
+                    raise StateIntegrityError(f"SQLite WAL mode could not be enabled (got {journal_mode!r})")
+                connection.execute("PRAGMA synchronous = FULL")
+                return connection
+            except (ControlPlaneError, OSError, sqlite3.DatabaseError) as exc:
+                if connection is not None:
+                    connection.close()
+                if isinstance(exc, sqlite3.OperationalError) and attempt < 2 and (
+                    "locked" in str(exc).lower() or "busy" in str(exc).lower()
+                ):
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                if isinstance(exc, ControlPlaneError):
+                    raise
+                raise StateIntegrityError(f"cannot open SQLite control-plane state: {exc}") from exc
+        raise AssertionError("unreachable SQLite retry state")
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:

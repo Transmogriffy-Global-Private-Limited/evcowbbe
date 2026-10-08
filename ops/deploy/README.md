@@ -65,6 +65,28 @@ authorization, preserves it as released audit history, and restores the retry
 fence. Repeating cancellation is a no-op; a consumed authorization remains
 historical and cannot be canceled retroactively.
 
+## VPS2 ingestion stage
+
+`ops/deploy/vps` is an installable-but-not-installed Ubuntu 24.04 package for
+the next control-plane stage. It accepts only a successful Source CI candidate
+for `prod` through a restricted `evcow-trigger` SSH key, writes it through the
+existing SQLite control plane as `evcow-orchestrator`, then wakes a passive
+systemd reconciliation inspection service. It is not an application deployer.
+
+The SSH forced command permits only `evcowbbe-deploy-ingest-v1`; it has no
+shell, PTY, forwarding, application configuration, release, migration, or
+database-write authority. The fixed root bridge has only two effects: running
+the root-owned admission entrypoint as `evcow-orchestrator`, then starting the
+passive service. A persistent five-minute timer recovers a request committed
+before a failed/missed wake. SQLite remains the only durable request store.
+
+Install only through the separately authorized runbook in
+`docs/DEPLOYMENT_CONTRACT.md`. The operator must provide an independently
+verified VPS host key, SSH host/port, a protected GitHub private-key secret,
+one public key, and a clean source checkout pinned to the control-plane SHA.
+The package installs under `/opt/evcowbbe-deploy`, never under the application
+release path `/srv/evcowbbe/current`.
+
 The caller-provided operator identifier is audit attribution only. This local
 source implementation assumes the invoking command boundary is trusted. A
 future ingress/authentication layer must pass a verified operator identity.
@@ -94,3 +116,27 @@ operator-facing fields, such as `{"code":"BUILD_FAILED","message":"safe failure"
 Callers must not supply credentials, tokens, connection strings, raw command
 lines, or other secrets in those details. Audit event details use the same
 canonical JSON representation.
+
+### VPS2 ingress installation status and wire format
+
+This source includes a **passive-only** VPS ingestion package. It is not
+installed by Source CI or any application release. See
+`docs/DEPLOYMENT_CONTRACT.md` for the operator-authorized installation and
+real-host acceptance runbook. Requests contain exactly one JSON object,
+with no outside whitespace and optionally one LF terminator. Duplicate
+JSON keys, extra objects, and arbitrary trailing data are forbidden.
+The acknowledgement reports durable admission, **not deployment**.
+
+The installer archives the approved clean Git SHA, stages immutable root-owned
+code, verifies the existing orchestrator-owned SQLite state directory is
+writable by the SQLite user, and installs restricted key-only SSH access
+**last**. The public key is installed with an OpenSSH `restrict,command=...`
+forced-command restriction and no Match/Include drop-in. The default
+`authorized_keys` path and effective SSH configuration must be verified
+against the actual VPS2; the installer refuses unsafe conflicts instead of
+overwriting them. A manual check of SSH shell/PTY/forwarding denial and
+forced-ingress behavior is mandatory before production use.
+
+The passive reconciler reports historical `accepted_requests_total`,
+`reconciliation_state: not_evaluated`, and `deployed: false`. It does not
+pretend historical requests are pending deployments.

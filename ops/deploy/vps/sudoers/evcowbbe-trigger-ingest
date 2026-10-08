@@ -1,0 +1,2 @@
+# visudo -cf this file before installation. The empty argument list is deliberate.
+evcow-trigger ALL=(root) NOPASSWD: /opt/evcowbbe-deploy/current/bin/evcowbbe-deploy-admit-and-wake ""

@@ -1,0 +1,110 @@
+name: Prod VPS Ingestion
+
+on:
+  workflow_run:
+    workflows: ["Source CI"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  admit:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'prod' &&
+      github.event.workflow_run.head_repository.full_name == 'Transmogriffy-Global-Private-Limited/evcowbbe' &&
+      github.event.workflow_run.repository.full_name == 'Transmogriffy-Global-Private-Limited/evcowbbe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      SOURCE_CI_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      SOURCE_CI_ACTOR: ${{ github.event.workflow_run.actor.login }}
+      SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      VPS_INGEST_HOST: ${{ secrets.EVCOWBBE_VPS2_INGEST_HOST }}
+      VPS_INGEST_PORT: ${{ secrets.EVCOWBBE_VPS2_INGEST_PORT }}
+      VPS_INGEST_HOST_KEY: ${{ secrets.EVCOWBBE_VPS2_INGEST_HOST_KEY }}
+      VPS_INGEST_PRIVATE_KEY: ${{ secrets.EVCOWBBE_VPS2_INGEST_PRIVATE_KEY }}
+    steps:
+      - name: Validate event and construct exact admission request
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY' > "$RUNNER_TEMP/admission-request.json"
+          import json
+          import os
+          import re
+          sha = os.environ["SOURCE_CI_HEAD_SHA"]
+          actor = os.environ["SOURCE_CI_ACTOR"]
+          run_id = os.environ["SOURCE_CI_RUN_ID"]
+          attempt = os.environ["SOURCE_CI_RUN_ATTEMPT"]
+          host = os.environ["VPS_INGEST_HOST"]
+          port = os.environ["VPS_INGEST_PORT"]
+          identifier = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]*$")
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("workflow_run head SHA is not a lowercase 40-character SHA")
+          if not identifier.fullmatch(actor) or not identifier.fullmatch(run_id) or not identifier.fullmatch(attempt):
+              raise SystemExit("workflow metadata has an unsafe identity field")
+          if not host or any(character.isspace() or ord(character) < 32 for character in host):
+              raise SystemExit("VPS host configuration is missing or unsafe")
+          if not re.fullmatch(r"[1-9][0-9]{0,4}", port) or not 1 <= int(port) <= 65535:
+              raise SystemExit("VPS SSH port configuration is invalid")
+          request = {
+              "event": "push",
+              "sha": sha,
+              "branch": "prod",
+              "actor": actor,
+              "source_id": f"source-ci:{run_id}:{attempt}",
+          }
+          print(json.dumps(request, sort_keys=True, separators=(",", ":")))
+          PY
+      - name: Configure pinned SSH identity and host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$VPS_INGEST_PRIVATE_KEY"
+          test -n "$VPS_INGEST_HOST_KEY"
+          printf '%s\n' "$VPS_INGEST_PRIVATE_KEY" > "$RUNNER_TEMP/ingest.key"
+          printf '%s\n' "$VPS_INGEST_HOST_KEY" > "$RUNNER_TEMP/known_hosts"
+          chmod 600 "$RUNNER_TEMP/ingest.key" "$RUNNER_TEMP/known_hosts"
+      - name: Deliver bounded candidate to restricted VPS ingress
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 30s ssh \
+            -i "$RUNNER_TEMP/ingest.key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+            -o ConnectTimeout=10 \
+            -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=5 \
+            -o ServerAliveCountMax=2 \
+            -p "$VPS_INGEST_PORT" \
+            "evcow-trigger@$VPS_INGEST_HOST" \
+            evcowbbe-deploy-ingest-v1 < "$RUNNER_TEMP/admission-request.json" > "$RUNNER_TEMP/admission-ack.json"
+          python3 - <<'PY'
+          import json
+          import os
+          path = os.path.join(os.environ["RUNNER_TEMP"], "admission-ack.json")
+          with open(path, "rb") as handle:
+              raw = handle.read(4097)
+          if len(raw) > 4096:
+              raise SystemExit("oversized VPS acknowledgement")
+          text = raw.decode("ascii")
+          if not text.endswith("\n"):
+              raise SystemExit("VPS acknowledgement was not line terminated")
+          acknowledgement = json.loads(text)
+          if acknowledgement.get("accepted") is not True:
+              raise SystemExit("VPS did not durably accept the candidate")
+          if acknowledgement.get("sha") != os.environ["SOURCE_CI_HEAD_SHA"]:
+              raise SystemExit("VPS acknowledgement returned a different SHA")
+          if not isinstance(acknowledgement.get("created"), bool):
+              raise SystemExit("VPS acknowledgement lacks a valid created flag")
+          if not isinstance(acknowledgement.get("request_id"), str) or len(acknowledgement["request_id"]) != 32:
+              raise SystemExit("VPS acknowledgement has an invalid request ID")
+          PY

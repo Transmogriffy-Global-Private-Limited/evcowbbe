@@ -10,6 +10,13 @@ __pycache__/
 # Go build/test output
 bin/
 dist/
+
+# Root-owned VPS control-plane entrypoints are source, not Go build output.
+!ops/
+!ops/deploy/
+!ops/deploy/vps/
+!ops/deploy/vps/bin/
+!ops/deploy/vps/bin/*
 tmp/
 *.exe
 *.test

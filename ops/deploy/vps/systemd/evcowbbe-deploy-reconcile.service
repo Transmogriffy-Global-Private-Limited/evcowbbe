@@ -1,0 +1,26 @@
+[Unit]
+Description=EVCOWBBE passive deployment reconciliation inspection
+After=local-fs.target
+ConditionPathIsDirectory=/var/lib/evcowbbe-deploy
+
+[Service]
+Type=oneshot
+User=evcow-orchestrator
+Group=evcow-orchestrator
+ExecStart=/opt/evcowbbe-deploy/current/bin/evcowbbe-deploy-reconcile
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/evcowbbe-deploy
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+UMask=0077

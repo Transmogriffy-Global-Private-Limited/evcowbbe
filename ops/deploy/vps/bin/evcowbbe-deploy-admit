@@ -1,0 +1,9 @@
+#!/usr/bin/python3 -I
+"""Immutable-release wrapper for the evcow-orchestrator SQLite writer."""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+from ops.deploy.vps.admit import main
+
+raise SystemExit(main())

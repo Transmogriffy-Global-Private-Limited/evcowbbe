@@ -6,7 +6,7 @@ This document is the contract that `github.com/Transmogriffy-Global-Private-Limi
 
 GitHub Source CI verifies source only. It does not deploy, SSH, upload releases, change VPS infrastructure, configure Caddy, or restart a service. The VPS deployment framework remains the authority for fetching an exact SHA, building it with VPS-owned configuration, running migrations, activating an immutable release, restarting/reloading, and verifying the resulting process.
 
-This repository intentionally does not provide Docker, a VPS release-directory layout, a systemd unit, Caddy configuration, a GitHub deployment trigger, or an installed deployment executor. It does contain the source-only durable control-plane foundation described below; that source is not an installed authority and normal application deployment must never silently update it.
+This repository intentionally does not provide Docker, an application-release directory layout, an application systemd unit, Caddy configuration, or an installed deployment executor. It does include a GitHub trigger and systemd templates for passive VPS ingress only; neither can deploy the application. It does contain the source-only durable control-plane foundation described below; that source is not an installed authority and normal application deployment must never silently update it.
 
 ## Deployment control-plane foundation (Burner 1)
 
@@ -79,9 +79,109 @@ Revocation is allowed only while a decision is `approved`. A revoked or verified
 
 Before a future executor can call PostgreSQL, it must atomically claim the decision/run migration boundary after rechecking exact SHA, fingerprint, trusted remote head, and all operator fences. The control-plane state becomes `executing`; revocation is then rejected because PostgreSQL may commit independently. On ambiguous result or crash it becomes `uncertain`. Reconciliation stores the independently observed resulting application-ledger fingerprint and how many of the approved plan migrations committed: zero becomes `not_committed`, an in-range nonzero subset becomes `partially_committed`, and the full count becomes `committed`. A partial result marks A's run failed without claiming to undo the durable migrations, releases serialized run ownership, and permits a newer corrective B to reconcile forward from the actual ledger. This is deliberately not a cross-database transaction and never claims that a migration succeeded without ledger evidence. Burner 1 executes no application migration and assumes no database DOWN migration is safe.
 
-### Future installation, reconciliation, and notifications
+### VPS2 ingestion integration package
 
-Burner 1 does not install systemd units, sudoers rules, GitHub ingress, configuration files, release directories, retention, recovery workers, builds, activation, health checks, rollback activation, or SMTP. A later separately authorized installer must select and protect the production state path (expected operational configuration belongs under `/etc/evcowbbe-deploy` and durable state under `/var/lib/evcowbbe-deploy`), configure least-privilege identities, and keep control-plane upgrades separate from application release activation.
+The source-controlled `ops/deploy/vps` package is generated and locally tested, but is not installed by source CI, an application release, or this repository checkout. A separately authorized root operator installs an immutable control-plane release at `/opt/evcowbbe-deploy/releases/<40-character-control-plane-source-sha>` and points the root-owned `/opt/evcowbbe-deploy/current` link at that release. This is entirely separate from `/srv/evcowbbe/current`; no application release silently upgrades the control plane.
+
+`Prod VPS Ingestion` is a `workflow_run` workflow that runs from the default branch only after the named `Source CI` workflow has succeeded for a `push` to `prod` in this exact repository. It uses `github.event.workflow_run.head_sha`, not the downstream workflow SHA, and rejects a non-lowercase 40-character SHA before constructing JSON. The deterministic `source_id` is `source-ci:<upstream-run-id>:<upstream-run-attempt>`. It has no checkout, artifact, pull-request-target, deployment, or broad token permission. It writes an operator-configured dedicated private key and an operator-configured complete `known_hosts` entry into runner-temporary `0600` files, uses `StrictHostKeyChecking=yes`, and never runs `ssh-keyscan` or disables host checking. Host, port, private key, and host key are GitHub secret configuration, not repository values.
+
+The dedicated `evcow-trigger` key is restricted by a root-owned `authorized_keys` entry with OpenSSH `restrict,command=...`. It accepts only the literal SSH original command `evcowbbe-deploy-ingest-v1`, disables PTY, user rc, X11, agent forwarding, TCP forwarding, and `PermitOpen`, and receives exactly one JSON object on stdin. The root-owned ingress code bounds input at 4096 bytes, requires strict UTF-8 and at most one trailing LF (no other framing or duplicate keys), then reuses Burner 1's exact request validation. It has no database write permission. Its only fixed privileged handoff is the no-argument sudo command `/opt/evcowbbe-deploy/current/bin/evcowbbe-deploy-admit-and-wake`.
+
+That fixed root bridge runs the SQLite admission command as `evcow-orchestrator`, the only database writer. Admission uses the existing transactional `submit_request` idempotency model, so SQLite remains the sole durable queue/truth. The acknowledgement is emitted only after that transaction returns. On successful admission the bridge starts `evcowbbe-deploy-reconcile.service`; a wake failure returns nonzero even though the durable request is retained. The five-minute persistent timer is the recovery path for a crash after commit but before wake. Wakes may coalesce because they are hints only.
+
+The systemd service is passive. It reports an exact historical `accepted_requests_total` and `reconciliation_state: not_evaluated`, always with `deployed: false`. Historical admission is not itself pending work. It does not fetch Git, build, migrate, alter releases/configuration, restart the application, roll back, or notify. The unit runs as `evcow-orchestrator` with `NoNewPrivileges`, private temporary/devices, `ProtectSystem=strict`, protected home/kernel/control groups, no capabilities, native syscall architecture, and write access only to `/var/lib/evcowbbe-deploy`.
+
+Ingress acceptance remains only an audited candidate. A delayed successful Source CI event can admit an obsolete SHA safely. The later executor must independently verify the current authoritative `prod` SHA, the relevant Source CI success, actual release identity, PostgreSQL ledger/checksums/compatibility, and all operator controls before any irreversible work. It must not treat an admission record, a wake, or a GitHub acknowledgement as deployment success.
+
+### Ubuntu 24.04 installation and recovery runbook
+
+This is a separately authorized VPS2 procedure. Substitute the values in angle brackets; do not invent a host, port, key fingerprint, or source SHA. It does not access the application `.env`, PostgreSQL credentials, or `evcowbbe-dev.service`.
+
+1. On an administrative workstation, generate the dedicated key without printing its private material:
+
+   ```bash
+   umask 077
+   ssh-keygen -t ed25519 -a 64 -f ./evcow-trigger-vps2 -C evcowbbe-prod-ingest
+   ssh-keygen -lf ./evcow-trigger-vps2.pub
+   ```
+
+   Record the public-key fingerprint. Store the private key only in the GitHub secret `EVCOWBBE_VPS2_INGEST_PRIVATE_KEY`; store the exact trusted VPS host-key line from an independently verified console/provider record in `EVCOWBBE_VPS2_INGEST_HOST_KEY`. Configure `EVCOWBBE_VPS2_INGEST_HOST` and `EVCOWBBE_VPS2_INGEST_PORT` as GitHub secrets. Never derive the host key with an unauthenticated `ssh-keyscan` during CI.
+
+2. On VPS2 as root, inspect rather than alter existing account and SSH state:
+
+   ```bash
+   for account in evcow-trigger evcow-orchestrator; do id "$account"; getent passwd "$account"; passwd -S "$account"; done
+   sudo -l -U evcow-trigger
+   test -d /srv/evcowbbe/source
+   test -f /etc/evcowbbe-deploy/deploy.conf
+   test -d /var/lib/evcowbbe-deploy
+   ```
+
+   A password-locked account is not evidence that public-key forced-command authentication works. Do not change its shell or lock state merely to satisfy this check.
+
+3. Obtain a clean checkout of the control-plane source at the separately approved `<control-plane-source-sha>` outside `/srv/evcowbbe/current`, verify it, and run the installer once:
+
+   ```bash
+   control_source=/root/evcowbbe-deploy-source
+   control_sha=<40-lowercase-hex-sha>
+   git -C "$control_source" rev-parse HEAD
+   git -C "$control_source" status --short
+   sudo bash "$control_source/ops/deploy/vps/install-control-plane.sh" \
+     --source-dir "$control_source" \
+     --source-sha "$control_sha" \
+     --trigger-public-key-file /root/evcow-trigger-vps2.pub
+   ```
+
+   The installer refuses a source SHA mismatch or dirty checkout (including untracked files), pre-existing conflicting release/current/key/sudoers/systemd paths, missing accounts, malformed Ed25519 public key, incompatible existing SQLite directory ownership, or unsupported effective sshd key configuration. It archives only committed Git objects at the approved exact SHA, stages and publishes root-owned immutable code, initializes `/var/lib/evcowbbe-deploy/orchestrator.sqlite3` as `evcow-orchestrator`, enables the passive timer, and creates a **root-owned, forced-command, `restrict` authorized key last**. No `Match` drop-in is installed: Ubuntu's sshd `Include` ordering can cause `Match` blocks in drop-ins to affect unrelated settings. No sshd reload is needed for `authorized_keys` updates. The installer removes only newly created artifacts on ordinary failure, preserving the SQLite database, but a power loss/SIGKILL can leave a partially staged installation; follow the recovery procedure below. Retain the current administrative console until real SSH denial and ingress acceptance checks pass. The application service is never touched.
+
+4. Verify the installation and constrained identity:
+
+   ```bash
+   systemctl status evcowbbe-deploy-reconcile.timer --no-pager
+   systemctl start evcowbbe-deploy-reconcile.service
+   journalctl -u evcowbbe-deploy-reconcile.service -n 50 --no-pager
+   sudo -u evcow-orchestrator /opt/evcowbbe-deploy/current/bin/evcowbbe-deploy-reconcile
+   sudo -u evcow-trigger -n /usr/bin/sudo -n /opt/evcowbbe-deploy/current/bin/evcowbbe-deploy-admit-and-wake </dev/null || true
+   systemctl status evcowbbe-dev.service --no-pager
+   readlink -f /srv/evcowbbe/current
+   ```
+
+   From the workstation, test only the forced operation using the dedicated key and pinned known-hosts file. Use a real successful Source CI SHA, never a fabricated production-looking SHA:
+
+   ```bash
+   vps_host=<operator-configured-host>
+   vps_port=<operator-configured-port>
+   candidate_sha=<successful-source-ci-40-character-sha>
+   printf '%s\n' '<independently-verified-known-hosts-line>' > ./vps2-known_hosts
+   chmod 0600 ./vps2-known_hosts
+   CANDIDATE_SHA="$candidate_sha" python3 - <<'PY' > ./admission-request.json
+   import json
+   import os
+   import re
+   sha = os.environ["CANDIDATE_SHA"]
+   if not re.fullmatch(r"[0-9a-f]{40}", sha):
+       raise SystemExit("candidate SHA is invalid")
+   print(json.dumps({"event":"push","sha":sha,"branch":"prod","actor":"manual-verifier","source_id":"manual-ingress-test:1"}, separators=(",", ":")))
+   PY
+   ssh -i ./evcow-trigger-vps2 -p "$vps_port" -o BatchMode=yes -o IdentitiesOnly=yes \
+     -o StrictHostKeyChecking=yes -o UserKnownHostsFile=./vps2-known_hosts \
+     "evcow-trigger@$vps_host" evcowbbe-deploy-ingest-v1 < ./admission-request.json
+   ssh -i ./evcow-trigger-vps2 -p "$vps_port" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+     -o UserKnownHostsFile=./vps2-known_hosts "evcow-trigger@$vps_host" true && exit 1 || true
+   ```
+
+   An arbitrary command, PTY request, shell, port forwarding attempt, or a malformed request must fail. Also test an SSH request with no remote command; the wrapper must reject it. Never consider a merely successful `sshd -t` check evidence that the forced-key restrictions have been exercised. A valid request returns a bounded JSON acknowledgement; repeating it returns the same request with `created:false`. Inspect `orchestrator.sqlite3` only through the orchestrator CLI/API and verify that the application service and application release link are unchanged.
+
+5. To recover after a wake failure, do not resubmit with a new source ID. Inspect the durable request/history, then start the passive service or wait for the persistent timer:
+
+   ```bash
+   systemctl start evcowbbe-deploy-reconcile.service
+   journalctl -u evcowbbe-deploy-reconcile.service -n 100 --no-pager
+   ```
+
+   For interrupted initial installation, inspect exact ownership, content, and any partial paths before retrying. If and ONLY IF they are confirmed to have been created by this COW installer and are not live/useful, disable its passive timer and remove its specific sudoers file, systemd units, root-owned trigger authorized_keys and `.ssh` (only if empty after removal), its root-owned `/opt/evcowbbe-deploy/current` symlink and matching release directory; never delete the application releases or SQLite state. Run `systemctl daemon-reload`, `sshd -t`, and `visudo -c` and repeat preflight. Do not clean unknown or pre-existing paths automatically.
+
+   To roll back a control-plane installation, stop/disable the timer, preserve the SQLite state, and repoint `/opt/evcowbbe-deploy/current` only through a separately reviewed root change to a prior immutable release. Revalidate `sshd -t`, `visudo -cf /etc/sudoers.d/evcowbbe-trigger-ingest`, and `systemctl daemon-reload` before re-enabling the timer. Never roll back application code, run database DOWN migrations, or delete SQLite history as part of this procedure.
 
 The future executor is a reconciler: it must independently verify the current remote `prod` SHA, then compare that exact SHA with admitted candidates, real runtime/release/database observation, and durable controls after every wake or crash recovery. It must permit a newer fix-forward SHA after a failed earlier run and must not manufacture successful outcomes. It must reconcile every `executing` or `uncertain` migration decision against the application ledger before allowing revocation, reapproval, or a conflicting deployment. The eventual notification subsystem must add a separate durable outbox with retry policy, deduplication keys, delivery state, and SMTP-failure isolation. Burner 1 does not send email or persist notification delivery claims.
 
