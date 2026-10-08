@@ -359,3 +359,17 @@ This is a conservative crash boundary: uncertain outcomes require real OS and
 PostgreSQL observation and a separately approved recovery, not an automatic
 replay. The bridge rechecks operator controls transactionally at claim time.
 No schema reset, SQL DOWN migration, or application change is involved.
+
+### VPS2 Go compiler visibility (first host acceptance)
+
+The exact Ubuntu host installs Go at `/usr/local/go/bin/go`. The root bridge
+runs subprocesses with an explicitly restricted environment, so the Go
+compiler directory **must** be in that environment's fixed `PATH`; an
+interactive root login's Go version proves nothing about the unprivileged
+builder's inherited `PATH`. This was confirmed by a fail-closed
+`evcow-builder` acceptance preflight on VPS2. The fixed path includes
+`/usr/local/go/bin` and remains independent of the request payload. Confirm
+that this compiler is owned by root, executable by `evcow-builder`, and that
+the builder's module/cache locations are usable before a permitted build.
+No application binaries, environments, GitHub branches, SQLite records, or
+executor privileges change as part of this source-only correction.

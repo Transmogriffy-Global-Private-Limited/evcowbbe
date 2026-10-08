@@ -45,7 +45,7 @@ def fixed_run(argv: list[str], *, timeout: int = 45, input: bytes | None = None,
     try:
         result = subprocess.run(argv, input=input, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 timeout=timeout, check=False, close_fds=True, env={
-                                    'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+                                    'PATH': '/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
                                     'LANG': 'C', 'HOME': '/root',
                                 })
     except (OSError, subprocess.TimeoutExpired):

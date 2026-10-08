@@ -13,7 +13,7 @@ from unittest.mock import patch
 from ops.deploy.control_plane import ValidationError
 from ops.deploy.executor.host import contract as c
 from ops.deploy.executor.host.bridge import main
-from ops.deploy.executor.host.operations import VPS2Operations, HostOperationFailed
+from ops.deploy.executor.host.operations import VPS2Operations, HostOperationFailed, fixed_run
 from ops.deploy.executor.host.port import BRIDGE, HostPortError, VPS2ExecutionPort
 
 A, B = 'a'*40, 'b'*40
@@ -89,6 +89,29 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn('sudoers.d/evcowbbe-executor', text)
         self.assertNotIn('evcowbbe-dev.service', text)
         self.assertNotIn('rm -rf -- "$state_dir"', text)
+
+
+class FixedRunnerEnvironmentTests(unittest.TestCase):
+    def test_vps2_go_toolchain_is_available_in_explicit_subprocess_path(self):
+        # A root interactive login has a different PATH from the root bridge.
+        # This regression was observed on VPS2: /usr/local/go/bin/go existed,
+        # while the bridge's sanitized PATH omitted its directory.
+        with patch('ops.deploy.executor.host.operations.subprocess.run') as execute:
+            execute.return_value = SimpleNamespace(returncode=0, stdout=b'ok')
+            self.assertEqual(fixed_run(['/usr/bin/true']), b'ok')
+            execute.assert_called_once()
+            args, kwargs = execute.call_args
+            self.assertEqual(args[0], ['/usr/bin/true'])
+            self.assertNotIn('shell', kwargs)
+            self.assertEqual(
+                kwargs['env'],
+                {
+                    'PATH': '/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+                    'LANG': 'C',
+                    'HOME': '/root',
+                },
+            )
+            self.assertTrue(kwargs['close_fds'])
 
 
 class PortTests(unittest.TestCase):
