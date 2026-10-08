@@ -15,6 +15,13 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify deployment control-plane source
+        run: |
+          python -m compileall -q ops/deploy
+          python -m unittest discover -s ops/deploy/tests -v
       - name: Verify formatting
         run: test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
       - name: Verify module checksums

@@ -6,7 +6,91 @@ This document is the contract that `github.com/Transmogriffy-Global-Private-Limi
 
 GitHub Source CI verifies source only. It does not deploy, SSH, upload releases, change VPS infrastructure, configure Caddy, or restart a service. The VPS deployment framework remains the authority for fetching an exact SHA, building it with VPS-owned configuration, running migrations, activating an immutable release, restarting/reloading, and verifying the resulting process.
 
-This repository intentionally does not provide Docker, a VPS release-directory layout, a systemd unit, Caddy configuration, a GitHub deployment trigger, or a generic deployment orchestrator.
+This repository intentionally does not provide Docker, a VPS release-directory layout, a systemd unit, Caddy configuration, a GitHub deployment trigger, or an installed deployment executor. It does contain the source-only durable control-plane foundation described below; that source is not an installed authority and normal application deployment must never silently update it.
+
+## Deployment control-plane foundation (Burner 1)
+
+`ops/deploy` is a Python 3.12-standard-library-only, local SQLite foundation for a future VPS deployment control plane. It has no network, subprocess, Git, GitHub, Go-build, migration, service, Caddy, release-link, application-environment, SMTP, secret, or VPS access capability. Its strongest permitted effect is creating or updating a caller-selected SQLite state file.
+
+The future installed control plane will own desired state, observed state, and durable operator interventions. Burner 1 implements only the durable desired/control truth and request-admission foundations. The eventual installed paths, identities, and wake mechanism remain separately authorized operational work: source code must not assume they already exist or access `/srv/evcowbbe`, `/etc/evcowbbe-deploy`, `/var/lib/evcowbbe-deploy`, `/run/lock`, or VPS2 from local development.
+
+### Durable state and recovery foundations
+
+One SQLite database is authoritative for Burner 1's locally observed candidates, run ownership, operator controls, migration-ledger observations, and audit truth. Each connection enables WAL, foreign keys, `synchronous=FULL`, and a bounded busy timeout; schema initialization is transactional and repeatable without data loss. The database stores an explicit schema version, rejects a newer, older, incomplete, or integrity-invalid schema, and fails closed instead of recreating inconsistent state. Schema version 4 is a clean pre-release schema; version-1 through version-3 state databases are explicitly refused rather than reset or upgraded implicitly.
+
+The normalized state includes durable deployment requests, deployment runs, append-only deployment events, operator controls, and migration decisions. Events cannot be updated or deleted by the SQLite schema. Current control/request/run/decision state is represented independently of event history. Timestamps are UTC. A future wake unit may signal that work exists, but it must never become a second queue or authoritative request store.
+
+| State | Durable semantics |
+| --- | --- |
+| `control_plane_meta` | Singleton schema version and initialization timestamp. A newer, incomplete, or integrity-invalid schema is rejected without reset. |
+| `deployment_requests` | Canonical accepted prod-push candidate, SHA-256 payload hash, external `source_id`, monotonic sequence, and acceptance time. `source_id` is unique. Acceptance proves only local receipt, never current remote branch authority. |
+| `deployment_runs` | Stable run ID, exact canonical ingress-request reference, SHA-level work identity, monotonic SHA attempt number, actor, explicit state, execution-claimed timestamp, migration-decision reference, outcome, bounded structured error details, and lifecycle timestamps. SQLite allows only one active run globally. |
+| `deployment_events` | Immutable UTC audit sequence with canonical JSON details. SQLite triggers reject updates and deletes. |
+| `operator_controls` | Active/released pause, exact-SHA sideline, exact-SHA rollback hold, or single-use SHA retry authorization, with creator/releaser/consumer identity, reason, and timestamps. |
+| `migration_decisions` | Exact SHA plus exact migration-plan fingerprint and count, historical approval/revocation, `executing`/`uncertain` irreversible-boundary states, observed resulting-ledger fingerprint/count, and reconciled no/partial/full commit state. |
+
+Incoming prod requests have exactly five fields: `event`, `sha`, `branch`, `actor`, and `source_id`. Burner 1 accepts only `push` to `prod` with a 40-character lowercase SHA and bounded safe identifiers. It canonicalizes the validated payload, persists its SHA-256 hash, and makes `source_id` the database-enforced external idempotency key. One new source ID creates one accepted candidate and one audit event in one transaction. An identical repeat returns the original request; conflicting reuse fails without mutating it. SQLite serialization and uniqueness protect concurrent independent local processes. Candidate acceptance is immutable ingress history, so it is not misleadingly marked superseded merely because another event arrives.
+
+Requests and runs are distinct. A request is a locally accepted candidate; a run is a stable future deployment attempt with explicit transition rules. Failure details and audit details are canonical structured JSON, not opaque unbounded logs; callers must not include credentials, tokens, connection strings, or raw commands. A future trusted executor must independently obtain the exact current remote `prod` SHA and pass it as a trusted input to selection, run planning, and the just-before-execution claim. Burner 1 never derives remote authority from request order and never simulates GitHub verification. Without that input, desired state is blocked as `authoritative_prod_head_required`.
+
+Selection is exact-SHA only: the verified head must have an admitted candidate and must not be sidelined. If verified B is sidelined while older A is accepted, desired state is blocked as `sidelined`; Burner 1 never falls back to A. Releasing B permits a later fresh remote-head verification to select B, not an automatic replay. For multiple ingress events with one SHA, the first accepted request is the immutable canonical ingress association; later `source_id` values remain truthful audit history and never invalidate or relabel planned/running work. `create_run` and `claim_run_execution` both require that exact canonical request ID.
+
+Ingress identity and deployment-work identity are separate. Different `source_id` values may record truthful same-SHA delivery history, but they do not create automatic retry eligibility. A SHA has monotonic run attempts and only one active run globally. After a failed attempt, or a cancellation after execution was claimed, a trusted local operator must create a single-use retry authorization for that exact SHA; its consumption is audited atomically with a new run for the same canonical request. `cancel-retry` atomically withdraws only an unused retry authorization, preserves it as released history, restores the retry fence, and is idempotent when no active authorization exists. A consumed authorization cannot be retroactively canceled. This prevents unbounded automatic retry while a newer verified B remains independently eligible after failed A. A planned run that is superseded or canceled before execution was claimed is safe pre-execution disposition, not a failed deployment, and may be planned again if its SHA later becomes the verified head. A previously succeeded SHA instead requires future-executor runtime reconciliation before another deployment attempt; Burner 1 cannot infer whether the runtime already matches it.
+
+SQLite serializes all active work with one partial unique index spanning `planned`, `running`, `migration_boundary_claimed`, `migration_uncertain`, and `migration_committed`. A planned run is rechecked against current remote-head input and every pause, sideline, and rollback-hold fence when it claims executable work. A changed head supersedes only a still-planned run; a running or post-boundary run is never falsely rewritten as harmless. Recovery resumes or reconciles the same durable run ID.
+
+### Local operator controls
+
+The local CLI requires an explicit state path and writes stable JSON:
+
+```bash
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 status
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 submit \
+  --event push --sha <40-lowercase-hex> --branch prod \
+  --actor trusted-local-operator --source-id <unique-event-id>
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 pause \
+  --operator trusted-local-operator --reason "maintenance window"
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 resume \
+  --operator trusted-local-operator --reason "maintenance complete"
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 sideline <sha> \
+  --operator trusted-local-operator --reason "investigating failure"
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 release <sha> \
+  --operator trusted-local-operator --reason "review complete"
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 retry <sha> \
+  --operator trusted-local-operator --reason "reviewed retry after failure"
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 cancel-retry <sha> \
+  --operator trusted-local-operator --reason "retry no longer authorized"
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 requests
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 history --limit 100
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 status --verbose
+python -m ops.deploy.cli --state-db /path/to/control-plane.sqlite3 status \
+  --trusted-prod-sha <externally-verified-40-lowercase-hex-sha>
+```
+
+`status` is concise by default and has `--verbose` for requests, runs, and migration-decision state. `--trusted-prod-sha` is inspection-only input: it is valid for controlled tests or a future trusted executor, but this CLI cannot authenticate or verify it. `requests` and `history` expose the durable candidate list and append-only events. `pause`/`resume`, exact-SHA `sideline`/`release`, and `rollback-hold`/`rollback-release` are idempotent where no state changes. A rollback hold records the protected rollback target and blocks automatic selection; a conflicting target returns a domain conflict without replacing the existing hold. Removing it resumes reconciliation from real current state instead of replaying that rollback target. A failed SHA and a sidelined SHA remain different facts.
+
+Caller-supplied operator names are only trusted-local audit attribution in Burner 1. They are not authentication. A future installed ingress must authenticate the command source and pass a verified operator identity. Local CLI validation, idempotency conflicts, invalid transitions, and state/integrity failures have distinct exit codes and JSON errors.
+
+### Migration-decision boundary
+
+Migration decisions are deliberately separate from deployment runs. Burner 1 stores approval only for one exact admitted SHA, one exact 64-character plan fingerprint, and the exact positive number of migrations in that plan. The fingerprint is SHA-256 of canonical JSON containing the target release SHA, the complete starting application migration-ledger digest, and the ordered proposed migrations including version, filename, SQL checksum, and compatibility floor. A changed starting ledger or materially changed plan must produce a different fingerprint.
+
+Revocation is allowed only while a decision is `approved`. A revoked or verified `not_committed` approval remains immutable history, and a later approval for that same exact SHA and plan creates a new decision ID. `executing`, `uncertain`, `not_committed`, `partially_committed`, and `committed` decisions cannot be rewritten as revoked. `committed` or `partially_committed` permanently blocks reapproval of the same exact target/start-ledger-bound plan. The partial rule prevents retrying migrations that real ledger evidence says already applied.
+
+Before a future executor can call PostgreSQL, it must atomically claim the decision/run migration boundary after rechecking exact SHA, fingerprint, trusted remote head, and all operator fences. The control-plane state becomes `executing`; revocation is then rejected because PostgreSQL may commit independently. On ambiguous result or crash it becomes `uncertain`. Reconciliation stores the independently observed resulting application-ledger fingerprint and how many of the approved plan migrations committed: zero becomes `not_committed`, an in-range nonzero subset becomes `partially_committed`, and the full count becomes `committed`. A partial result marks A's run failed without claiming to undo the durable migrations, releases serialized run ownership, and permits a newer corrective B to reconcile forward from the actual ledger. This is deliberately not a cross-database transaction and never claims that a migration succeeded without ledger evidence. Burner 1 executes no application migration and assumes no database DOWN migration is safe.
+
+### Future installation, reconciliation, and notifications
+
+Burner 1 does not install systemd units, sudoers rules, GitHub ingress, configuration files, release directories, retention, recovery workers, builds, activation, health checks, rollback activation, or SMTP. A later separately authorized installer must select and protect the production state path (expected operational configuration belongs under `/etc/evcowbbe-deploy` and durable state under `/var/lib/evcowbbe-deploy`), configure least-privilege identities, and keep control-plane upgrades separate from application release activation.
+
+The future executor is a reconciler: it must independently verify the current remote `prod` SHA, then compare that exact SHA with admitted candidates, real runtime/release/database observation, and durable controls after every wake or crash recovery. It must permit a newer fix-forward SHA after a failed earlier run and must not manufacture successful outcomes. It must reconcile every `executing` or `uncertain` migration decision against the application ledger before allowing revocation, reapproval, or a conflicting deployment. The eventual notification subsystem must add a separate durable outbox with retry policy, deduplication keys, delivery state, and SMTP-failure isolation. Burner 1 does not send email or persist notification delivery claims.
+
+Run the control-plane source tests locally with:
+
+```bash
+python -m compileall -q ops/deploy
+python -m unittest discover -s ops/deploy/tests -v
+```
 
 ## Canonical release build
 

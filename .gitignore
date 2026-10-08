@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Python control-plane bytecode
+__pycache__/
+*.py[cod]
+
 # Go build/test output
 bin/
 dist/
