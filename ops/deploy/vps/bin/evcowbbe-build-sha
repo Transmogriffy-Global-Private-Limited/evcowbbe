@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Fixed, unprivileged builder for the separately approved root bridge.
+set -euo pipefail
+[[ $# -eq 1 && $1 =~ ^[0-9a-f]{40}$ ]] || exit 2
+[[ $(id -un) == evcow-builder ]] || exit 2
+sha=$1
+source_dir=/srv/evcowbbe/source
+work=/srv/evcowbbe/build-work
+prepared=$work/prepared
+[[ -d $source_dir && ! -L $source_dir && -d $work && ! -L $work ]] || exit 2
+[[ ! -e $prepared/$sha && ! -L $prepared/$sha ]] || { echo 'build output already exists; inspect before retry' >&2; exit 2; }
+mkdir -p -- "$prepared"
+tmp=$(mktemp -d "$work/.build-$sha-XXXXXXXX")
+cleanup() { rm -rf -- "$tmp"; }
+trap cleanup EXIT
+git -C "$source_dir" cat-file -e "$sha^{commit}"
+git clone -q --no-checkout --local --no-hardlinks "$source_dir" "$tmp/source"
+git -C "$tmp/source" checkout --quiet --detach "$sha"
+[[ $(git -C "$tmp/source" rev-parse HEAD) == "$sha" ]] || exit 2
+[[ -z $(git -C "$tmp/source" status --porcelain --untracked-files=all) ]] || exit 2
+mkdir "$tmp/output"
+bash "$tmp/source/scripts/build-release.sh" \
+  --server-output "$tmp/output/evcowbbe" \
+  --migrator-output "$tmp/output/evcowbbe-migrate" \
+  --version '0.0.0'
+[[ -x $tmp/output/evcowbbe && -x $tmp/output/evcowbbe-migrate ]] || exit 2
+chmod 0750 "$tmp/output" "$tmp/output/evcowbbe" "$tmp/output/evcowbbe-migrate"
+mv -T -- "$tmp/output" "$prepared/$sha"
+echo 'paired build published for privileged verification'

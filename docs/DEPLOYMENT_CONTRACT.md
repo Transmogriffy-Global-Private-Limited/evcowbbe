@@ -192,6 +192,49 @@ python -m compileall -q ops/deploy
 python -m unittest discover -s ops/deploy/tests -v
 ```
 
+## Burner 3 source-only authority and migration preflight
+
+This source introduces a read-only verification and planning slice under
+`ops/deploy/executor`. It does **not** provide or enable the deployment
+executor, privileged service, live DB observer, or control-plane upgrade. The
+existing VPS2 ingress and its SQLite schema v4 remain untouched. The source
+must not be used to activate application deployment until those missing pieces
+receive separate review and real-host authorization.
+
+The authority contract independently verifies the authenticated GitHub `prod`
+branch head plus an exact-SHA, successful, completed, push-triggered Source CI
+run belonging to the approved repository. A successful SSH admission is not
+sufficient authority. The verification is subject to rechecking the HEAD and
+CI before future irreversible actions; `ready` from a preflight snapshot alone
+is never execution authorization.
+
+The migration plan contract compares version/name/raw SHA-256 checksum and
+min-compatible-binary-version for each SQL source file against an actual
+read-only PostgreSQL ledger observation. It rejects incompatible/future
+migrations, historical gaps, missing ledger, unknown applied history, and
+metadata disagreement. A plan fingerprint binds the target SHA, canonical
+starting ledger identity digest and ordered pending migration identities.
+Pending plans require exactly matching durable, active operator approval.
+After **any** migration execution attempt, including a command failure, a
+future executor must query the actual ledger and reconcile zero/partial/full
+commit outcomes before allowing another attempt; it may not assume transaction
+atomicity across multiple migrations or overwrite ledger truth.
+
+The existing Go migrator offers `status --json`, returning a stable JSON object:
+
+```json
+{"ledger_present":true,"applied":[{"version":1,"name":"example","checksum":"<actual 64-hex checksum>","min_compatible_binary_version":0}]}
+```
+
+The JSON output is from `Manager.Status` under the migrator's database advisory
+lock, contains only identity metadata, and does not run migrations. It is
+suitable for a *trusted* ledger observation by a future deployment executor;
+never infer ledger history from the human-readable status counts. A missing
+ledger returns `ledger_present:false` and `applied:[]` and must be dealt with
+explicitly, not auto-initialized by planning. A null floor is an error, not
+presumed backward compatibility. The output of the source-only preflight
+remains only a recommendation for a future, independently fenced executor.
+
 ## Canonical release build
 
 Run this from a clean checkout with Bash and the Go version declared in `go.mod`:
@@ -297,3 +340,96 @@ The future VPS framework should build a clean exact SHA into the paired server a
 The server handles `SIGINT` and `SIGTERM` by stopping new HTTP work and calling graceful shutdown for the configured timeout. Database pools close when the process exits.
 
 Source CI is defined in `.github/workflows/ci.yml`. It checks formatting without changing source, `go mod verify`, tests, vetting, both command builds into runner-temporary paths, static migration validation, the canonical paired-release interface, both release-binary existence/executability, and that the release builder reports the workflow's exact `GITHUB_SHA`. It runs the release migrator against a bounded intentionally unreachable loopback PostgreSQL URL: matching `BUILD_REVISION` must reach the normal `database unavailable` result, while a syntactically valid mismatched revision must fail specifically at release-identity validation before database access. It does not deploy or publish an artifact. PostgreSQL integration tests remain gated solely by `TEST_DATABASE_URL`; they never fall back to `DATABASE_URL`. Source CI currently supplies no disposable PostgreSQL service, so database integration execution is an explicit separate verification boundary.
+
+## Burner 3 Patch 2: executable lifecycle semantics, no live executor
+
+The source-only `ops/deploy/executor/lifecycle.py` composes the exact GitHub
+Source CI authority, immutable migration plans, durable control-plane run and
+migration state transitions, append-only schema-v4 execution checkpoints,
+and an injected fixed-operation `ExecutionPort`. **There is no installed
+`ExecutionPort` or executable deployment service**, so these new source files
+cannot deploy the application or alter VPS2. The existing passive VPS2
+reconciler and SSH ingress retain their exact previous authority and behavior.
+
+For an accepted SHA, the intended order is preflight, control/authority recheck,
+claim, durable build intent, paired-build observation, unchanged ledger and
+approval recheck, optional durable SQL boundary and full/partial/none ledger
+reconciliation, another exact prod/CI/control recheck, durable activation
+intent, activation observation, runtime check, and terminal success. Failed
+readiness first persists a rollback hold, then attempts and verifies binary
+rollback. Any unexpected or interrupted external side effect remains an
+active run requiring independent manual reconciliation; the same work is
+**never** automatically replayed merely because a new timer tick occurs.
+
+`deployment_events` stores append-only stage intent and observation records.
+These do not claim that an external effect is atomic with SQLite, and source
+`ExecutionPort` tests do not constitute host-side proof. A future actual
+adapter must implement host process fencing, exact release/ledger observations,
+correct least-privilege build/migrate/activate boundaries, and verified
+recovery; its control-plane installation must preserve the existing schema-v4
+SQLite state and manual controls. Until separately installed and accepted,
+**automatic deployment is disabled**.
+
+## VPS2 executor host binding (Burner 3 source-only Patch 3)
+
+Confirmed on VPS2: `evcowbbe-dev.service` is a `simple`, enabled service running
+as `evcowbbe:evcowbbe`, with WorkingDirectory `/var/lib/evcowbbe`,
+EnvironmentFile `/etc/evcowbbe/dev.env`, `ProtectSystem=strict`, and
+`ReadWritePaths=/var/lib/evcowbbe`. Its executable was the root-owned
+`/srv/evcowbbe/releases/2ac184c818db49dddf598984b68349d1d33e4c47/evcowbbe`
+and `/health/ready` returned ready at the 8 October 2026 inspection. The
+source checkout is `evcow-builder:evcow-builder`, the build workspace is
+`evcow-builder:evcow-deploy`, application releases are `root:root`, the
+EnvironmentFile is `root:evcowbbe` mode 0640, and the deployment config is
+`root:evcow-orchestrator` mode 0640. These observations are a starting
+contract, not guaranteed immutable conditions; the executor must revalidate.
+
+**Burner 3 integration correction (before privileged installation):**
+VPS2 currently serves `2ac184c`, which cannot produce `migrate status --json`.
+The new control-plane's read-only ledger observer is compiled offline during
+its exact-Git-object code-only upgrade (not copied from the active app release).
+It reads `public.evcowbbe_schema_migrations` as the application identity under
+a read-only repeatable-read transaction while holding the existing migration
+advisory lock, and returns only `ledger_present` and applied migration
+identities. A busy lock, missing metadata or query failure blocks rather than
+inventing ledger truth. The root bridge rechecks current pause, sideline and
+rollback controls after remote verification and immediately before privileged
+forward effects. The intentionally allowed rollback path still requires a
+persisted hold for the previous SHA plus a matching rollback intent; an active
+pause does not strand a recovery rollback. No cross-database/filesystem
+atomicity is claimed for races after an external operation begins.
+
+The host bridge's source is in `ops/deploy/executor/host`, with two fixed
+programs in `ops/deploy/vps/bin`. Its root operations require durable
+checkpoints and a separate read-only GitHub credential; it is not reachable
+from the passive systemd timer or trigger key until separately authorized,
+installed and acceptance tested. The code-only upgrade installer must not
+create or enable the privileged executor, and must never reset or recreate
+the installed SQLite state. Release transitions update the root-controlled
+revision file and immutable symlink separately, so an interruption requires
+state/ledger/runtime reconciliation; neither has been proven atomic together.
+
+A source-only implementation is not host acceptance. In particular, Ubuntu's
+transient unit launch syntax, existing app revision-file syntax, and ability
+of `evcow-builder` to fetch private GitHub objects still require exact VPS2
+verification before this adapter is enabled. Never relax the app unit, give
+the trigger sudo-to-root access to the executor, or run `prod` deployment
+without explicit reviewed authorization.
+
+### One-time privileged effect claims (Burner 3 integration correction)
+
+The root-only host bridge is not entitled to replay a previously authorized
+migration, release activation, or rollback from an old SQLite checkpoint. It
+atomically records a single `host_invocation_claimed` audit event for each run
+and external operation before starting that operation. The claim checks current
+run ownership, the exact SHA and stage prerequisites, operator controls, the
+migration boundary (for SQL), or the matching rollback hold (for recovery) in
+one SQLite transaction. Competing or repeated bridge requests are rejected.
+
+A crash or rejection after that claim does **not** prove the external effect
+occurred. Reconciliation must inspect the actual PostgreSQL ledger, active
+release link, configured revision, running process identity, and health before
+recording an outcome; do not replay the claimed call or delete the claim to
+make the next request appear new. This uses the existing schema-v4 event table
+and requires no SQLite migration. No privileged executor service or sudo rule
+is installed as part of these source-only corrections.

@@ -395,6 +395,193 @@ class ControlPlane:
 
         return self._transaction(operation)
 
+    def checkpoint_run(
+        self, run_id: str, stage: str, phase: str, executor_identity: str,
+        *, sha: str, previous_sha: str | None = None,
+    ) -> dict[str, Any]:
+        """Durable before/after side-effect journal using existing schema-v4 events.
+
+        An intent must commit *before* the external operation. An observed event
+        means the caller independently checked its result; it never infers it
+        from an HTTP/SSH acknowledgement. A crash after intent stays ambiguous.
+        """
+        run_id = self._validate_identifier("run_id", run_id, 64)
+        executor_identity = self._validate_identifier("executor_identity", executor_identity, MAX_ACTOR_LENGTH)
+        sha = self._validate_sha(sha)
+        if stage not in {"build", "activation", "runtime_verification", "rollback"}:
+            raise ValidationError("unsupported execution checkpoint stage")
+        if phase not in {"intent", "observed"}:
+            raise ValidationError("unsupported execution checkpoint phase")
+        if (stage in {"activation", "rollback"}) != (previous_sha is not None):
+            raise ValidationError("previous release SHA is required only for activation/rollback")
+        if previous_sha is not None:
+            previous_sha = self._validate_sha(previous_sha)
+        details = {"stage": stage, "phase": phase, "sha": sha, "executor_identity": executor_identity}
+        if previous_sha is not None:
+            details["previous_sha"] = previous_sha
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            run = connection.execute("SELECT * FROM deployment_runs WHERE id = ?", (run_id,)).fetchone()
+            if not run or run["sha"] != sha:
+                raise ValidationError("checkpoint run and SHA do not match")
+            if run["status"] not in {"running", "migration_committed"}:
+                raise InvalidTransition("checkpoint requires an active executable run")
+            rows = connection.execute(
+                "SELECT details FROM deployment_events WHERE entity_type = 'deployment_run' "
+                "AND entity_id = ? AND kind = 'executor_checkpoint' ORDER BY sequence", (run_id,)
+            ).fetchall()
+            prior = [json.loads(row["details"]) for row in rows]
+            existing = [x for x in prior if x["stage"] == stage and x["phase"] == phase]
+            if existing:
+                if len(existing) != 1 or existing[0] != details:
+                    raise ControlConflict("conflicting execution checkpoint")
+                return {**details, "created": False}
+            intent = next((x for x in prior if x["stage"] == stage and x["phase"] == "intent"), None)
+            if phase == "observed" and (intent is None or any(
+                intent.get(k) != v for k, v in details.items() if k != "phase"
+            )):
+                raise InvalidTransition("observation requires matching durable intent")
+            # Never silently skip an unfinished operation; not even a newer
+            # stage may proceed before the prior intent was reconciled.
+            for x in prior:
+                if x["phase"] == "intent" and not any(
+                    y["stage"] == x["stage"] and y["phase"] == "observed" for y in prior
+                ) and not (x["stage"] == stage and phase == "observed") and not (stage == "rollback" and x["stage"] == "runtime_verification"):
+                    raise ExecutionBlocked("unresolved side-effect intent requires recovery inspection")
+            if phase == "intent":
+                if any(x["stage"] == "rollback" for x in prior):
+                    raise ExecutionBlocked("rollback has started; no further forward work is allowed")
+                if stage in {"activation", "runtime_verification"}:
+                    desired = self._desired_state(connection, sha)
+                    if desired["state"] != "ready":
+                        raise ExecutionBlocked("operator controls fence forward execution")
+                if stage == "activation":
+                    unresolved_approval = connection.execute(
+                        "SELECT 1 FROM migration_decisions WHERE sha = ? AND state IN ('approved', 'executing', 'uncertain') LIMIT 1",
+                        (sha,),
+                    ).fetchone()
+                    if unresolved_approval:
+                        raise ExecutionBlocked("SQL approval is not a reconciled committed ledger")
+                if stage == "rollback":
+                    hold = connection.execute(
+                        "SELECT 1 FROM operator_controls WHERE control_type = 'rollback_hold' "
+                        "AND target_sha = ? AND status = 'active' LIMIT 1", (previous_sha,)
+                    ).fetchone()
+                    if not hold:
+                        raise ExecutionBlocked("a durable rollback hold must precede rollback")
+                earlier = {"build": (), "activation": ("build",),
+                           "runtime_verification": ("build", "activation"),
+                           "rollback": ("build", "activation")}[stage]
+                if not all(any(x["stage"] == k and x["phase"] == "observed" for x in prior) for k in earlier):
+                    raise InvalidTransition("checkpoint stage prerequisites are missing")
+                if stage == "rollback" and not any(x["stage"] == "activation" and x["phase"] == "observed" for x in prior):
+                    raise InvalidTransition("rollback is only for an observed activation")
+                if stage == "activation" and run["status"] not in {"running", "migration_committed"}:
+                    raise InvalidTransition("migration state is not reconciled")
+            self._append_event(connection, "executor_checkpoint", "deployment_run", run_id, details)
+            return {**details, "created": True}
+
+        return self._transaction(operation)
+
+    def claim_host_invocation(
+        self, run_id: str, stage: str, sha: str, executor_identity: str,
+    ) -> dict[str, Any]:
+        """Atomically consume one privileged effect invocation for a run/stage.
+
+        A checkpoint intent or a claimed SQL boundary alone is not replay
+        permission. Once an invocation is recorded, a crash, timeout or lost
+        acknowledgement requires external observation and explicit recovery,
+        never a second root dispatch of the same operation. The audit event is
+        part of the existing schema-v4 append-only SQLite history.
+        """
+        run_id = self._validate_identifier("run_id", run_id, 64)
+        sha = self._validate_sha(sha)
+        executor_identity = self._validate_identifier("executor_identity", executor_identity, MAX_ACTOR_LENGTH)
+        if stage not in {"migration", "activation", "rollback"}:
+            raise ValidationError("only consequential host operations can claim an invocation")
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            run = connection.execute("SELECT * FROM deployment_runs WHERE id = ?", (run_id,)).fetchone()
+            if not run:
+                raise ValidationError("unknown deployment run")
+            active = connection.execute(
+                "SELECT id FROM deployment_runs WHERE status IN "
+                "('planned', 'running', 'migration_boundary_claimed', 'migration_uncertain', 'migration_committed')"
+            ).fetchall()
+            if len(active) != 1 or active[0]["id"] != run_id:
+                raise ExecutionBlocked("host invocation needs the unique active run")
+            previous_invocations = connection.execute(
+                "SELECT details FROM deployment_events WHERE kind = 'host_invocation_claimed' "
+                "AND entity_type = 'deployment_run' AND entity_id = ?", (run_id,)
+            ).fetchall()
+            if any(json.loads(r["details"])["stage"] == stage for r in previous_invocations):
+                raise ExecutionBlocked("privileged operation already invoked; reconcile, never replay")
+
+            checkpoints = [json.loads(r["details"]) for r in connection.execute(
+                "SELECT details FROM deployment_events WHERE kind = 'executor_checkpoint' "
+                "AND entity_type = 'deployment_run' AND entity_id = ? ORDER BY sequence", (run_id,)
+            ).fetchall()]
+            def has_checkpoint(which: str, phase: str, *, previous: str | None = None) -> bool:
+                return any(c["stage"] == which and c["phase"] == phase and
+                           c["sha"] == run["sha"] and
+                           (previous is None or c.get("previous_sha") == previous)
+                           for c in checkpoints)
+
+            if stage == "migration":
+                if run["sha"] != sha or run["status"] != "migration_boundary_claimed":
+                    raise ExecutionBlocked("migration invocation needs the exact claimed boundary")
+                decision = connection.execute(
+                    "SELECT * FROM migration_decisions WHERE id = ?", (run["migration_decision_id"],)
+                ).fetchone()
+                if (not decision or decision["state"] != "executing" or decision["sha"] != sha):
+                    raise ExecutionBlocked("migration decision does not authorize this invocation")
+                if not has_checkpoint("build", "observed"):
+                    raise ExecutionBlocked("migration invocation needs verified build")
+            elif stage == "activation":
+                if run["sha"] != sha or run["status"] not in {"running", "migration_committed"}:
+                    raise ExecutionBlocked("activation is not an executable run")
+                if not has_checkpoint("activation", "intent") or has_checkpoint("activation", "observed"):
+                    raise ExecutionBlocked("activation has no outstanding durable intent")
+                if not has_checkpoint("build", "observed"):
+                    raise ExecutionBlocked("activation needs verified build")
+                undecided = connection.execute(
+                    "SELECT 1 FROM migration_decisions WHERE sha = ? AND state IN "
+                    "('approved', 'executing', 'uncertain') LIMIT 1", (sha,)
+                ).fetchone()
+                if undecided:
+                    raise ExecutionBlocked("migration decision has not been reconciled")
+            else:
+                if run["status"] not in {"running", "migration_committed"} or run["sha"] == sha:
+                    raise ExecutionBlocked("rollback target or run status is invalid")
+                hold = connection.execute(
+                    "SELECT 1 FROM operator_controls WHERE control_type = 'rollback_hold' "
+                    "AND target_sha = ? AND status = 'active' LIMIT 1", (sha,)
+                ).fetchone()
+                if not hold or not has_checkpoint("rollback", "intent", previous=sha):
+                    raise ExecutionBlocked("rollback requires its matching hold and intent")
+                if has_checkpoint("rollback", "observed") or not has_checkpoint("activation", "observed"):
+                    raise ExecutionBlocked("rollback has already been observed or activation is unconfirmed")
+
+            # Pause/sideline/hold fences apply to normal forward effects, never
+            # to the explicitly authorized recovery rollback.
+            if stage != "rollback" and self._desired_state(connection, sha)["state"] != "ready":
+                raise ExecutionBlocked("current operator controls fence the host invocation")
+            details = {"stage": stage, "sha": sha, "executor_identity": executor_identity}
+            self._append_event(connection, "host_invocation_claimed", "deployment_run", run_id, details)
+            return {**details, "claimed": True}
+
+        return self._transaction(operation)
+
+    def run_checkpoints(self, run_id: str) -> list[dict[str, Any]]:
+        """Read checkpoints in append-only order, including ambiguous intents."""
+        run_id = self._validate_identifier("run_id", run_id, 64)
+        return self._read(lambda connection: [
+            json.loads(row["details"]) for row in connection.execute(
+                "SELECT details FROM deployment_events WHERE entity_type = 'deployment_run' "
+                "AND entity_id = ? AND kind = 'executor_checkpoint' ORDER BY sequence", (run_id,)
+            ).fetchall()
+        ])
+
     def pause(self, operator: str, reason: str) -> dict[str, Any]:
         return self._activate_control("pause", None, operator, reason)
 

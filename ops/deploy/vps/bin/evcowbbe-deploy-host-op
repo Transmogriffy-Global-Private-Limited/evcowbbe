@@ -1,0 +1,8 @@
+#!/usr/bin/python3 -I
+"""Root-owned fixed operation bridge; no command-line arguments."""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+from ops.deploy.executor.host.bridge import main
+raise SystemExit(main())

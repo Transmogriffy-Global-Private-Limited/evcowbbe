@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/buildinfo"
@@ -29,8 +31,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	if len(args) != 1 || (args[0] != "up" && args[0] != "status" && args[0] != "verify") {
-		fmt.Fprintln(stderr, "usage: migrate <up|status|verify> | migrate verify --files-only")
+	if !((len(args) == 1 && (args[0] == "up" || args[0] == "status" || args[0] == "verify")) ||
+		(len(args) == 2 && args[0] == "status" && args[1] == "--json")) {
+		fmt.Fprintln(stderr, "usage: migrate <up|status|verify> | migrate status --json | migrate verify --files-only")
 		return 2
 	}
 
@@ -80,6 +83,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "migration status failed: %v\n", err)
 			return 1
 		}
+		if len(args) == 2 {
+			if err := json.NewEncoder(stdout).Encode(snapshotLedger(status)); err != nil {
+				fmt.Fprintln(stderr, "failed to write migration ledger snapshot")
+				return 1
+			}
+			return 0
+		}
 		fmt.Fprintf(stdout, "ledger_present=%t known_applied=%d pending=%d future_compatible=%d future_incompatible=%d\n", status.LedgerPresent, len(status.KnownApplied), len(status.Pending), len(status.FutureCompatible), len(status.FutureIncompatible))
 		for _, migration := range status.Pending {
 			fmt.Fprintf(stdout, "pending=%d_%s\n", migration.Version, migration.Name)
@@ -101,4 +111,38 @@ func releaseSHA(appEnv config.AppEnv) string {
 		return ""
 	}
 	return buildinfo.GitSHA
+}
+
+// SnapshotLedger is a read-only, machine-readable actual PostgreSQL ledger
+// observation. It is derived from Manager.Status, never from text summaries.
+// Exclude credentials, raw SQL, timestamps, and DSNs from this contract.
+type ledgerIdentity struct {
+	Version                    int64  `json:"version"`
+	Name                       string `json:"name"`
+	Checksum                   string `json:"checksum"`
+	MinCompatibleBinaryVersion *int64 `json:"min_compatible_binary_version"`
+}
+
+type ledgerSnapshot struct {
+	LedgerPresent bool             `json:"ledger_present"`
+	Applied       []ledgerIdentity `json:"applied"`
+}
+
+func snapshotLedger(status migrations.Status) ledgerSnapshot {
+	result := ledgerSnapshot{LedgerPresent: status.LedgerPresent, Applied: make([]ledgerIdentity, 0)}
+	for _, records := range [][]migrations.AppliedMigration{
+		status.KnownApplied, status.FutureCompatible, status.FutureIncompatible,
+	} {
+		for _, record := range records {
+			result.Applied = append(result.Applied, ledgerIdentity{
+				Version: record.Version, Name: record.Name,
+				Checksum:                   record.Checksum,
+				MinCompatibleBinaryVersion: record.MinCompatibleBinaryVersion,
+			})
+		}
+	}
+	sort.Slice(result.Applied, func(i, j int) bool {
+		return result.Applied[i].Version < result.Applied[j].Version
+	})
+	return result
 }
