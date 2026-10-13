@@ -63,7 +63,7 @@ class VPS2Operations:
     def _runuser(self, identity: str, command: list[str], *, timeout: int = 45, limit: int = 1048576) -> bytes:
         return self._run(['/usr/sbin/runuser', '-u', identity, '--', *command], timeout=timeout, limit=limit)
 
-    def _github_authorize(self, sha: str) -> None:
+    def _github_authorize(self, sha: str | None):
         p = c.GITHUB_TOKEN
         if p.is_symlink() or not p.is_file():
             raise HostOperationFailed('GitHub read-only authority credential not provisioned')
@@ -73,7 +73,23 @@ class VPS2Operations:
         token = p.read_text(encoding='utf-8').strip()
         if not token:
             raise HostOperationFailed('GitHub read-only credential empty')
-        GitHubAuthority(github_getter(token)).verify(sha)
+        return GitHubAuthority(github_getter(token)).verify(sha)
+
+    def authority(self, sha: str | None) -> dict[str, Any]:
+        """Positive authenticated authority, with no credential in the reply.
+
+        The orchestrator intentionally cannot read the root-only GitHub token.
+        A missing token or unsuccessful exact-HEAD Source CI fails closed.
+        """
+        if sha is not None:
+            c.exact_sha(sha)
+        verified = self._github_authorize(sha)
+        return {
+            'sha': verified.sha,
+            'ci_run_id': verified.ci_run_id,
+            'ci_attempt': verified.ci_attempt,
+            'branch': verified.branch,
+        }
 
     def _builder_head(self, sha: str) -> None:
         """Require the exact remote prod HEAD, fetched by the builder identity."""
@@ -434,5 +450,7 @@ class VPS2Operations:
             if sha is not None:
                 raise ValidationError('unexpected SHA')
             return getattr(self, operation)()
+        if operation == 'authority':
+            return self.authority(sha)
         c.exact_sha(sha)
         return getattr(self, operation)(sha)

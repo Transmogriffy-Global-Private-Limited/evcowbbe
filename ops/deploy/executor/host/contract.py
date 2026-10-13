@@ -20,7 +20,7 @@ APP_ENV = Path('/etc/evcowbbe/dev.env')
 SERVICE = 'evcowbbe-dev.service'
 STATE_DB = '/var/lib/evcowbbe-deploy/orchestrator.sqlite3'
 GITHUB_TOKEN = Path('/etc/evcowbbe-deploy/github-readonly.token')
-OPS = frozenset({'source', 'ledger', 'build', 'present', 'active', 'activate', 'migrate', 'verify', 'rollback'})
+OPS = frozenset({'source', 'ledger', 'build', 'present', 'active', 'activate', 'migrate', 'verify', 'rollback', 'authority'})
 
 
 def exact_sha(value: Any) -> str:
@@ -49,6 +49,10 @@ def decode_request(raw: bytes) -> tuple[str, str | None]:
     if obj['op'] in ('active', 'ledger'):
         if sha is not None:
             raise ValidationError('read-only operation does not accept a SHA')
+    elif obj['op'] == 'authority':
+        # Optional expected SHA binds a refresh to a specific approved HEAD.
+        if sha is not None:
+            exact_sha(sha)
     else:
         exact_sha(sha)
     return obj['op'], sha

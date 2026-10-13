@@ -6,6 +6,7 @@ import subprocess
 from typing import Any, Callable
 
 from ops.deploy.control_plane import ValidationError
+from ops.deploy.executor.authority import VerifiedAuthority, AuthorityUnavailable
 from ops.deploy.executor.host.contract import exact_sha
 from ops.deploy.executor.migration_plan import MigrationIdentity, _validate_ledger
 
@@ -44,6 +45,35 @@ class VPS2ExecutionPort:
         if type(response) is not dict or set(response) != {'ok', 'result'} or response['ok'] is not True:
             raise HostPortError('fixed bridge acknowledgement invalid')
         return response['result']
+
+    def verified_authority(self, expected_sha: str | None = None) -> VerifiedAuthority:
+        """Ask the root boundary to verify current prod and successful Source CI.
+
+        No GitHub bearer token is present in this process or response. Preserve
+        strict result schema to avoid falsely accepting an unauthenticated ACK.
+        """
+        if expected_sha is not None:
+            exact_sha(expected_sha)
+        try:
+            value = self._request('authority', expected_sha, timeout=45)
+        except HostPortError:
+            raise AuthorityUnavailable('verified GitHub authority unavailable') from None
+        if (type(value) is not dict or set(value) !=
+                {'sha', 'branch', 'ci_run_id', 'ci_attempt'} or
+                type(value['branch']) is not str or value['branch'] != 'prod' or
+                type(value['ci_run_id']) is not int or value['ci_run_id'] <= 0 or
+                type(value['ci_attempt']) is not int or value['ci_attempt'] <= 0):
+            raise AuthorityUnavailable('invalid verified authority acknowledgement')
+        try:
+            sha = exact_sha(value['sha'])
+        except ValidationError:
+            raise AuthorityUnavailable('invalid verified authority SHA') from None
+        if expected_sha is not None and sha != expected_sha:
+            raise AuthorityUnavailable('verified authority SHA mismatch')
+        return VerifiedAuthority(
+            sha=sha, ci_run_id=value['ci_run_id'],
+            ci_attempt=value['ci_attempt'], branch='prod',
+        )
 
     def source_migrations(self, sha: str):
         value = self._request('source', exact_sha(sha), timeout=120)
@@ -93,3 +123,13 @@ class VPS2ExecutionPort:
     def rollback_release(self, previous_sha: str):
         if self._request('rollback', exact_sha(previous_sha), timeout=180) is not True:
             raise HostPortError('rollback not positively acknowledged')
+
+
+class VPS2VerifiedAuthority:
+    """No-token, privilege-separated implementation of authority.verify()."""
+
+    def __init__(self, port: VPS2ExecutionPort) -> None:
+        self.port = port
+
+    def verify(self, expected_sha: str | None = None) -> VerifiedAuthority:
+        return self.port.verified_authority(expected_sha)

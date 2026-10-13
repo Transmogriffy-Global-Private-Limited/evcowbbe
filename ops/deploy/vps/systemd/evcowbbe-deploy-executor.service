@@ -1,0 +1,27 @@
+[Unit]
+Description=EVCOWBBE verified single-shot deployment executor
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/evcowbbe-deploy/executor-arm
+
+[Service]
+Type=oneshot
+User=evcow-orchestrator
+Group=evcow-orchestrator
+WorkingDirectory=/opt/evcowbbe-deploy/current
+ExecStart=/opt/evcowbbe-deploy/current/bin/evcowbbe-deploy-execute
+TimeoutStartSec=1800
+UMask=0077
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/evcowbbe-deploy /srv/evcowbbe/source /srv/evcowbbe/build-work /srv/evcowbbe/releases /etc/evcowbbe /run
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# sudo's fixed root bridge is deliberate: NoNewPrivileges=yes would break it.
+NoNewPrivileges=no
