@@ -81,6 +81,28 @@ class ContractTests(unittest.TestCase):
                         (target/'evcowbbe').write_bytes(b'changed')
                         self.assertFalse(c.verify_release(A))
 
+    def test_fixed_builder_enforces_offline_immutable_source_and_binary_identity(self):
+        script = Path('ops/deploy/vps/bin/evcowbbe-build-sha').read_text(encoding='utf-8')
+        inspector = Path('ops/deploy/vps/release_identity.go').read_text(encoding='utf-8')
+        # The installed builder, not only an operator's rehearsal, owns these.
+        for invariant in (
+            'GOTOOLCHAIN=local', 'GOPROXY=off', 'GOSUMDB=off',
+            'GOWORK=off', 'GOFLAGS=-mod=readonly', 'GIT_TERMINAL_PROMPT=0',
+            'go mod verify', 'release_identity.go', 'verify --files-only',
+            'status --porcelain --untracked-files=all',
+        ):
+            with self.subTest(invariant=invariant):
+                self.assertIn(invariant, script)
+        self.assertNotIn('go mod download', script)
+        self.assertNotIn('GOPROXY=https://', script)
+        self.assertLess(script.index('go mod verify'), script.index('scripts/build-release.sh'))
+        self.assertLess(script.index('release_identity.go'), script.index('mv -T -- "$tmp/output"'))
+        self.assertLess(script.rindex('status --porcelain'), script.index('mv -T -- "$tmp/output"'))
+        self.assertIn('debug/elf', inspector)
+        self.assertIn('debug/buildinfo', inspector)
+        self.assertIn('GitSHA.str', inspector)
+        self.assertNotIn('os/exec', inspector)
+
     def test_installer_does_not_authorize_executor_or_modify_application(self):
         text = Path('ops/deploy/vps/upgrade-control-plane.sh').read_text(encoding='utf-8')
         self.assertIn('git -C "$source_dir" archive', text)

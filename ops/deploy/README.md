@@ -373,3 +373,31 @@ that this compiler is owned by root, executable by `evcow-builder`, and that
 the builder's module/cache locations are usable before a permitted build.
 No application binaries, environments, GitHub branches, SQLite records, or
 executor privileges change as part of this source-only correction.
+
+### VPS2 verified-offline release build (host acceptance, October 13)
+
+VPS2's `evcow-builder` successfully compiled the paired baseline server and
+migrator for `2ac184c818db49dddf598984b68349d1d33e4c47` using cached Go
+modules, `GOTOOLCHAIN=local`, `GOPROXY=off`, `GOSUMDB=off`, `GOWORK=off`, and
+`GOFLAGS=-mod=readonly`. Both binaries had exact embedded Git-SHA identities,
+correct Go package metadata, and valid embedded migration files. The committed
+source, including `go.mod` and `go.sum`, remained clean. The application and
+PostgreSQL were not changed. The rehearsal verified this procedure, *not*
+the installed unprivileged builder script; this source hardening moves the same
+constraints into `evcowbbe-build-sha` so unattended invocations cannot weaken
+them. `go mod download all` is deliberately *not* run by the builder because
+it can add transitive checksum entries to the candidate's `go.sum` even when
+the application itself builds without modifications. Missing modules must be
+primed as `evcow-builder` in a separate reviewed workflow, then the immutable
+candidate must compile offline.
+
+The fixed root-owned control-plane Go source
+`ops/deploy/vps/release_identity.go` provides a standalone, offline inspection
+of the two Linux ELF outputs; it checks Go package paths and the exact
+`-X`-injected buildinfo Git-SHA string without running the binaries. A missing
+symbol, altered value, malformed SHA, or non-ELF artifact blocks publication.
+The installed builder additionally executes the migrator's `verify --files-only`
+and refuses a checkout made dirty during compilation. The root bridge still
+independently verifies the pair's Unix ownership, computes immutable SHA-256
+manifest hashes and durably fences all privileged forward effects. The source
+patch alone grants no privileges or deployment activation.
