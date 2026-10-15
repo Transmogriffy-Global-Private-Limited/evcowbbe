@@ -15,7 +15,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ $EUID -eq 0 && $source_sha =~ ^[0-9a-f]{40}$ ]] || usage
 [[ -d $source_dir && ! -L $source_dir && -d $source_dir/ops/deploy/vps ]] || usage
-for tool in git tar mktemp python3 runuser stat go; do command -v "$tool" >/dev/null || exit 2; done
+for tool in git tar mktemp python3 runuser stat go flock systemctl; do command -v "$tool" >/dev/null || exit 2; done
 [[ $(git -C "$source_dir" rev-parse --verify HEAD) == "$source_sha" ]] || { echo 'source SHA mismatch' >&2; exit 2; }
 [[ -z $(git -C "$source_dir" status --porcelain --untracked-files=all) ]] || { echo 'source checkout dirty' >&2; exit 2; }
 [[ $(stat -c '%U' "$source_dir") == root ]] || { echo 'source checkout not root-owned' >&2; exit 2; }
@@ -31,6 +31,16 @@ prior=$(readlink "$current")
 [[ -d $state_dir && ! -L $state_dir && $(stat -c '%U:%G' "$state_dir") == evcow-orchestrator:evcow-orchestrator ]] || { echo 'durable state owner mismatch' >&2; exit 2; }
 [[ -f $state_dir/orchestrator.sqlite3 && ! -L $state_dir/orchestrator.sqlite3 ]] || { echo 'durable state missing' >&2; exit 2; }
 [[ $(stat -c '%U:%G' "$state_dir/orchestrator.sqlite3") == evcow-orchestrator:evcow-orchestrator ]] || { echo 'durable state file ownership mismatch' >&2; exit 2; }
+# Hold the exact root-owned executor kernel lock through the atomic release
+# switch. This excludes both an executor invocation and a recovery coordinator.
+lock="$install_root/executor.lock"
+[[ -f $lock && ! -L $lock && $(stat -c '%U:%a' "$lock") == root:444 ]] || exit 2
+exec 9<"$lock"
+flock -n -x 9 || { echo 'executor/recovery lock is occupied' >&2; exit 2; }
+[[ $(systemctl is-enabled evcowbbe-deploy-executor.timer 2>/dev/null || :) == disabled ]] || exit 2
+[[ $(systemctl is-active evcowbbe-deploy-executor.timer 2>/dev/null || :) == inactive ]] || exit 2
+[[ $(systemctl show -P MainPID evcowbbe-deploy-executor.service) == 0 ]] || exit 2
+[[ $(systemctl show -P ControlPID evcowbbe-deploy-executor.service) == 0 ]] || exit 2
 runuser -u evcow-orchestrator -- "$install_root/$prior/bin/evcowbbe-deploy-reconcile" >/dev/null
 stage=''; next_link=''; published=0
 cleanup() {
@@ -51,7 +61,7 @@ stage=$(mktemp -d "$release_root/.staging-$source_sha-XXXXXXXX")
 # This observer is independent of both the currently running and candidate
 # application's migration binaries. Build from the reviewed exact Git objects.
 git -C "$source_dir" archive --format=tar "$source_sha" \
-  ops cmd/ledger-observer internal/database go.mod go.sum | tar -xf - -C "$stage"
+  ops cmd/ledger-observer cmd/recovery-ledger-guard internal/database go.mod go.sum | tar -xf - -C "$stage"
 for f in "$stage"/ops/deploy/vps/bin/*; do chmod 0755 "$f"; done
 find "$stage" -type d -exec chmod 0755 {} +
 find "$stage" -type f ! -path '*/bin/*' -exec chmod 0644 {} +
@@ -66,7 +76,15 @@ python3 -m compileall -q "$stage/ops/deploy"
     "$stage/ops/deploy/vps/bin/evcowbbe-ledger-observer" ./cmd/ledger-observer
 )
 chmod 0555 "$stage/ops/deploy/vps/bin/evcowbbe-ledger-observer"
-[[ -x $stage/bin/evcowbbe-deploy-ssh-ingress && -x $stage/bin/evcowbbe-deploy-reconcile && -x $stage/bin/evcowbbe-deploy-host-op && -x $stage/bin/evcowbbe-ledger-observer ]] || exit 2
+(
+  cd "$stage"
+  env GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOWORK=off GOFLAGS= \
+    go build -trimpath -buildvcs=false -o \
+    "$stage/ops/deploy/vps/bin/evcowbbe-recovery-ledger-guard" ./cmd/recovery-ledger-guard
+)
+chmod 0555 "$stage/ops/deploy/vps/bin/evcowbbe-recovery-ledger-guard"
+
+[[ -x $stage/bin/evcowbbe-deploy-ssh-ingress && -x $stage/bin/evcowbbe-deploy-reconcile && -x $stage/bin/evcowbbe-deploy-host-op && -x $stage/bin/evcowbbe-ledger-observer && -x $stage/bin/evcowbbe-recovery-ledger-guard && -x $stage/bin/evcowbbe-deploy-recover-interrupted-build ]] || exit 2
 mv -T -- "$stage" "$target"
 stage=''
 next_link="$install_root/.current-next-$$"

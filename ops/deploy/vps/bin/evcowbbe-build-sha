@@ -12,9 +12,16 @@ umask 077
 source_dir=/srv/evcowbbe/source
 work=/srv/evcowbbe/build-work
 prepared=$work/prepared
+go_cache=$work/.go-build-cache
 [[ -d $source_dir && ! -L $source_dir && -d $work && ! -L $work ]] || exit 2
 [[ ! -e $prepared/$sha && ! -L $prepared/$sha ]] || { echo 'build output already exists; inspect before retry' >&2; exit 2; }
 mkdir -p -- "$prepared"
+[[ ! -L $go_cache ]] || { echo "unsafe Go cache symlink" >&2; exit 2; }
+mkdir -p -- "$go_cache"
+[[ -d $go_cache && ! -L $go_cache && $(stat -c %u "$go_cache") == $(id -u) ]] || { echo "unsafe Go cache ownership" >&2; exit 2; }
+cache_mode=$(stat -c %a "$go_cache")
+[[ $cache_mode == 700 || $cache_mode == 2700 ]] || { echo "unsafe Go cache mode" >&2; exit 2; }
+export GOCACHE="$go_cache"
 tmp=$(mktemp -d "$work/.build-$sha-XXXXXXXX")
 cleanup() { rm -rf -- "$tmp"; }
 trap cleanup EXIT

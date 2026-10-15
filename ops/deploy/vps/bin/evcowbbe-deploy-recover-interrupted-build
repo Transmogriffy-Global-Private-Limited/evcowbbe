@@ -1,0 +1,7 @@
+#!/usr/bin/python3 -I
+"""Explicit root-only incident recovery. Never invoke from a timer."""
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+from ops.deploy.vps.interrupted_build_recover import main
+raise SystemExit(main())

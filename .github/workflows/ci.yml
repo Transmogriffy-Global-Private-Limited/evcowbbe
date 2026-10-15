@@ -8,6 +8,53 @@ permissions:
   contents: read
 
 jobs:
+  # Runs only against a brand-new job-local PostgreSQL service. This is a
+  # Source CI gate, not a workflow that can reach VPS or production secrets.
+  recovery-linux-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: recovery_ci
+          POSTGRES_PASSWORD: recovery_ci
+          POSTGRES_DB: evcowbbe_recovery_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U recovery_ci -d evcowbbe_recovery_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      RECOVERY_TEST_ISOLATED: '1'
+      RECOVERY_TEST_POSTGRES_URL: postgres://recovery_ci:recovery_ci@127.0.0.1:5432/evcowbbe_recovery_ci?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check recovery shell syntax and generated Go formatting
+        shell: bash
+        run: |
+          bash -n ops/deploy/vps/upgrade-control-plane.sh
+          bash -n ops/deploy/vps/provision-recovery-evidence.sh
+          test -z "$(gofmt -l cmd/recovery-ledger-guard)"
+      - name: Test Linux-only recovery IPC behavior
+        run: python -B -m unittest discover -s ops/deploy/tests -p test_interrupted_build_pg_stream.py -v
+      - name: Test real PostgreSQL advisory lock and writer exclusion
+        run: go test -count=1 -timeout 4m -tags=recovery_integration ./cmd/recovery-ledger-guard -v
+      - name: Build reviewed recovery guard for transient systemd test
+        run: go build -trimpath -o "$RUNNER_TEMP/evcowbbe-recovery-ledger-guard-ci" ./cmd/recovery-ledger-guard
+      - name: Test actual guard through systemd-run with disposable PostgreSQL
+        run: python -B ops/deploy/tests/verify_recovery_systemd_streaming.py
+
   verify:
     runs-on: ubuntu-latest
     steps:

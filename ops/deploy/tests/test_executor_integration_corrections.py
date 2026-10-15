@@ -103,7 +103,7 @@ class LedgerObserverBootstrapTests(unittest.TestCase):
 
     def test_upgrade_builds_observer_from_exact_git_archive_without_network(self):
         script = Path('ops/deploy/vps/upgrade-control-plane.sh').read_text()
-        self.assertIn('cmd/ledger-observer internal/database go.mod go.sum', script)
+        self.assertIn('cmd/ledger-observer cmd/recovery-ledger-guard internal/database go.mod go.sum', script)
         self.assertIn('GOPROXY=off', script)
         self.assertIn('GOTOOLCHAIN=local', script)
         self.assertIn('go build -trimpath -buildvcs=false', script)
