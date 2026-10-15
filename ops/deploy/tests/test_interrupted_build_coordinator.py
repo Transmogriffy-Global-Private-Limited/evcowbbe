@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from ops.deploy.control_plane import ControlPlane
@@ -163,6 +164,74 @@ class CoordinatorReadOnlyTests(unittest.TestCase):
                 co._prepare(database=self.db, observer_context=self.observed,
                             ledger_prover=self.ledger, host_recheck=self.recheck)
 
+
+class GuardHeldRuntimeIdentityTests(unittest.TestCase):
+    """Recovery must never probe migration-lock-based readiness while fenced."""
+
+    def test_fenced_identity_uses_liveness_and_version_not_readiness(self):
+        from ops.deploy.executor.host import contract as contract
+        calls = []
+        sha = ledger.PREVIOUS_SHA
+        app_env = b'BUILD_REVISION=' + sha.encode('ascii') + b'\n'
+
+        class Operations:
+            def active(self):
+                return sha
+
+            def verify(self, _):
+                raise AssertionError('/health/ready must never be used while PG is fenced')
+
+            def _run(self, argv, *, limit):
+                property_name = argv[3]
+                return {'User': b'evcowbbe\n', 'Group': b'evcowbbe\n',
+                        'MainPID': b'12345\n'}[property_name]
+
+        class Response:
+            status = 200
+            def __init__(self, body):
+                self.body = body
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def read(self, _):
+                return self.body
+
+        class Opener:
+            def open(self, request, *, timeout):
+                calls.append(request.full_url)
+                assert timeout == 5
+                if request.full_url.endswith('/health/live'):
+                    return Response(b'{"status":"live"}\n')
+                if request.full_url.endswith('/version'):
+                    return Response(('{"git_sha":"' + sha + '"}\n').encode('ascii'))
+                raise AssertionError('readiness under fence would fail with 503')
+
+        with patch.object(co.Path, 'resolve', return_value=contract.canonical_release(sha) / 'evcowbbe'), \
+             patch.object(contract, 'APP_ENV', SimpleNamespace(read_bytes=lambda: app_env)), \
+             patch.object(co.urllib.request, 'build_opener', return_value=Opener()):
+            self.assertTrue(co._runtime_identity_while_pg_fenced(Operations()))
+        self.assertEqual(calls, [
+            'http://127.0.0.1:18280/health/live',
+            'http://127.0.0.1:18280/version',
+        ])
+
+    def test_full_readiness_still_required_outside_fence(self):
+        calls = []
+        class Operations:
+            def active(self):
+                calls.append('active')
+                return ledger.PREVIOUS_SHA
+            def verify(self, sha):
+                calls.append(('full-readiness', sha))
+                return True
+        with patch('ops.deploy.executor.host.operations.VPS2Operations', return_value=Operations()), \
+             patch.object(host, '_quiescent'), \
+             patch.object(host, '_no_builder_processes'), \
+             patch.object(host, '_no_artifacts'), \
+             patch.object(host, '_builder_uid', return_value=1200):
+            co._verify_live_host_again()
+        self.assertEqual(calls, ['active', ('full-readiness', ledger.PREVIOUS_SHA)])
 
 if __name__ == '__main__':
     unittest.main()

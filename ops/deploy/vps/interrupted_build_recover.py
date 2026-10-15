@@ -117,6 +117,7 @@ def _reconcile(*, observer: Callable = host.fenced_build_observation,
                ledger_verifier: Callable = incident.verify_pinned_first_build_ledger,
                guard: Callable = postgres.continuous_postgres_writer_fence,
                host_recheck: Callable = coordinator._verify_live_host_again,
+               guarded_host_recheck: Callable = coordinator._verify_live_host_while_pg_fenced,
                persist: Callable = attestation.persist_first_build_evidence,
                commit: Callable = _commit_as_state_owner) -> dict:
     """Internal dependency-injection seam for disposable integration tests only."""
@@ -136,7 +137,7 @@ def _reconcile(*, observer: Callable = host.fenced_build_observation,
         try:
             with guard() as pg:
                 pg.ping()
-                host_recheck()
+                guarded_host_recheck()
                 manifest = persist(preflight)
                 if (type(manifest) is not attestation.DurableEvidenceManifest
                         or manifest.run_id != incident.RUN_ID
@@ -149,24 +150,29 @@ def _reconcile(*, observer: Callable = host.fenced_build_observation,
                 if checked.evidence_sha256 != manifest.evidence_sha256 or checked.created:
                     raise RecoveryExecutionBlocked('manifest changed before commit')
                 pg.ping()
-                host_recheck()
+                guarded_host_recheck()
                 # Crossing this boundary may commit. Every failure afterward is
                 # operationally uncertain until independent SQLite examination.
                 commit_attempted = True
                 outcome = commit(preflight.evidence_sha256, preflight.event_sequences)
                 try:
                     pg.ping()
-                    host_recheck()
+                    guarded_host_recheck()
                     checked = persist(preflight)
                     if checked.evidence_sha256 != manifest.evidence_sha256 or checked.created:
                         raise RecoveryCommitUncertain('evidence changed after commit')
                 except BaseException as exc:
                     raise RecoveryCommitUncertain('post-commit recheck failed') from exc
-                return {
+                result = {
                     'run_id': incident.RUN_ID, 'status': outcome['status'],
                     'evidence_sha256': manifest.evidence_sha256,
                     'result': 'interrupted_build_reconciled_no_retry_authorized',
                 }
+            # PostgreSQL advisory lock is released here. Only now is the
+            # application's normal migration-aware /health/ready meaningful.
+            # The root-owned executor flock remains continuously held.
+            host_recheck()
+            return result
         except BaseException as exc:
             if commit_attempted:
                 raise RecoveryCommitUncertain(

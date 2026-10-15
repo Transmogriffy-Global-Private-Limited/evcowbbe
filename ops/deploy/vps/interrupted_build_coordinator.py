@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -86,19 +87,79 @@ def _snapshot_from_sqlite(database: Path) -> dict:
         conn.close()
 
 
-def _verify_live_host_again() -> None:
-    """Reobserve while the outer context still owns the immutable flock."""
+def _runtime_identity_while_pg_fenced(operation) -> bool:
+    """Verify the exact running binary without contesting the held migration lock.
+
+    The normal /health/ready deliberately tries to acquire the migration
+    advisory lock. Calling it while the recovery sidecar owns that very lock
+    guarantees 503, even for a healthy backend. The caller must have already
+    passed full readiness before fencing, and must recheck it after release.
+    PostgreSQL ledger integrity is independently maintained by guard.ping().
+    """
+    from ops.deploy.executor.host import contract as c
+
+    sha = ledger.PREVIOUS_SHA
+    if operation.active() != sha:
+        return False
+    for property_name in ('User', 'Group'):
+        observed = operation._run([
+            '/usr/bin/systemctl', 'show', '-P', property_name, c.SERVICE,
+        ], limit=128).decode('ascii').strip()
+        if observed != 'evcowbbe':
+            return False
+    pid = operation._run([
+        '/usr/bin/systemctl', 'show', '-P', 'MainPID', c.SERVICE,
+    ], limit=128).decode('ascii').strip()
+    if not pid.isdecimal() or int(pid) <= 1:
+        return False
+    if Path(f'/proc/{pid}/exe').resolve(strict=True) != c.canonical_release(sha) / 'evcowbbe':
+        return False
+    env = c.APP_ENV.read_bytes()
+    if c.replace_revision(env, sha) != env:
+        return False
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for endpoint, field, expected in (
+        ('/health/live', 'status', 'live'),
+        ('/version', 'git_sha', sha),
+    ):
+        request = urllib.request.Request('http://127.0.0.1:18280' + endpoint, method='GET')
+        with opener.open(request, timeout=5) as response:
+            if response.status != 200:
+                return False
+            data = response.read(4097)
+            if len(data) > 4096:
+                return False
+            payload = json.loads(data)
+            if type(payload) is not dict or payload.get(field) != expected:
+                return False
+    return True
+
+
+def _recheck_host(runtime_verifier: Callable) -> None:
+    """Check host/process invariants on both sides of runtime verification."""
     from ops.deploy.executor.host.operations import VPS2Operations
     host._quiescent(host._systemctl)
     host._no_builder_processes(ledger.CANDIDATE_SHA)
     host._no_artifacts(ledger.CANDIDATE_SHA, host._builder_uid())
-    operation = VPS2Operations()
-    if (operation.active() != ledger.PREVIOUS_SHA
-            or operation.verify(ledger.PREVIOUS_SHA) is not True):
-        raise CoordinatorBlocked('previous application runtime changed during preflight')
+    if runtime_verifier(VPS2Operations()) is not True:
+        raise CoordinatorBlocked('previous application runtime changed during recovery')
     host._no_builder_processes(ledger.CANDIDATE_SHA)
     host._no_artifacts(ledger.CANDIDATE_SHA, host._builder_uid())
     host._quiescent(host._systemctl)
+
+
+def _verify_live_host_again() -> None:
+    """Full readiness before acquiring and after releasing the PostgreSQL fence."""
+    _recheck_host(lambda operation: (
+        operation.active() == ledger.PREVIOUS_SHA
+        and operation.verify(ledger.PREVIOUS_SHA) is True
+    ))
+
+
+def _verify_live_host_while_pg_fenced() -> None:
+    """Same host invariants; exact runtime identity and liveness while fenced."""
+    _recheck_host(_runtime_identity_while_pg_fenced)
 
 
 def _prepare(*, database: Path, observer_context: Callable,

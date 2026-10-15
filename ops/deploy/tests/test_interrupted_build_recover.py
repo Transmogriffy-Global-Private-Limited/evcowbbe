@@ -67,6 +67,9 @@ class RootRecoveryIntegrationTests(unittest.TestCase):
     def recheck(self):
         self.events.append('host-checked')
 
+    def guarded_recheck(self):
+        self.events.append('guarded-host-checked')
+
     @contextlib.contextmanager
     def guard(self):
         self.events.append('postgres-writer-fence-acquired')
@@ -100,6 +103,7 @@ class RootRecoveryIntegrationTests(unittest.TestCase):
             return recover._reconcile(
                 observer=self.observer, ledger_verifier=self.ledger,
                 guard=self.guard, host_recheck=self.recheck,
+                guarded_host_recheck=self.guarded_recheck,
                 persist=self.persist, commit=self.commit,
             )
 
@@ -116,6 +120,9 @@ class RootRecoveryIntegrationTests(unittest.TestCase):
         self.assertLess(self.events.index('postgres-writer-fence-released'),
                         self.events.index('executor-lock-released'))
         self.assertEqual(self.pings, 3)
+        self.assertEqual(self.events.count('guarded-host-checked'), 3)
+        self.assertLess(self.events.index('postgres-writer-fence-released'),
+                        self.events.index('host-checked', self.events.index('postgres-writer-fence-released')))
         run = self.cp.status(verbose=True)['runs'][0]
         self.assertEqual(run['status'], 'failed')
         self.assertEqual(self.cp.desired_state(incident.CANDIDATE_SHA)['reason'],
@@ -130,6 +137,7 @@ class RootRecoveryIntegrationTests(unittest.TestCase):
         with patch.object(coordinator, 'DB', self.db), self.assertRaises(fence.PgFenceBlocked):
             recover._reconcile(observer=self.observer, ledger_verifier=self.ledger,
                 guard=unavailable, host_recheck=self.recheck,
+                guarded_host_recheck=self.guarded_recheck,
                 persist=self.persist, commit=self.commit)
         self.assertEqual(self.cp.status(verbose=True)['runs'][0]['status'], 'running')
         self.assertEqual(list(self.directory.iterdir()), [])
@@ -141,6 +149,29 @@ class RootRecoveryIntegrationTests(unittest.TestCase):
         self.assertEqual(self.cp.status(verbose=True)['runs'][0]['status'], 'running')
         self.assertNotIn('sqlite-commit-begin', self.events)
         self.assertEqual(len(list(self.directory.glob('*.json'))), 1)
+
+    def test_post_release_full_readiness_failure_is_uncertain_not_success(self):
+        def full_check():
+            self.recheck()
+            if 'postgres-writer-fence-released' in self.events:
+                raise RuntimeError('normal readiness did not recover')
+        with patch.object(coordinator, 'DB', self.db), self.assertRaises(recover.RecoveryCommitUncertain):
+            recover._reconcile(observer=self.observer, ledger_verifier=self.ledger,
+                guard=self.guard, host_recheck=full_check,
+                guarded_host_recheck=self.guarded_recheck,
+                persist=self.persist, commit=self.commit)
+        self.assertEqual(self.cp.status(verbose=True)['runs'][0]['status'], 'failed')
+
+    def test_guarded_host_recheck_failure_prevents_manifest_and_commit(self):
+        def blocked():
+            raise RuntimeError('runtime changed while fenced')
+        with patch.object(coordinator, 'DB', self.db), self.assertRaises(RuntimeError):
+            recover._reconcile(observer=self.observer, ledger_verifier=self.ledger,
+                guard=self.guard, host_recheck=self.recheck,
+                guarded_host_recheck=blocked,
+                persist=self.persist, commit=self.commit)
+        self.assertEqual(self.cp.status(verbose=True)['runs'][0]['status'], 'running')
+        self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_postcommit_guard_loss_is_reported_uncertain(self):
         self.fail_ping = 3
@@ -158,6 +189,7 @@ class RootRecoveryIntegrationTests(unittest.TestCase):
         with patch.object(coordinator, 'DB', self.db), self.assertRaises(recover.RecoveryExecutionBlocked):
             recover._reconcile(observer=self.observer, ledger_verifier=self.ledger,
                 guard=self.guard, host_recheck=self.recheck,
+                guarded_host_recheck=self.guarded_recheck,
                 persist=wrong, commit=self.commit)
         self.assertEqual(self.cp.status(verbose=True)['runs'][0]['status'], 'running')
         self.assertNotIn('sqlite-commit-begin', self.events)
@@ -183,6 +215,7 @@ class RootRecoveryIntegrationTests(unittest.TestCase):
         with patch.object(coordinator, 'DB', self.db), self.assertRaises(recover.RecoveryCommitUncertain):
             recover._reconcile(observer=self.observer, ledger_verifier=self.ledger,
                 guard=self.guard, host_recheck=self.recheck,
+                guarded_host_recheck=self.guarded_recheck,
                 persist=self.persist, commit=deny_commit)
         self.assertEqual(self.cp.status(verbose=True)['runs'][0]['status'], 'running')
         self.assertEqual(len(list(self.directory.glob('*.json'))), 1)
