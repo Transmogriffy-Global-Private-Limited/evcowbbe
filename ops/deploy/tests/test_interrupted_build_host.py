@@ -118,7 +118,10 @@ class HostRecoveryObservationTests(unittest.TestCase):
             for path in (work, prepared, releases):
                 path.mkdir(parents=True, exist_ok=True)
             owner = os.geteuid()
-            with patch.object(h, 'APP_ROOT', root), patch.object(h, 'WORK', work), patch.object(h, 'RELEASES', releases):
+            # This tests candidate-artifact discovery, not directory ownership.
+            # The root-only directory contract is enforced separately.
+            with patch.object(h, 'APP_ROOT', root), patch.object(h, 'WORK', work), \
+                 patch.object(h, 'RELEASES', releases), patch.object(h, '_directory'):
                 h._no_artifacts(A, owner)
                 for path in (prepared/A, work/('.build-'+A+'-xyz'), releases/('.staging-'+A+'-xyz')):
                     path.symlink_to(root/'does-not-exist')

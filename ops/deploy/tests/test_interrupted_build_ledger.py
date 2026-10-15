@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from ops.deploy.vps import interrupted_build_ledger as ledger
@@ -20,7 +21,24 @@ class LedgerRecoveryEvidenceTests(unittest.TestCase):
         folder = Path(self.tmp.name)
         self.archive = folder / 'pg.custom'
         self.archive.write_bytes(b'isolated test fixture only')
+        # The isolated CI runner is unprivileged. Preserve actual inode,
+        # size, mode and timestamps while simulating only the root UID that
+        # the real VPS archive must have. Digest checks still read the bytes.
+        real_fstat = os.fstat
+        identity = self.archive.stat()
+
+        def root_archive_fstat(fd):
+            info = real_fstat(fd)
+            if (info.st_dev, info.st_ino) != (identity.st_dev, identity.st_ino):
+                return info
+            return SimpleNamespace(
+                st_mode=info.st_mode, st_uid=0, st_size=info.st_size,
+                st_dev=info.st_dev, st_ino=info.st_ino,
+                st_mtime_ns=info.st_mtime_ns,
+            )
+
         self.patches = [
+            patch.object(ledger.os, 'fstat', side_effect=root_archive_fstat),
             patch.object(ledger, 'BACKUP', self.archive),
             patch.object(ledger, 'BACKUP_SHA256', hashlib.sha256(self.archive.read_bytes()).hexdigest()),
             patch.object(ledger, '_guarded_backup_file'),
@@ -87,7 +105,20 @@ class LedgerRecoveryEvidenceTests(unittest.TestCase):
         holding.mkdir(mode=0o700)
         archive = holding / 'backup.custom'
         archive.write_bytes(b'verified fixture')
-        with patch.object(ledger, 'BACKUP_ROOT', backup_root):
+        # Test actual type and mode checks under simulated root ownership.
+        # Do not weaken the production function for unprivileged CI.
+        real_lstat = Path.lstat
+
+        def root_archive_lstat(path):
+            info = real_lstat(path)
+            if path in (backup_root, holding, archive):
+                return SimpleNamespace(
+                    st_mode=info.st_mode, st_uid=0, st_size=info.st_size,
+                )
+            return info
+
+        with patch.object(ledger, 'BACKUP_ROOT', backup_root), \
+             patch.object(Path, 'lstat', root_archive_lstat):
             original(archive)
             archive.chmod(0o666)
             with self.assertRaises(ledger.LedgerRecoveryBlocked):
