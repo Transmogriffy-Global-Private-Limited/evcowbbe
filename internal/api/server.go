@@ -1,0 +1,496 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/auth"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/config"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/security"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Server struct {
+	Auth   *auth.Service
+	DB     *pgxpool.Pool
+	C      config.Config
+	Logger *slog.Logger
+}
+type response struct {
+	Data any `json:"data"`
+}
+type failure struct {
+	Error struct {
+		Code      string         `json:"code"`
+		Message   string         `json:"message"`
+		RequestID string         `json:"request_id"`
+		Details   map[string]any `json:"details"`
+	} `json:"error"`
+}
+type creds struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+type onlyToken struct {
+	Token string `json:"token"`
+}
+type otpReq struct {
+	ChallengeID string `json:"challenge_id"`
+	Code        string `json:"code"`
+}
+type challengeReq struct {
+	ChallengeID string `json:"challenge_id"`
+}
+type refreshReq struct {
+	RefreshToken string `json:"refresh_token"`
+}
+type changeReq struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+type resetReq struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+type begin2fa struct {
+	Password string `json:"password"`
+}
+
+func (s *Server) Handler() http.Handler { return http.HandlerFunc(s.serve) }
+func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	id, _ := security.UUID()
+	if incoming := r.Header.Get("X-Request-ID"); len(incoming) == 36 && uuidFormat(incoming) {
+		id = incoming
+	}
+	w.Header().Set("X-Request-ID", id)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	if s.C.Env != "development" {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+	}
+	if r.Method == http.MethodOptions {
+		s.fail(w, id, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
+		return
+	}
+	if r.URL.Path == "/health/live" && r.Method == "GET" {
+		s.ok(w, http.StatusOK, map[string]any{"status": "live"})
+		return
+	}
+	if r.URL.Path == "/health/ready" && r.Method == "GET" {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.DB.Ping(ctx); err != nil {
+			s.fail(w, id, 503, "DEPENDENCY_UNAVAILABLE", "Database unavailable")
+			return
+		}
+		s.ok(w, 200, map[string]any{"status": "ready"})
+		return
+	}
+	if r.URL.Path == "/version" && r.Method == "GET" {
+		s.ok(w, 200, map[string]string{"version": "auth-foundation-1"})
+		return
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
+		s.fail(w, id, 404, "NOT_FOUND", "Endpoint not found")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	r = r.WithContext(ctx)
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
+	// Public global flows, identity not exposed by response.
+	if strings.HasPrefix(path, "auth/") {
+		switch path {
+		case "auth/verify-email":
+			if !post(w, r, id, s) {
+				return
+			}
+			var v onlyToken
+			if !s.decode(w, r, id, &v) {
+				return
+			}
+			s.done(w, id, s.Auth.VerifyEmail(ctx, v.Token))
+			return
+		case "auth/resend-verification":
+			if !post(w, r, id, s) {
+				return
+			}
+			var v struct {
+				Email string `json:"email"`
+			}
+			if !s.decode(w, r, id, &v) {
+				return
+			}
+			err := s.Auth.Limit(ctx, "verify_ip", remoteIP(r), time.Minute, s.C.AuthPerMinute)
+			if err == nil {
+				err = s.Auth.ResendVerification(ctx, v.Email)
+			}
+			s.doneGeneric(w, id, err)
+			return
+		case "auth/forgot-password":
+			if !post(w, r, id, s) {
+				return
+			}
+			var v struct {
+				Email string `json:"email"`
+			}
+			if !s.decode(w, r, id, &v) {
+				return
+			}
+			err := s.Auth.Limit(ctx, "forgot_ip", remoteIP(r), time.Minute, s.C.AuthPerMinute)
+			if err == nil {
+				err = s.Auth.ForgotPassword(ctx, v.Email)
+			}
+			s.doneGeneric(w, id, err)
+			return
+		case "auth/reset-password":
+			if !post(w, r, id, s) {
+				return
+			}
+			var v resetReq
+			if !s.decode(w, r, id, &v) {
+				return
+			}
+			err := s.Auth.Limit(ctx, "reset_ip", remoteIP(r), time.Minute, s.C.AuthPerMinute)
+			if err == nil {
+				err = s.Auth.ResetPassword(ctx, v.Token, v.NewPassword)
+			}
+			s.done(w, id, err)
+			return
+		}
+	}
+	bits := strings.Split(path, "/")
+	if len(bits) < 2 || !auth.ValidPlane(bits[0]) {
+		s.fail(w, id, 404, "NOT_FOUND", "Endpoint not found")
+		return
+	}
+	plane := bits[0]
+	action := strings.Join(bits[1:], "/")
+	if action == "auth/register" {
+		if plane == "admin" {
+			s.fail(w, id, 403, "FORBIDDEN", "Admin registration is disabled")
+			return
+		}
+		if !post(w, r, id, s) {
+			return
+		}
+		var v creds
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		e, err := security.Email(v.Email)
+		if err != nil {
+			s.err(w, id, auth.ErrInvalid)
+			return
+		}
+		if err = s.Auth.Limit(ctx, "register_ip", remoteIP(r), time.Minute, s.C.AuthPerMinute); err == nil {
+			err = s.Auth.Limit(ctx, "register_email", e, time.Hour, s.C.OTPPerHour)
+		}
+		if err == nil {
+			err = s.Auth.Register(ctx, plane, v.Email, v.Password)
+		}
+		if err != nil && !errors.Is(err, auth.ErrConflict) {
+			s.err(w, id, err)
+			return
+		}
+		s.ok(w, 202, map[string]any{"message": "If eligible, a verification email has been sent", "plane": plane})
+		return
+	}
+	if action == "auth/login" {
+		if !post(w, r, id, s) {
+			return
+		}
+		var v creds
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		e, err := security.Email(v.Email)
+		if err != nil {
+			s.err(w, id, auth.ErrInvalid)
+			return
+		}
+		if err = s.Auth.Limit(ctx, "login_ip", remoteIP(r), time.Minute, s.C.AuthPerMinute); err == nil {
+			err = s.Auth.Limit(ctx, "login_email", e, time.Minute, s.C.AuthPerMinute)
+		}
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		o, err := s.Auth.Login(ctx, plane, v.Email, v.Password)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		s.ok(w, 200, o)
+		return
+	}
+	if action == "auth/verify-otp" {
+		if !post(w, r, id, s) {
+			return
+		}
+		var v otpReq
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err := s.Auth.Limit(ctx, "otp_verify_ip", remoteIP(r), time.Minute, s.C.AuthPerMinute)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		token, err := s.Auth.VerifyLoginOTP(ctx, v.ChallengeID, v.Code, plane)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		s.ok(w, 200, token)
+		return
+	}
+	if action == "auth/refresh" {
+		if !post(w, r, id, s) {
+			return
+		}
+		var v refreshReq
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err := s.Auth.Limit(ctx, "refresh_ip", remoteIP(r), time.Minute, s.C.RefreshPerMinute)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		token, err := s.Auth.Refresh(ctx, v.RefreshToken, plane)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		s.ok(w, 200, token)
+		return
+	}
+	if action == "auth/2fa/resend" {
+		if !post(w, r, id, s) {
+			return
+		}
+		var v challengeReq
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err := s.Auth.Limit(ctx, "resend_ip", remoteIP(r), time.Minute, s.C.AuthPerMinute)
+		if err == nil {
+			err = s.Auth.ResendOTP(ctx, v.ChallengeID, plane)
+		}
+		s.done(w, id, err)
+		return
+	}
+	// All other plane-specific actions require an access bearer token.
+	var principal auth.Principal
+	bearer := r.Header.Get("Authorization")
+	if strings.HasPrefix(bearer, "Bearer ") && strings.Count(bearer, " ") == 1 {
+		var err error
+		principal, err = s.Auth.Authenticate(ctx, strings.TrimPrefix(bearer, "Bearer "), plane)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+	} else {
+		s.err(w, id, auth.ErrInvalid)
+		return
+	}
+	switch action {
+	case "me":
+		if r.Method != "GET" {
+			s.fail(w, id, 405, "METHOD_NOT_ALLOWED", "Method not allowed")
+			return
+		}
+		profile, err := s.Auth.Profile(ctx, principal)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		s.ok(w, 200, profile)
+	case "auth/logout":
+		if !post(w, r, id, s) {
+			return
+		}
+		s.done(w, id, s.Auth.Logout(ctx, principal, false))
+	case "auth/logout-all":
+		if !post(w, r, id, s) {
+			return
+		}
+		s.done(w, id, s.Auth.Logout(ctx, principal, true))
+	case "auth/password/change":
+		if !post(w, r, id, s) {
+			return
+		}
+		var v changeReq
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err := s.Auth.Limit(ctx, "pwd_change", principal.AccountID, time.Minute, 5)
+		if err == nil {
+			err = s.Auth.ChangePassword(ctx, principal, v.CurrentPassword, v.NewPassword)
+		}
+		s.done(w, id, err)
+	case "auth/2fa/enable/begin", "auth/2fa/disable/begin":
+		if !post(w, r, id, s) {
+			return
+		}
+		var v begin2fa
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		enabled := action == "auth/2fa/enable/begin"
+		err := s.Auth.Limit(ctx, "2fa_begin", principal.AccountID, time.Minute, 5)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		challenge, err := s.Auth.Begin2FA(ctx, principal, v.Password, enabled)
+		if err != nil {
+			s.err(w, id, err)
+			return
+		}
+		s.ok(w, 200, map[string]string{"challenge_id": challenge, "message": "Check email for one-time code"})
+	case "auth/2fa/enable/confirm", "auth/2fa/disable/confirm":
+		if !post(w, r, id, s) {
+			return
+		}
+		var v otpReq
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		enabled := action == "auth/2fa/enable/confirm"
+		err := s.Auth.Limit(ctx, "2fa_confirm", principal.AccountID, time.Minute, s.C.AuthPerMinute)
+		if err == nil {
+			err = s.Auth.Confirm2FA(ctx, principal, v.ChallengeID, v.Code, enabled)
+		}
+		s.done(w, id, err)
+	default:
+		s.fail(w, id, 404, "NOT_FOUND", "Endpoint not found")
+	}
+}
+func uuidFormat(s string) bool {
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+func remoteIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+func post(w http.ResponseWriter, r *http.Request, id string, s *Server) bool {
+	if r.Method != "POST" {
+		s.fail(w, id, 405, "METHOD_NOT_ALLOWED", "Method not allowed")
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])) != "application/json" {
+		s.fail(w, id, 415, "UNSUPPORTED_MEDIA_TYPE", "Expected application/json")
+		return false
+	}
+	return true
+}
+func (s *Server) decode(w http.ResponseWriter, r *http.Request, id string, out any) bool {
+	reader := http.MaxBytesReader(w, r.Body, 32768)
+	defer reader.Close()
+	d := json.NewDecoder(reader)
+	d.DisallowUnknownFields()
+	if err := d.Decode(out); err != nil {
+		s.fail(w, id, 400, "VALIDATION_FAILED", "Invalid JSON request")
+		return false
+	}
+	var rest any
+	if err := d.Decode(&rest); err != io.EOF {
+		s.fail(w, id, 400, "VALIDATION_FAILED", "Only one JSON object permitted")
+		return false
+	}
+	return true
+}
+func (s *Server) ok(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(response{Data: data})
+}
+func (s *Server) fail(w http.ResponseWriter, id string, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	var o failure
+	o.Error.Code = code
+	o.Error.Message = message
+	o.Error.RequestID = id
+	o.Error.Details = map[string]any{}
+	_ = json.NewEncoder(w).Encode(o)
+}
+func (s *Server) err(w http.ResponseWriter, id string, err error) {
+	if err == nil {
+		s.ok(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	switch {
+	case errors.Is(err, auth.ErrInvalid):
+		s.fail(w, id, 401, "INVALID_CREDENTIALS", "Invalid credentials or token")
+	case errors.Is(err, auth.ErrUnverified):
+		s.fail(w, id, 403, "EMAIL_NOT_VERIFIED", "Verify your email first")
+	case errors.Is(err, auth.ErrForbidden):
+		s.fail(w, id, 403, "PRINCIPAL_PLANE_MISMATCH", "Access not permitted for this principal")
+	case errors.Is(err, auth.ErrConflict):
+		s.fail(w, id, 409, "CONFLICT", "Account or state already exists")
+	case errors.Is(err, auth.ErrRate), errors.Is(err, auth.ErrCooldown):
+		w.Header().Set("Retry-After", strconv.Itoa(60))
+		s.fail(w, id, 429, "RATE_LIMITED", "Please try again later")
+	case errors.Is(err, auth.ErrExpired):
+		s.fail(w, id, 401, "OTP_EXPIRED", "Code expired or exhausted")
+	case errors.Is(err, auth.ErrReused):
+		s.fail(w, id, 401, "REFRESH_TOKEN_REUSED", "Session revoked; sign in again")
+	case errors.Is(err, auth.ErrDependency):
+		s.fail(w, id, 503, "DEPENDENCY_UNAVAILABLE", "Required service unavailable")
+	default:
+		// Distinguish public password policy violations; never include database/SMTP details.
+		if strings.HasPrefix(err.Error(), "password ") {
+			s.fail(w, id, 422, "VALIDATION_FAILED", err.Error())
+			return
+		}
+		if s.Logger != nil {
+			s.Logger.Error("auth request failed", "type", "internal")
+		}
+		s.fail(w, id, 500, "INTERNAL_ERROR", "Internal error")
+	}
+}
+func (s *Server) done(w http.ResponseWriter, id string, err error) {
+	if err != nil {
+		s.err(w, id, err)
+		return
+	}
+	s.ok(w, 200, map[string]bool{"ok": true})
+}
+func (s *Server) doneGeneric(w http.ResponseWriter, id string, err error) {
+	if errors.Is(err, auth.ErrDependency) {
+		s.err(w, id, err)
+		return
+	}
+	if err != nil && !errors.Is(err, auth.ErrInvalid) && !errors.Is(err, auth.ErrConflict) {
+		s.err(w, id, err)
+		return
+	}
+	s.ok(w, 200, map[string]bool{"accepted": true})
+}

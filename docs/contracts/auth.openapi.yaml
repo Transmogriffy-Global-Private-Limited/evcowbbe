@@ -1,0 +1,1162 @@
+openapi: 3.1.0
+info:
+  title: Charger on Wheels Auth Foundation API
+  version: 0.1.0
+  description: One-plane opaque bearer tokens. Explicitly no production admin capability
+    grants or driver operational access in this slice.
+servers:
+- url: http://127.0.0.1:18080
+  description: Loopback development only
+paths:
+  /api/v1/auth/verify-email:
+    post:
+      operationId: verifyEmail
+      summary: verifyEmail
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                token:
+                  type: string
+              required:
+              - token
+  /api/v1/auth/resend-verification:
+    post:
+      operationId: resendVerification
+      summary: resendVerification
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+              required:
+              - email
+  /api/v1/auth/forgot-password:
+    post:
+      operationId: forgotPassword
+      summary: forgotPassword
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+              required:
+              - email
+  /api/v1/auth/reset-password:
+    post:
+      operationId: resetPassword
+      summary: resetPassword
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+              required:
+              - token
+              - new_password
+  /api/v1/app/auth/register:
+    post:
+      operationId: register_app
+      summary: register app
+      security: []
+      responses:
+        '202':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+              - email
+              - password
+  /api/v1/app/auth/login:
+    post:
+      operationId: app_auth_login
+      summary: app auth login
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+              - email
+              - password
+  /api/v1/app/auth/verify-otp:
+    post:
+      operationId: app_auth_verify_otp
+      summary: app auth verify otp
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/app/auth/refresh:
+    post:
+      operationId: app_auth_refresh
+      summary: app auth refresh
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                refresh_token:
+                  type: string
+              required:
+              - refresh_token
+  /api/v1/app/auth/2fa/resend:
+    post:
+      operationId: app_auth_2fa_resend
+      summary: app auth 2fa resend
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+              required:
+              - challenge_id
+  /api/v1/app/auth/logout:
+    post:
+      operationId: app_auth_logout
+      summary: app auth logout
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/app/auth/logout-all:
+    post:
+      operationId: app_auth_logout_all
+      summary: app auth logout all
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/app/auth/password/change:
+    post:
+      operationId: app_auth_password_change
+      summary: app auth password change
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+              required:
+              - current_password
+              - new_password
+  /api/v1/app/auth/2fa/enable/begin:
+    post:
+      operationId: app_auth_2fa_enable_begin
+      summary: app auth 2fa enable begin
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+              required:
+              - password
+  /api/v1/app/auth/2fa/enable/confirm:
+    post:
+      operationId: app_auth_2fa_enable_confirm
+      summary: app auth 2fa enable confirm
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/app/auth/2fa/disable/begin:
+    post:
+      operationId: app_auth_2fa_disable_begin
+      summary: app auth 2fa disable begin
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+              required:
+              - password
+  /api/v1/app/auth/2fa/disable/confirm:
+    post:
+      operationId: app_auth_2fa_disable_confirm
+      summary: app auth 2fa disable confirm
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/app/me:
+    get:
+      operationId: app_me
+      summary: app me
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+  /api/v1/driver/auth/register:
+    post:
+      operationId: register_driver
+      summary: register driver
+      security: []
+      responses:
+        '202':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+              - email
+              - password
+  /api/v1/driver/auth/login:
+    post:
+      operationId: driver_auth_login
+      summary: driver auth login
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+              - email
+              - password
+  /api/v1/driver/auth/verify-otp:
+    post:
+      operationId: driver_auth_verify_otp
+      summary: driver auth verify otp
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/driver/auth/refresh:
+    post:
+      operationId: driver_auth_refresh
+      summary: driver auth refresh
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                refresh_token:
+                  type: string
+              required:
+              - refresh_token
+  /api/v1/driver/auth/2fa/resend:
+    post:
+      operationId: driver_auth_2fa_resend
+      summary: driver auth 2fa resend
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+              required:
+              - challenge_id
+  /api/v1/driver/auth/logout:
+    post:
+      operationId: driver_auth_logout
+      summary: driver auth logout
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/driver/auth/logout-all:
+    post:
+      operationId: driver_auth_logout_all
+      summary: driver auth logout all
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/driver/auth/password/change:
+    post:
+      operationId: driver_auth_password_change
+      summary: driver auth password change
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+              required:
+              - current_password
+              - new_password
+  /api/v1/driver/auth/2fa/enable/begin:
+    post:
+      operationId: driver_auth_2fa_enable_begin
+      summary: driver auth 2fa enable begin
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+              required:
+              - password
+  /api/v1/driver/auth/2fa/enable/confirm:
+    post:
+      operationId: driver_auth_2fa_enable_confirm
+      summary: driver auth 2fa enable confirm
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/driver/auth/2fa/disable/begin:
+    post:
+      operationId: driver_auth_2fa_disable_begin
+      summary: driver auth 2fa disable begin
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+              required:
+              - password
+  /api/v1/driver/auth/2fa/disable/confirm:
+    post:
+      operationId: driver_auth_2fa_disable_confirm
+      summary: driver auth 2fa disable confirm
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/driver/me:
+    get:
+      operationId: driver_me
+      summary: driver me
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+  /api/v1/admin/auth/login:
+    post:
+      operationId: admin_auth_login
+      summary: admin auth login
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+              - email
+              - password
+  /api/v1/admin/auth/verify-otp:
+    post:
+      operationId: admin_auth_verify_otp
+      summary: admin auth verify otp
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/admin/auth/refresh:
+    post:
+      operationId: admin_auth_refresh
+      summary: admin auth refresh
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                refresh_token:
+                  type: string
+              required:
+              - refresh_token
+  /api/v1/admin/auth/2fa/resend:
+    post:
+      operationId: admin_auth_2fa_resend
+      summary: admin auth 2fa resend
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+              required:
+              - challenge_id
+  /api/v1/admin/auth/logout:
+    post:
+      operationId: admin_auth_logout
+      summary: admin auth logout
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/admin/auth/logout-all:
+    post:
+      operationId: admin_auth_logout_all
+      summary: admin auth logout all
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/admin/auth/password/change:
+    post:
+      operationId: admin_auth_password_change
+      summary: admin auth password change
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+              required:
+              - current_password
+              - new_password
+  /api/v1/admin/auth/2fa/enable/begin:
+    post:
+      operationId: admin_auth_2fa_enable_begin
+      summary: admin auth 2fa enable begin
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+              required:
+              - password
+  /api/v1/admin/auth/2fa/enable/confirm:
+    post:
+      operationId: admin_auth_2fa_enable_confirm
+      summary: admin auth 2fa enable confirm
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/admin/auth/2fa/disable/begin:
+    post:
+      operationId: admin_auth_2fa_disable_begin
+      summary: admin auth 2fa disable begin
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+              required:
+              - password
+  /api/v1/admin/auth/2fa/disable/confirm:
+    post:
+      operationId: admin_auth_2fa_disable_confirm
+      summary: admin auth 2fa disable confirm
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+              required:
+              - challenge_id
+              - code
+  /api/v1/admin/me:
+    get:
+      operationId: admin_me
+      summary: admin me
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+  /health/live:
+    get:
+      operationId: health_live
+      summary: health live
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+  /health/ready:
+    get:
+      operationId: health_ready
+      summary: health ready
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+  /version:
+    get:
+      operationId: version
+      summary: version
+      security: []
+      responses:
+        '200':
+          description: Successful response in data envelope
+        '400':
+          description: Invalid JSON or body
+        '429':
+          description: Rate limited
+        '503':
+          description: Dependency unavailable
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque random access token, not JWT

@@ -1,0 +1,5 @@
+Charger on Wheels security code
+
+Your {{.Action}} code is {{.Code}}.
+This code expires in {{.Minutes}} minutes. Do not share it.
+If you did not request this, change your password and contact support.

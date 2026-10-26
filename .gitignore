@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+*.exe
+*.test
+/bin/
+/tmp/
+*.log
+.vscode/
+.idea/
