@@ -226,8 +226,23 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-go_binary=$(command -v go)
-[[ -x $go_binary ]] || fatal 'Go compiler not found'
+# sudo normally uses a restricted secure_path that excludes /usr/local/go/bin,
+# even when `go` works in the interactive root shell. Locate the installed
+# compiler using absolute paths first, and report a useful error if absent.
+go_binary=''
+for candidate in /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go; do
+    if [[ -x $candidate ]]; then
+        go_binary=$candidate
+        break
+    fi
+done
+if [[ -z $go_binary ]]; then
+    go_binary=$(command -v go || true)
+fi
+[[ -n $go_binary && -x $go_binary ]] || fatal 'Go compiler not found (checked standard paths and PATH)'
+go_bin_dir=${go_binary%/*}
+go_version=$("$go_binary" version) || fatal 'Go compiler failed version check'
+echo "GO_TOOLCHAIN=$go_version"
 stage=$(mktemp -d "$work/candidate.XXXXXXXX")
 chown evcowbbe-build:evcowbbe-build "$stage"
 chmod 0700 "$stage"
@@ -235,7 +250,7 @@ chmod 0700 "$stage"
 build_home=/var/cache/evcowbbe-build
 run_go() {
     runuser -u evcowbbe-build -- /usr/bin/env -i \
-        HOME="$build_home" PATH="/usr/local/go/bin:/usr/bin:/bin" \
+        HOME="$build_home" PATH="$go_bin_dir:/usr/local/bin:/usr/bin:/bin" \
         GOPATH="$build_home/go" GOCACHE="$build_home/go-build" \
         GOMODCACHE="$build_home/go/pkg/mod" GOTOOLCHAIN=local CGO_ENABLED=0 \
         GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
