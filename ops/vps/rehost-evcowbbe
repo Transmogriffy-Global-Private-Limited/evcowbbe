@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# Manual, EVCOWBBE-only test/build/activate/rollback. NO git fetch, NO migrations.
+set -euo pipefail
+
+root=/srv/evcowbbe
+src=$root/source
+work=$root/build-work
+releases=$root/releases
+current=$root/current
+previous=$root/previous
+pending=$root/.pending-deploy
+cfg=/etc/evcowbbe
+service=evcowbbe.service
+command_name=${1:-deploy}
+
+[[ $# -le 1 ]] || { echo 'Usage: rehost-evcowbbe [deploy|status|rollback|check-env]' >&2; exit 2; }
+case "$command_name" in deploy|status|rollback|check-env) ;; *)
+    echo 'Usage: rehost-evcowbbe [deploy|status|rollback|check-env]' >&2; exit 2;;
+esac
+
+say_err() { printf 'EVCOWBBE_ERROR=%s\n' "$*" >&2; }
+fatal() { say_err "$*"; exit 1; }
+
+read_ref() {
+    local ref_path=$1 ref
+    [[ -L $ref_path ]] || { [[ ! -e $ref_path ]] || fatal "Unexpected object: $ref_path"; return 0; }
+    ref=$(readlink -- "$ref_path")
+    [[ $ref == releases/* && $ref != *'..'* && -x $root/$ref/server ]] || fatal "Invalid release link: $ref_path"
+    printf '%s' "$ref"
+}
+
+atomic_link() {
+    local ref=$1 dest=$2 link_tmp
+    [[ $ref == releases/* && $ref != *'..'* && -x $root/$ref/server ]] || fatal 'Invalid release target'
+    link_tmp=$(mktemp -u "$root/.next-link.XXXXXXXX")
+    ln -s -- "$ref" "$link_tmp"
+    mv -Tf -- "$link_tmp" "$dest"
+}
+
+read_host_value() {
+    local key=$1
+    sed -n "s/^${key}=//p" "$cfg/host.env"
+}
+
+verify_config() {
+    local id db_line
+    [[ -f $cfg/host.env && -f $cfg/secrets.env && -f $cfg/host.id && -f $cfg/managed.env ]] || fatal 'Missing VPS configuration'
+    [[ ! -L $cfg && ! -L $cfg/host.env && ! -L $cfg/secrets.env ]] || fatal 'Unexpected configuration symlink'
+    [[ $(stat -c %a "$cfg/host.env") == 600 && $(stat -c %a "$cfg/secrets.env") == 600 ]] || fatal 'Environment file permissions must be 0600'
+    id=$(tr -d '\n' </etc/machine-id)
+    [[ $id =~ ^[[:xdigit:]]{32}$ && $(<"$cfg/host.id") == "$id" ]] || fatal 'Host identity mismatch'
+    [[ $(read_host_value APP_ENV) == staging ]] || fatal 'APP_ENV should be staging for this development hostname'
+    [[ $(read_host_value HTTP_LISTEN_ADDR) == 127.0.0.1:18280 ]] || fatal 'Unexpected HTTP listener'
+    [[ $(read_host_value PUBLIC_BASE_URL) == https://dev-evcowbbe.transev.site ]] || fatal 'Unexpected public URL'
+    db_line=$(sed -n '/^DATABASE_URL=/p' "$cfg/secrets.env")
+    case "$db_line" in
+        DATABASE_URL=postgresql://evcowbbe_app:*@127.0.0.1:5432/evcowbbe\?sslmode=disable) ;;
+        *) fatal 'DATABASE_URL does not target the dedicated loopback database';;
+    esac
+    unset db_line
+    echo 'EVCOWBBE_ENV_HOST_BOUND=PASS'
+}
+
+write_managed_env() {
+    local rev=$1 temp id
+    id=$(tr -d '\n' </etc/machine-id)
+    temp=$(mktemp "$cfg/.managed.XXXXXXXX")
+    chmod 0600 "$temp"
+    printf 'EVCOWBBE_HOST_ID=%s\nEVCOWBBE_BUILD_REVISION=%s\n' "$id" "$rev" >"$temp"
+    mv -Tf -- "$temp" "$cfg/managed.env"
+}
+
+write_pending() {
+    local old=$1 new=$2 oldrev=$3 temp
+    temp=$(mktemp "$root/.pending.XXXXXXXX")
+    chmod 0600 "$temp"
+    printf '%s|%s|%s\n' "$old" "$new" "$oldrev" >"$temp"
+    mv -Tf -- "$temp" "$pending"
+    sync -f "$pending"
+}
+
+wait_ready() {
+    local binary=$1 pid actual i
+    for ((i=1; i<=30; i++)); do
+        if systemctl is-active --quiet "$service" &&
+            curl --noproxy '*' -fsS --max-time 2 http://127.0.0.1:18280/health/ready >/dev/null 2>&1; then
+            pid=$(systemctl show -p MainPID --value "$service")
+            if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
+                actual=$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)
+                [[ $actual == "$binary" ]] && return 0
+            fi
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+require_install() {
+    [[ $(id -u) -eq 0 ]] || fatal 'Run as root'
+    [[ -d $src/.git && -f $src/go.mod && -d $releases && -d $work ]] || fatal 'Deployment setup/source absent'
+    [[ ! -L $root && ! -L $src && ! -L $releases && ! -L $work ]] || fatal 'Unexpected deployment symlink'
+    getent passwd evcowbbe >/dev/null || fatal 'Service account missing'
+    getent passwd evcowbbe-build >/dev/null || fatal 'Builder account missing'
+    [[ -f /etc/systemd/system/$service ]] || fatal 'systemd unit not installed'
+    command -v curl >/dev/null || fatal 'curl required'
+    command -v flock >/dev/null || fatal 'flock required'
+}
+
+print_status() {
+    local active_ref previous_ref
+    active_ref=$(read_ref "$current")
+    previous_ref=$(read_ref "$previous")
+    echo "ACTIVE_RELEASE=${active_ref:-none}"
+    echo "PREVIOUS_RELEASE=${previous_ref:-none}"
+    echo "SYSTEMD_STATE=$(systemctl is-active "$service" || true)"
+    [[ ! -e $pending ]] || echo 'WARNING=INTERRUPTED_DEPLOYMENT_REQUIRES_RECONCILIATION'
+    echo 'This reports binary releases only; migration rollback is never automatic.'
+}
+
+recover_interrupted() {
+    local old new oldrev active
+    [[ ! -e $pending ]] && return 0
+    [[ -f $pending && ! -L $pending ]] || fatal 'Invalid deployment journal'
+    IFS='|' read -r old new oldrev <"$pending"
+    [[ $new == releases/* && -x $root/$new/server ]] || fatal 'Invalid pending candidate'
+    [[ -z $old || ( $old == releases/* && -x $root/$old/server ) ]] || fatal 'Invalid pending previous release'
+    [[ $oldrev =~ ^[[:alnum:]._-]+$ ]] || fatal 'Invalid previous revision in journal'
+    active=$(read_ref "$current")
+    [[ -z $active || $active == "$new" || $active == "$old" ]] || fatal 'Unexpected active release during reconciliation'
+    echo 'INTERRUPTED_DEPLOYMENT_DETECTED=YES'
+    if [[ -n $old ]]; then
+        atomic_link "$old" "$current"
+        write_managed_env "$oldrev"
+        systemctl restart "$service"
+        wait_ready "$root/$old/server" || fatal 'Previous release failed health check during recovery'
+    else
+        systemctl stop "$service" || true
+        [[ -L $current ]] && unlink "$current"
+        write_managed_env uninitialized
+    fi
+    unlink "$pending"
+    echo 'INTERRUPTED_DEPLOYMENT_RECONCILED=YES'
+}
+
+require_install
+if [[ $command_name == status ]]; then print_status; exit 0; fi
+verify_config
+if [[ $command_name == check-env ]]; then exit 0; fi
+
+exec 9>/run/lock/evcowbbe-rehost.lock
+flock -n 9 || fatal 'Another EVCOWBBE deployment/rollback is active'
+recover_interrupted
+
+if [[ $command_name == rollback ]]; then
+    old=$(read_ref "$current")
+    target=$(read_ref "$previous")
+    [[ -n $old && -n $target && $old != "$target" ]] || fatal 'No separate previous working release'
+    old_rev=$(sed -n 's/^EVCOWBBE_BUILD_REVISION=//p' "$cfg/managed.env")
+    target_rev=$(<"$root/$target/REVISION")
+    write_pending "$old" "$target" "$old_rev"
+    atomic_link "$target" "$current"
+    write_managed_env "$target_rev"
+    if systemctl restart "$service" && wait_ready "$root/$target/server"; then
+        atomic_link "$old" "$previous"
+        unlink "$pending"
+        echo "EVCOWBBE_ROLLBACK=PASS"
+        echo "ACTIVE_RELEASE=$target"
+        exit 0
+    fi
+    say_err 'Requested rollback failed; restoring original release'
+    atomic_link "$old" "$current"
+    write_managed_env "$old_rev"
+    systemctl restart "$service" || true
+    if wait_ready "$root/$old/server"; then
+        unlink "$pending"
+    else
+        say_err 'RESTORATION_FAILED: journal retained; manual intervention required'
+    fi
+    exit 1
+fi
+
+# Deploy: checked-out code only. No git fetch/pull/checkout and no schema writes.
+[[ -z $(git -C "$src" status --porcelain --untracked-files=all) ]] || fatal 'Source checkout is dirty; commit/review it before rehosting'
+rev=$(git -C "$src" rev-parse --verify HEAD)
+[[ $rev =~ ^[[:xdigit:]]{40}$ ]] || fatal 'Invalid Git revision'
+previous_active=$(read_ref "$current")
+old_rev=$(sed -n 's/^EVCOWBBE_BUILD_REVISION=//p' "$cfg/managed.env")
+[[ -n $old_rev ]] || old_rev=uninitialized
+
+stage=''
+incoming=''
+promoted=0
+committed=0
+cleanup() {
+    local code=$?
+    trap - EXIT
+    set +e
+    if ((promoted && !committed)); then
+        say_err 'New release was not accepted. Restoring last working release.'
+        if [[ -n $previous_active ]]; then
+            atomic_link "$previous_active" "$current"
+            write_managed_env "$old_rev"
+            systemctl restart "$service"
+            if wait_ready "$root/$previous_active/server"; then
+                [[ ! -e $pending ]] || unlink "$pending"
+            else
+                say_err 'ROLLBACK_FAILED: journal retained; manual intervention required'
+            fi
+        else
+            systemctl stop "$service"
+            [[ -L $current ]] && unlink "$current"
+            write_managed_env uninitialized
+            [[ ! -e $pending ]] || unlink "$pending"
+            echo 'FIRST_DEPLOY_FAILED_NO_PRIOR_RELEASE' >&2
+        fi
+    fi
+    if [[ -n $stage && $stage == "$work"/candidate.* && -d $stage && ! -L $stage ]]; then
+        rm -rf -- "$stage"
+    fi
+    if [[ -n $incoming && $incoming == "$releases"/.incoming.* && -d $incoming && ! -L $incoming ]]; then
+        rm -rf -- "$incoming"
+    fi
+    exit "$code"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+go_binary=$(command -v go)
+[[ -x $go_binary ]] || fatal 'Go compiler not found'
+stage=$(mktemp -d "$work/candidate.XXXXXXXX")
+chown evcowbbe-build:evcowbbe-build "$stage"
+chmod 0700 "$stage"
+
+build_home=/var/cache/evcowbbe-build
+run_go() {
+    runuser -u evcowbbe-build -- /usr/bin/env -i \
+        HOME="$build_home" PATH="/usr/local/go/bin:/usr/bin:/bin" \
+        GOPATH="$build_home/go" GOCACHE="$build_home/go-build" \
+        GOMODCACHE="$build_home/go/pkg/mod" GOTOOLCHAIN=local CGO_ENABLED=0 \
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
+        GIT_CONFIG_VALUE_0="$src" \
+        "$go_binary" "$@"
+}
+cd "$src"
+echo "CANDIDATE_REVISION=$rev"
+echo '=== DEPENDENCIES ==='
+run_go mod download
+run_go mod verify
+echo '=== GO TESTS ==='
+run_go test -count=1 -p 2 ./...
+echo '=== GO VET ==='
+run_go vet -p 2 ./...
+echo '=== BUILD ==='
+run_go build -trimpath -buildvcs=true -o "$stage/server" ./cmd/server
+run_go build -trimpath -buildvcs=true -o "$stage/preflight" ./cmd/preflight
+
+# Freeze outputs before root copies them. The builder cannot rename a child
+# under the root-owned build-work parent once this directory is root-owned.
+chown -R root:root "$stage"
+[[ -f $stage/server && ! -L $stage/server && -x $stage/server ]] || fatal 'Invalid candidate server binary'
+[[ -f $stage/preflight && ! -L $stage/preflight && -x $stage/preflight ]] || fatal 'Invalid candidate preflight binary'
+
+incoming=$(mktemp -d "$releases/.incoming.XXXXXXXX")
+install -o root -g root -m 0755 "$stage/server" "$incoming/server"
+install -o root -g root -m 0755 "$stage/preflight" "$incoming/preflight"
+printf '%s\n' "$rev" >"$incoming/REVISION"
+chmod 0644 "$incoming/REVISION"
+chmod 0755 "$incoming"
+
+echo '=== READ-ONLY LIVE PREFLIGHT ==='
+systemd-run --unit="evcowbbe-build-preflight-$(date +%s%N)" \
+    --collect --wait --pipe \
+    -p User=evcowbbe -p Group=evcowbbe \
+    -p "WorkingDirectory=$src" \
+    -p "EnvironmentFile=$cfg/host.env" \
+    -p "EnvironmentFile=$cfg/secrets.env" \
+    "$incoming/preflight"
+
+release_name="$(date -u +%Y%m%dT%H%M%SZ)-${rev:0:12}-$(basename "$incoming" | cut -c11-)"
+release_ref="releases/$release_name"
+[[ ! -e $root/$release_ref && ! -L $root/$release_ref ]] || fatal 'Release identifier already exists'
+mv -T -- "$incoming" "$root/$release_ref"
+incoming=''
+
+echo '=== ACTIVATE ==='
+write_pending "$previous_active" "$release_ref" "$old_rev"
+atomic_link "$release_ref" "$current"
+promoted=1
+write_managed_env "$rev"
+systemctl restart "$service"
+wait_ready "$root/$release_ref/server" || fatal 'Candidate did not become ready in 30 seconds'
+systemctl enable --quiet "$service"
+if [[ -n $previous_active ]]; then
+    atomic_link "$previous_active" "$previous"
+fi
+unlink "$pending"
+committed=1
+echo 'EVCOWBBE_REHOST=PASS'
+echo "ACTIVE_RELEASE=$release_ref"

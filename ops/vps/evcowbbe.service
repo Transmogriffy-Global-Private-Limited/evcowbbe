@@ -1,0 +1,35 @@
+[Unit]
+Description=Charger on Wheels Go authentication API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=evcowbbe
+Group=evcowbbe
+WorkingDirectory=/var/lib/evcowbbe
+EnvironmentFile=/etc/evcowbbe/host.env
+EnvironmentFile=/etc/evcowbbe/secrets.env
+EnvironmentFile=/etc/evcowbbe/managed.env
+ExecStart=/srv/evcowbbe/current/server
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=evcowbbe
+
+[Install]
+WantedBy=multi-user.target

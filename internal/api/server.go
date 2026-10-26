@@ -397,6 +397,19 @@ func remoteIP(r *http.Request) string {
 	if err != nil {
 		return r.RemoteAddr
 	}
+	// The public server only listens on loopback, behind the EVCOWBBE Caddy
+	// route. Caddy overwrites X-Real-IP with the Cloudflare-asserted visitor
+	// address, but only when the immediate TCP peer belongs to Cloudflare's
+	// published ranges. Never trust this header from a non-loopback peer.
+	if peer := net.ParseIP(ip); peer != nil && peer.IsLoopback() {
+		values := r.Header.Values("X-Real-IP")
+		if len(values) == 1 {
+			value := strings.TrimSpace(values[0])
+			if real := net.ParseIP(value); real != nil && !real.IsUnspecified() && !real.IsLoopback() {
+				return real.String()
+			}
+		}
+	}
 	return ip
 }
 func post(w http.ResponseWriter, r *http.Request, id string, s *Server) bool {
