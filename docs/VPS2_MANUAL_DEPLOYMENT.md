@@ -232,6 +232,58 @@ and `https://www.cloudflare.com/ips-v6` when maintaining the site.
 - Review security posture, mail retry/outbox, backup/restore, monitoring and
   external vulnerability assessment before treating auth as production-accepted.
 
+## 7. Embedded Swagger UI and OpenAPI contract
+
+Since the Swagger UI add-on, the versioned Go binary itself serves:
+
+- `GET /swagger/` (also `/swagger/index.html`) - public interactive UI;
+- `GET /openapi.yaml` - the exact committed `docs/contracts/auth.openapi.yaml`;
+- `/swagger/swagger-ui-bundle.js`, `/swagger/swagger-ui.css`, and
+  `/swagger/init.js` - pinned, locally embedded frontend assets.
+
+The UI uses Swagger UI 5.33.3, vendored under `internal/api/swagger/`, with its
+Apache-2.0 license and bundled third-party notices. There is **no CDN** and no
+extra Caddy site configuration. The OpenAPI server URL is `/` (same origin),
+so browser requests work both on loopback development and through the existing
+Cloudflare/Caddy endpoint. The JavaScript prevents selecting a different spec
+through URL query parameters and disables persistent authorization. The docs
+have a restrictive CSP and `noindex` response header. They are publicly
+accessible and are **not** an admin dashboard or authentication bypass.
+
+On the Windows development checkout, review the add-on and run:
+
+```powershell
+go test -count=1 ./...
+go vet ./...
+go build ./...
+git diff --check
+```
+
+After manually committing and pushing to GitHub, pull on VPS2 yourself, and
+run `sudo rehost-evcowbbe deploy`. As usual, rehost **does not pull Git** and
+does **not** run migrations. It builds, tests and embeds the UI and spec into
+the new release. Rollback selects the prior binary together with its prior
+documentation; neither an old spec file nor CDN may drift independently.
+
+Verify only EVCOWBBE endpoints after deployment:
+
+```bash
+curl -I --max-time 10 https://dev-evcowbbe.transev.site/swagger/
+curl -I --max-time 10 https://dev-evcowbbe.transev.site/openapi.yaml
+curl -I --max-time 10 https://dev-evcowbbe.transev.site/swagger/swagger-ui-bundle.js
+```
+
+All three should return HTTP 200 with appropriate `Content-Type` values.
+Open `https://dev-evcowbbe.transev.site/swagger/` in a normal browser to verify
+that the operations render and load the YAML without console errors.
+Do not run state-changing operations against real accounts merely to validate
+the page; targeted authentication acceptance testing is a separate workflow.
+
+If documentation fails after deployment, inspect EVCOWBBE's own Go service
+logs and return to the last working binary using the manual rollback command
+(when a previous release exists). Do not edit Caddy or EVCPO Portal for a
+documentation-route issue.
+
 ## Maintenance and recovery
 
 - `sudo rehost-evcowbbe status` prints release paths and service state only.

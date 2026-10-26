@@ -5,8 +5,8 @@ info:
   description: One-plane opaque bearer tokens. Explicitly no production admin capability
     grants or driver operational access in this slice.
 servers:
-- url: http://127.0.0.1:18080
-  description: Loopback development only
+- url: /
+  description: Same origin as the Swagger UI (local or deployed HTTPS host)
 paths:
   /api/v1/auth/verify-email:
     post:

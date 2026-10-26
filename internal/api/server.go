@@ -82,6 +82,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, id, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
 		return
 	}
+	if isDocumentationPath(r.URL.Path) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			s.fail(w, id, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
+			return
+		}
+		serveDocumentation(w, r)
+		return
+	}
 	if r.URL.Path == "/health/live" && r.Method == "GET" {
 		s.ok(w, http.StatusOK, map[string]any{"status": "live"})
 		return

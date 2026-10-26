@@ -1,6 +1,6 @@
 # Charger on Wheels — Go + PostgreSQL authentication foundation
 
-**Scope:** initial human authentication only; not the EV service-job, fleet, billing, HAL, or dispatch implementation. No CI/CD, no VPS scripts, no production rollout. The existing Git repository can be retained while replacing its working tree with this package.
+**Scope:** initial human authentication only; not the EV service-job, fleet, billing, HAL, or dispatch implementation. No automatic CI/CD or database migrations. VPS2 uses the separate, manual-only `ops/vps` deployment scripts; see [the hosting runbook](docs/VPS2_MANUAL_DEPLOYMENT.md).
 
 Built against the project's 24 September 2026 sole-source blueprint: human auth and payload standard (annex 11), security (annex 15), configuration (annex 17), repository discipline (annex 22), and Admin RBAC boundary (annex 44).
 
@@ -35,6 +35,17 @@ Subsequent runs: `pwsh -NoProfile -File .\scripts\run.ps1`. Schema inspection: `
 - The 2FA mechanism is explicitly **email OTP**. Since email is also used for password recovery, it is not phishing-resistant or independent of email-account compromise; consider passkeys/TOTP for a later security upgrade.
 
 ## HTTP endpoints
+
+Interactive documentation is served by the Go API at `/swagger/`, and its
+machine-readable OpenAPI 3.1 contract is served at `/openapi.yaml`. On VPS2,
+use `https://dev-evcowbbe.transev.site/swagger/`. Swagger UI and the YAML are
+embedded into the versioned binary: no filesystem checkout, CDN, second
+service, extra port, or database migration is necessary at runtime. The
+OpenAPI server uses the current origin, so **Try it out** calls the server you
+opened the documentation on, including the live staging database. Only issue
+state-changing requests intentionally. Access tokens entered into Swagger UI
+remain in browser memory for the page session; they are not configured to
+persist after refresh. Do not copy tokens into screenshots or logs.
 
 All mutations require `Content-Type: application/json`, reject unknown fields, have 32KiB body limit and return `{"data":...}` or `{"error":{"code":...,"message":...,"request_id":...}}`. Tokens must be held in the client secure credential store; do **not** place them in URLs/localStorage/logs.
 
