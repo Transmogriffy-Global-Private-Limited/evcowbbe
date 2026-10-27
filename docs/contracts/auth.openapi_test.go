@@ -36,8 +36,15 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 		}
 		expected["GET "+prefix+"/me"] = false
 	}
-	if len(expected) != 45 {
-		t.Fatalf("expected route fixture count %d, want 45", len(expected))
+	expected["POST /api/v1/app/vehicles"] = false
+	expected["GET /api/v1/app/vehicles"] = false
+	expected["GET /api/v1/app/vehicles/{id}"] = false
+	expected["PUT /api/v1/app/vehicles/{id}"] = false
+	expected["DELETE /api/v1/app/vehicles/{id}"] = false
+	expected["POST /api/v1/app/vehicles/{id}/default"] = false
+
+	if len(expected) != 51 {
+		t.Fatalf("expected route fixture count %d, want 51", len(expected))
 	}
 
 	contract := string(AuthOpenAPI())
@@ -97,7 +104,7 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 		if strings.HasPrefix(line, "  /") && strings.HasSuffix(line, ":") {
 			finish()
 			currentPath = strings.TrimSuffix(strings.TrimPrefix(line, "  "), ":")
-		} else if line == "    post:" || line == "    get:" {
+		} else if line == "    post:" || line == "    get:" || line == "    put:" || line == "    delete:" {
 			finish()
 			currentMethod = strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(line), ":"))
 		} else if currentMethod != "" {
@@ -127,14 +134,14 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 				t.Errorf("%s missing %q", key, mandatory)
 			}
 		}
-		if op.method == "POST" {
+		if op.method == "POST" || op.method == "PUT" {
 			for _, mandatory := range []string{"      requestBody:", "        '415':"} {
 				if !strings.Contains(op.body, mandatory) {
 					t.Errorf("%s missing %q", key, mandatory)
 				}
 			}
-		} else if strings.Contains(op.body, "      requestBody:") {
-			t.Errorf("GET route %s unexpectedly declares a request body", key)
+		} else if (op.method == "GET" || op.method == "DELETE") && strings.Contains(op.body, "      requestBody:") {
+			t.Errorf("%s route unexpectedly declares a request body", key)
 		}
 		if !strings.Contains(op.body, "        $ref: '#/components/responses/") {
 			t.Errorf("%s lacks structured success/error responses", key)

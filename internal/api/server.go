@@ -15,6 +15,7 @@ import (
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/auth"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/config"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/security"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,6 +24,7 @@ type Server struct {
 	DB     *pgxpool.Pool
 	C      config.Config
 	Logger *slog.Logger
+	User   *user.Router
 }
 type response struct {
 	Data any `json:"data"`
@@ -384,8 +386,26 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.done(w, id, err)
 	default:
+		if action == "vehicles" || strings.HasPrefix(action, "vehicles/") {
+			if plane != "app" {
+				s.fail(w, id, 403, "FORBIDDEN", "Vehicle management is only available on the customer app plane")
+				return
+			}
+			s.getUserRouter().DispatchWithPrincipal(w, r, principal, id)
+			return
+		}
 		s.fail(w, id, 404, "NOT_FOUND", "Endpoint not found")
 	}
+}
+
+func (s *Server) getUserRouter() *user.Router {
+	if s.User != nil {
+		return s.User
+	}
+	repo := user.NewRepository(s.DB)
+	svc := user.NewService(repo)
+	s.User = user.NewRouter(svc, s.Auth)
+	return s.User
 }
 func uuidFormat(s string) bool {
 	for i, c := range s {

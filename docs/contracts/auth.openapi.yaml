@@ -644,6 +644,193 @@ paths:
             example:
               challenge_id: 00000000-0000-4000-8000-000000000000
               code: '012345'
+  /api/v1/app/vehicles:
+    post:
+      tags:
+      - Customer App
+      operationId: register_customer_vehicle
+      summary: Register customer vehicle
+      description: Register a new electric vehicle for the authenticated customer. The first vehicle is automatically marked as default.
+      security:
+      - BearerAuth: []
+      responses:
+        '201':
+          $ref: '#/components/responses/VehicleCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVehicleRequest'
+            example:
+              name: My Nexon EV
+              vehicle_type: CAR
+              make: Tata
+              model: Nexon EV
+              registration_number: KA01AB1234
+              battery_capacity_kwh: 40.5
+              is_default: true
+    get:
+      tags:
+      - Customer App
+      operationId: list_customer_vehicles
+      summary: List customer vehicles
+      description: Returns all vehicles registered by the authenticated customer account.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleList'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/app/vehicles/{id}:
+    get:
+      tags:
+      - Customer App
+      operationId: get_customer_vehicle
+      summary: Get customer vehicle details
+      description: Retrieve details for a specific vehicle belonging to the authenticated customer account.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleItem'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    put:
+      tags:
+      - Customer App
+      operationId: update_customer_vehicle
+      summary: Update customer vehicle
+      description: Update details for an existing vehicle belonging to the authenticated customer account.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVehicleRequest'
+            example:
+              name: My Upgraded Nexon
+              model: Nexon EV Max
+              battery_capacity_kwh: 40.5
+              is_default: true
+    delete:
+      tags:
+      - Customer App
+      operationId: delete_customer_vehicle
+      summary: Delete customer vehicle
+      description: Remove a vehicle belonging to the authenticated customer account.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleActionSuccess'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/app/vehicles/{id}/default:
+    post:
+      tags:
+      - Customer App
+      operationId: set_default_customer_vehicle
+      summary: Set vehicle as default
+      description: Mark this vehicle as the primary/default vehicle for the authenticated customer account.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleActionSuccess'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+            example: {}
   /api/v1/driver/auth/register:
     post:
       tags:
@@ -2052,6 +2239,163 @@ components:
           $ref: '#/components/schemas/ErrorBody'
       required:
       - error
+    CreateVehicleRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - vehicle_type
+      - registration_number
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: My Nexon EV
+        vehicle_type:
+          type: string
+          enum: [CAR, MOTORCYCLE, SCOOTER, THREE_WHEELER, OTHER]
+          example: CAR
+        make:
+          type: string
+          maxLength: 100
+          example: Tata
+        model:
+          type: string
+          maxLength: 100
+          example: Nexon EV
+        registration_number:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: KA01AB1234
+        battery_capacity_kwh:
+          type: number
+          format: double
+          minimum: 0.1
+          example: 40.5
+        is_default:
+          type: boolean
+          example: true
+    UpdateVehicleRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: My Upgraded Nexon
+        vehicle_type:
+          type: string
+          enum: [CAR, MOTORCYCLE, SCOOTER, THREE_WHEELER, OTHER]
+          example: CAR
+        make:
+          type: string
+          maxLength: 100
+          example: Tata
+        model:
+          type: string
+          maxLength: 100
+          example: Nexon EV Max
+        registration_number:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: KA01AB1234
+        battery_capacity_kwh:
+          type: number
+          format: double
+          minimum: 0.1
+          example: 40.5
+        is_default:
+          type: boolean
+          example: true
+    VehicleResponse:
+      type: object
+      required:
+      - id
+      - customer_account_id
+      - vehicle_type
+      - registration_number
+      - is_default
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 00000000-0000-4000-8000-000000000001
+        customer_account_id:
+          type: string
+          format: uuid
+          example: 00000000-0000-4000-8000-000000000000
+        name:
+          type: string
+          nullable: true
+          example: My Nexon EV
+        vehicle_type:
+          type: string
+          enum: [CAR, MOTORCYCLE, SCOOTER, THREE_WHEELER, OTHER]
+          example: CAR
+        make:
+          type: string
+          nullable: true
+          example: Tata
+        model:
+          type: string
+          nullable: true
+          example: Nexon EV
+        registration_number:
+          type: string
+          example: KA01AB1234
+        battery_capacity_kwh:
+          type: number
+          format: double
+          nullable: true
+          example: 40.5
+        is_default:
+          type: boolean
+          example: true
+        last_charged:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-27T10:00:00Z'
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-10-27T08:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-10-27T08:00:00Z'
+    VehicleEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          $ref: '#/components/schemas/VehicleResponse'
+    VehicleListEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/VehicleResponse'
+    VehicleMessageEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          type: object
+          required:
+          - message
+          properties:
+            message:
+              type: string
+              example: vehicle deleted successfully
   responses:
     Ack:
       description: Action completed. For password changes, all existing sessions are revoked; for 2FA confirmation,
@@ -2622,5 +2966,77 @@ components:
                 error:
                   code: METHOD_NOT_ALLOWED
                   message: Method not allowed
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    VehicleCreated:
+      description: Customer vehicle registered successfully.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VehicleEnvelope'
+    VehicleItem:
+      description: Customer vehicle retrieved or updated successfully.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VehicleEnvelope'
+    VehicleList:
+      description: List of registered vehicles belonging to the customer.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VehicleListEnvelope'
+    VehicleActionSuccess:
+      description: Vehicle action completed successfully.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VehicleMessageEnvelope'
+    NotFound:
+      description: Requested vehicle or resource not found.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            not_found:
+              summary: NOT_FOUND
+              value:
+                error:
+                  code: NOT_FOUND
+                  message: Vehicle not found
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    ValidationFailed:
+      description: Payload validation failed (e.g. invalid vehicle type, missing registration, or invalid battery capacity).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            validation_failed:
+              summary: VALIDATION_FAILED
+              value:
+                error:
+                  code: VALIDATION_FAILED
+                  message: Invalid vehicle data
                   request_id: 00000000-0000-4000-8000-000000000000
                   details: {}
