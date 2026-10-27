@@ -35,7 +35,9 @@ func main() {
 		os.Exit(1)
 	}
 	// Server startup never applies migrations automatically.
-	server := &http.Server{Addr: c.Address, Handler: (&api.Server{Auth: auth.New(db, c), DB: db, C: c, Logger: logger}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 16 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	authService := auth.New(db, c)
+	go authService.Outbox.Run(ctx, logger)
+	server := &http.Server{Addr: c.Address, Handler: (&api.Server{Auth: authService, DB: db, C: c, Logger: logger}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 16 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	go func() {
 		<-ctx.Done()
 		ctx, stop := context.WithTimeout(context.Background(), 8*time.Second)

@@ -1,6 +1,6 @@
 # Charger on Wheels — Go + PostgreSQL authentication foundation
 
-**Scope:** initial human authentication only; not the EV service-job, fleet, billing, HAL, or dispatch implementation. No automatic CI/CD or database migrations. VPS2 uses the separate, manual-only `ops/vps` deployment scripts; see [the hosting runbook](docs/VPS2_MANUAL_DEPLOYMENT.md).
+**Scope:** human authentication plus encrypted transactional email outbox and capability-based Admin RBAC; not the EV service-job, fleet, billing, HAL, or dispatch implementation. No automatic CI/CD or database migrations. VPS2 uses the separate, manual-only `ops/vps` deployment scripts; see [the hosting runbook](docs/VPS2_MANUAL_DEPLOYMENT.md).
 
 Built against the project's 24 September 2026 sole-source blueprint: human auth and payload standard (annex 11), security (annex 15), configuration (annex 17), repository discipline (annex 22), and Admin RBAC boundary (annex 44).
 
@@ -79,6 +79,20 @@ Use `PLANE` = `app`, `driver`, `admin`:
 
 Login response with disabled 2FA: `{"data":{"tokens":{"access_token":"...","refresh_token":"..."},"two_factor_required":false}}`. With 2FA: `{"data":{"two_factor_required":true,"challenge_id":"..."}}`, then verify the code using `auth/verify-otp` to obtain tokens.
 
+Admin RBAC routes (all require a valid **admin-plane** access bearer; privileges are evaluated on every request):
+
+| Method | Route | Additional capability / body |
+| --- | --- | --- |
+| GET | `/api/v1/admin/rbac/me` | Own effective permissions; no business capability required |
+| GET | `/api/v1/admin/rbac/catalog` | `system.settings.read` |
+| GET | `/api/v1/admin/rbac/accounts/{account_id}` | `system.settings.read` |
+| POST | `/api/v1/admin/rbac/accounts/{account_id}/roles` | `system.settings.manage`; `{"role":"READ_ONLY","reason":"Documented approval"}` |
+| DELETE | `/api/v1/admin/rbac/accounts/{account_id}/roles/{role}` | `system.settings.manage`; `{"reason":"Documented revocation"}` |
+| PUT | `/api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}` | `system.settings.manage`; `{"decision":"DENY","reason":"Documented restriction"}` |
+| DELETE | `/api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}` | `system.settings.manage`; `{"reason":"Documented removal"}` |
+
+The exact capability/role catalog is part of `internal/adminrbac/catalog.go` and the embedded OpenAPI document. See [the deployment and acceptance runbook](docs/OUTBOX_RBAC_DEPLOYMENT_AND_ACCEPTANCE.md) before any migration or release.
+
 ## Example: register + verify + login
 
 ```powershell
@@ -93,11 +107,15 @@ $access = $login.data.tokens.access_token
 Invoke-RestMethod "$base/api/v1/app/me" -Headers @{Authorization="Bearer $access"}
 ```
 
-`SMTP` uses text and HTML templates under `internal/mailer/templates/`. Real SMTP is configured during `scripts/configure.ps1`; `SMTP_TLS_MODE=starttls` (commonly 587) or `tls` (commonly 465) validates the remote server certificate. `SMTP_TLS_MODE=none` is allowed only for loopback development. Email verification/security delivery needs a reliable transactional outbox and retries before unattended production use (see below).
+`SMTP` uses text and HTML templates under `internal/mailer/templates/`. Real SMTP is configured during `scripts/configure.ps1`; `SMTP_TLS_MODE=starttls` (commonly 587) or `tls` (commonly 465) validates the remote server certificate. `SMTP_TLS_MODE=none` is allowed only for loopback development. The transactional outbox has been added, but live retry, deliverability, and recovery acceptance must still be performed before unattended production use.
 
 ## Database and security boundaries
 
 - Migrations are explicit `go run ./cmd/migrate up`; server startup only **verifies** migration checksums, never applies migrations. All SQL is parameterized.
+- Migration 002 adds `auth_mail_outbox`, `admin_role_assignments`, `admin_capability_overrides`, and `admin_rbac_audit`. Apply it **manually after taking a reviewed backup**, before activating the new binary. Do not change migration 001. Retain `OTP_HMAC_PEPPER`: the outbox AES-256-GCM encryption key is domain-separated from this existing pepper; changing it while emails are queued makes them undecryptable.
+- The API enqueues verification, password reset, OTP and security notices within the same transaction as the associated security change. The API process runs a leased, multi-instance-safe outbox worker (5-second poll). SMTP is **at least once**, so an accepted message followed by a DB acknowledgment failure can be delivered twice. Superseded/consumed/expired codes are suppressed before handoff. API `200`/`202` now means the message was **queued**, not that SMTP/inbox delivery succeeded. A real inbox receipt and outage-recovery drill remain operational gates.
+- Admin RBAC uses the exact flat capability and role catalog from Annex 44. The presence of an Admin account/token grants **no default business capabilities**. `GET /api/v1/admin/rbac/me` returns effective permissions. Catalog and account permission reads need `system.settings.read`; changes need `system.settings.manage`, a distinct target Admin and an audit reason. An explicit DENY overrides any default role or ALLOW.
+- **Existing first Admin:** after migration 002, a trusted operator must explicitly run `go run ./cmd/admin-rbac grant-initial-full-admin ADMIN_EMAIL` on the intended database and type the confirmation phrase. This operation works only while *no* Admin roles are assigned and records an audit event. For subsequent Admins, an authorized Admin must assign roles through the protected RBAC API. There is no automatic promotion or public Admin registration. Do not assume the Aiven and VPS2 Admin/databases are the same instance.
 - PostgreSQL holds sessions, challenge state, rate limits, security audit, and used-refresh fingerprints. Login attempts are rate-limited per IP **and** identifier; OTP sends and OTP code attempts have additional limits. Unknown-email password checks perform Argon2 work to mitigate timing leaks.
 - Local HTTP listens only on `127.0.0.1`. Deployment to an actual VPS requires an HTTPS reverse proxy, trusted proxy configuration, operational monitoring and backup/restore planning. CORS is deliberately closed (no cross-origin browser allowance) until the frontend origin is decided.
 - `MAIL_FROM_ADDRESS`, Postgres and SMTP parameters, Argon2/TTL limits, and two independent peppers are set in `.env`. `.env` is gitignored; generated credentials are unique per local installation.
@@ -107,7 +125,7 @@ Invoke-RestMethod "$base/api/v1/app/me" -Headers @{Authorization="Bearer $access
 
 **Implemented:** complete first-slice REST flows listed above, schema and explicit migrations, session rotation/reuse invalidation, email verification, email OTP enable/disable, password reset/change, Admin CLI bootstrap, server health, local SMTP templates, SQL rate limits, no-credentials ZIP, and Windows bootstrap.
 
-**Not yet production-accepted:** independent security audit, full integration suite against a dedicated real PostgreSQL test DB, real SMTP delivery acceptance, transactional retryable outbox, Admin business RBAC, driver recruitment/approval, multi-instance tests, secure production HTTPS reverse proxy, and backup/restore. `continue-setup.ps1` runs Go tests, live read-only connectivity checks and optional live test-database integration, but does not claim production readiness.
+**Not yet production-accepted:** independent security review, full integration suite against a dedicated real PostgreSQL test DB, real SMTP/inbox delivery and outbox retry acceptance, deployed Admin RBAC authorization matrix, driver recruitment/approval business handlers, multi-instance/load/fault tests, backup/restore, and production migration/release validation. A live VPS2 HTTPS reverse proxy was previously verified for the older release; this new slice has not been deployed or reaccepted. `continue-setup.ps1` runs Go tests, live read-only connectivity checks and optional live test-database integration, but does not claim production readiness.
 
 **Do not deploy this ZIP directly to VPS2 or treat it as a replacement for its recovered backend.** The VPS2 CI/CD retirement and switch to manual deployment remain separate, explicitly authorized work.
 

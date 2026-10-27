@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/adminrbac"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/auth"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/config"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/security"
@@ -108,7 +109,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/version" && r.Method == "GET" {
-		s.ok(w, 200, map[string]string{"version": "auth-foundation-1"})
+		s.ok(w, 200, map[string]string{"version": "auth-foundation-2"})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
@@ -214,7 +215,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			s.err(w, id, err)
 			return
 		}
-		s.ok(w, 202, map[string]any{"message": "If eligible, a verification email has been sent", "plane": plane})
+		s.ok(w, 202, map[string]any{"message": "If eligible, a verification email has been queued", "plane": plane})
 		return
 	}
 	if action == "auth/login" {
@@ -316,6 +317,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.err(w, id, auth.ErrInvalid)
 		return
 	}
+	if plane == "admin" && strings.HasPrefix(action, "rbac/") {
+		s.handleRBAC(w, r, id, principal, strings.TrimPrefix(action, "rbac/"))
+		return
+	}
 	switch action {
 	case "me":
 		if r.Method != "GET" {
@@ -398,6 +403,141 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type rbacReason struct {
+	Reason string `json:"reason"`
+}
+type rbacRole struct {
+	Role   string `json:"role"`
+	Reason string `json:"reason"`
+}
+type rbacOverride struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+func (s *Server) rbacError(w http.ResponseWriter, id string, err error) {
+	switch {
+	case errors.Is(err, adminrbac.ErrForbidden):
+		s.fail(w, id, 403, "CAPABILITY_DENIED", "Administrative capability required")
+	case errors.Is(err, adminrbac.ErrInvalid):
+		s.fail(w, id, 422, "VALIDATION_FAILED", "Invalid RBAC request")
+	case errors.Is(err, adminrbac.ErrNotFound):
+		s.fail(w, id, 404, "NOT_FOUND", "Admin not found")
+	case errors.Is(err, adminrbac.ErrConflict):
+		s.fail(w, id, 409, "CONFLICT", "RBAC change would violate a safety rule")
+	default:
+		s.fail(w, id, 503, "DEPENDENCY_UNAVAILABLE", "RBAC data unavailable")
+	}
+}
+
+func (s *Server) handleRBAC(w http.ResponseWriter, r *http.Request, id string, principal auth.Principal, path string) {
+	rbac := adminrbac.Service{Pool: s.DB}
+	if path == "me" && r.Method == http.MethodGet {
+		v, err := rbac.Snapshot(r.Context(), principal.AccountID)
+		if err != nil {
+			s.rbacError(w, id, err)
+			return
+		}
+		s.ok(w, 200, v)
+		return
+	}
+	if path == "catalog" && r.Method == http.MethodGet {
+		if err := rbac.Require(r.Context(), principal.AccountID, "system.settings.read"); err != nil {
+			s.rbacError(w, id, err)
+			return
+		}
+		s.ok(w, 200, map[string]any{"capabilities": adminrbac.Capabilities(), "roles": adminrbac.Catalog()})
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[0] != "accounts" || !uuidFormat(parts[1]) {
+		s.fail(w, id, 404, "NOT_FOUND", "Endpoint not found")
+		return
+	}
+	target := parts[1]
+	if len(parts) == 2 && r.Method == http.MethodGet {
+		if err := rbac.Require(r.Context(), principal.AccountID, "system.settings.read"); err != nil {
+			s.rbacError(w, id, err)
+			return
+		}
+		var exists bool
+		if err := s.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM principals WHERE account_id=$1 AND plane='admin')`, target).Scan(&exists); err != nil {
+			s.rbacError(w, id, err)
+			return
+		}
+		if !exists {
+			s.rbacError(w, id, adminrbac.ErrNotFound)
+			return
+		}
+		v, err := rbac.Snapshot(r.Context(), target)
+		if err != nil {
+			s.rbacError(w, id, err)
+			return
+		}
+		s.ok(w, 200, v)
+		return
+	}
+	var err error
+	switch {
+	case len(parts) == 3 && parts[2] == "roles" && r.Method == http.MethodPost:
+		if !post(w, r, id, s) {
+			return
+		}
+		var v rbacRole
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err = rbac.AddRole(r.Context(), principal.AccountID, target, v.Role, v.Reason)
+	case len(parts) == 4 && parts[2] == "roles" && r.Method == http.MethodDelete:
+		if !s.mutationBody(w, r, id, http.MethodDelete) {
+			return
+		}
+		var v rbacReason
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err = rbac.RemoveRole(r.Context(), principal.AccountID, target, parts[3], v.Reason)
+	case len(parts) == 4 && parts[2] == "overrides" && r.Method == http.MethodPut:
+		if !s.mutationBody(w, r, id, http.MethodPut) {
+			return
+		}
+		var v rbacOverride
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err = rbac.SetOverride(r.Context(), principal.AccountID, target, parts[3], v.Decision, v.Reason)
+	case len(parts) == 4 && parts[2] == "overrides" && r.Method == http.MethodDelete:
+		if !s.mutationBody(w, r, id, http.MethodDelete) {
+			return
+		}
+		var v rbacReason
+		if !s.decode(w, r, id, &v) {
+			return
+		}
+		err = rbac.RemoveOverride(r.Context(), principal.AccountID, target, parts[3], v.Reason)
+	default:
+		s.fail(w, id, 404, "NOT_FOUND", "Endpoint not found")
+		return
+	}
+	if err != nil {
+		s.rbacError(w, id, err)
+		return
+	}
+	s.ok(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) mutationBody(w http.ResponseWriter, r *http.Request, id, method string) bool {
+	if r.Method != method {
+		s.fail(w, id, 405, "METHOD_NOT_ALLOWED", "Method not allowed")
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])) != "application/json" {
+		s.fail(w, id, 415, "UNSUPPORTED_MEDIA_TYPE", "Expected application/json")
+		return false
+	}
+	return true
+}
+
 func (s *Server) getUserRouter() *user.Router {
 	if s.User != nil {
 		return s.User
@@ -408,6 +548,9 @@ func (s *Server) getUserRouter() *user.Router {
 	return s.User
 }
 func uuidFormat(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
 	for i, c := range s {
 		if i == 8 || i == 13 || i == 18 || i == 23 {
 			if c != '-' {

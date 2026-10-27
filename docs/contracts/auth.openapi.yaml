@@ -1,15 +1,15 @@
 openapi: 3.1.0
 info:
   title: EVCOWBBE | Charger on Wheels Authentication API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    Implemented EVCOWBBE authentication foundation only (45 operations). Customer app, driver and administrator are distinct authorization planes; no charger booking, dispatch, payment, driver-approval or admin business capability APIs exist in this release.
+    Implemented EVCOWBBE authentication and Admin RBAC foundation (52 operations). Customer app, driver and administrator are distinct authorization planes; no charger booking, dispatch, payment, driver-approval or business-domain Admin operations exist in this release.
 
-    All successful API responses contain a `data` envelope; failures contain an `error` object with `code`, `message`, `request_id` and `details`. All POST operations require `Content-Type: application/json`, even logout operations whose body is ignored. Strict JSON decoding rejects unknown fields, multiple JSON values and bodies above 32 KiB on decoded routes. Responses include `X-Request-ID` and `Cache-Control: no-store`.
+    All successful API responses contain a `data` envelope; failures contain an `error` object with `code`, `message`, `request_id` and `details`. JSON mutations (POST, PUT, DELETE where implemented) require `Content-Type: application/json`, even logout operations whose body is ignored. Strict JSON decoding rejects unknown fields, multiple JSON values and bodies above 32 KiB on decoded routes. Responses include `X-Request-ID` and `Cache-Control: no-store`.
 
     **Interactive safety:** Swagger `Try it out` invokes the actual same-origin server and can register users, send real email, revoke tokens/sessions, or change passwords/2FA. Use only specifically authorized test accounts. Example tokens, passwords, UUIDs and addresses are illustrative and intentionally not real credentials. Never paste real tokens into screenshots/logs, or store them in browser persistent storage. The UI does not persist authorization across reloads.
 
-    Auth: access and refresh are separate opaque 256-bit random tokens, not JWTs. Access defaults to 15 minutes; refresh is rotated with a default rolling 30-day window and 90-day absolute session cap. Each token belongs to one plane. Email OTP 2FA is optional, not phishing-resistant, and depends on the same mailbox used for recovery. Admin accounts are bootstrapped by trusted local CLI only. A driver's `PENDING` status is not operating approval.
+    Auth: access and refresh are separate opaque 256-bit random tokens, not JWTs. Access defaults to 15 minutes; refresh is rotated with a default rolling 30-day window and 90-day absolute session cap. Each token belongs to one plane. Email OTP 2FA is optional, not phishing-resistant, and depends on the same mailbox used for recovery. Auth email is transactionally queued for asynchronous delivery; an API success is not proof of inbox arrival. Admin accounts are bootstrapped by trusted local CLI only, and Admin capabilities require explicit role/override grants. A driver's `PENDING` status is not operating approval.
 servers:
 - url: /
   description: Same origin as the Swagger page, either localhost or the deployed HTTPS host
@@ -21,7 +21,7 @@ tags:
 - name: Driver
   description: 'The `driver` plane: authentication only; `PENDING` is not operational approval.'
 - name: Admin
-  description: 'The `admin` plane: CLI-bootstrapped administrator authentication, without future RBAC capabilities.'
+  description: 'The `admin` plane: CLI-bootstrapped authentication plus explicit Annex 44 RBAC capabilities; no business-domain Admin actions yet.'
 - name: Diagnostics
   description: Public liveness, database readiness and logical API version.
 paths:
@@ -65,7 +65,7 @@ paths:
       summary: Resend an email verification token
       description: 'Deliberately returns the same `accepted: true` response for unknown, invalid or already-verified
         addresses. Eligible unverified accounts receive a replacement token; previous verification tokens are invalidated.
-        Subject to IP and per-account rate limits and SMTP availability.'
+        Subject to IP and per-account rate limits. Eligible messages are queued transactionally for later SMTP delivery.'
       security: []
       responses:
         '200':
@@ -1762,6 +1762,236 @@ paths:
             example:
               challenge_id: 00000000-0000-4000-8000-000000000000
               code: '012345'
+  /api/v1/admin/rbac/me:
+    get:
+      tags: [Admin]
+      operationId: admin_rbac_me
+      summary: Current Admin permissions
+      description: Returns assigned roles, explicit ALLOW/DENY overrides, and sorted effective capabilities. An Admin session by itself grants no capabilities.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Current permission snapshot in the standard data envelope
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /api/v1/admin/rbac/catalog:
+    get:
+      tags: [Admin]
+      operationId: admin_rbac_catalog
+      summary: Fixed capability and default role catalog
+      description: Requires system.settings.read. Returns the exact Annex 44 capability namespace and default role bundles; no wildcard grants.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Catalog in the standard data envelope
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /api/v1/admin/rbac/accounts/{account_id}:
+    parameters:
+    - name: account_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    get:
+      tags: [Admin]
+      operationId: admin_rbac_account
+      summary: Read another Admin's effective grants
+      description: Requires system.settings.read and an existing Admin principal.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Permission snapshot in the standard data envelope
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/RBACNotFound'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /api/v1/admin/rbac/accounts/{account_id}/roles:
+    parameters:
+    - name: account_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    post:
+      tags: [Admin]
+      operationId: admin_rbac_role_add
+      summary: Assign a default Admin role
+      description: Requires system.settings.manage, an explicit audit reason, and a distinct target Admin. Does not automatically elevate the actor.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, reason]
+              additionalProperties: false
+              properties:
+                role: {type: string, enum: [FULL_ADMIN, OPERATIONS, DRIVER_RECRUITMENT, FINANCE_COMMERCIAL, SUPPORT, TECHNICAL_HAL, READ_ONLY]}
+                reason: {type: string, minLength: 8, maxLength: 500}
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/RBACNotFound'
+        '409':
+          $ref: '#/components/responses/RBACConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/RBACValidation'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /api/v1/admin/rbac/accounts/{account_id}/roles/{role}:
+    parameters:
+    - name: account_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    - name: role
+      in: path
+      required: true
+      schema: {type: string}
+    delete:
+      tags: [Admin]
+      operationId: admin_rbac_role_remove
+      summary: Revoke a default Admin role
+      description: Requires system.settings.manage and a reason; rejects self-changes and removal of the final FULL_ADMIN assignment.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: {type: string, minLength: 8, maxLength: 500}
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/RBACNotFound'
+        '409':
+          $ref: '#/components/responses/RBACConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/RBACValidation'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}:
+    parameters:
+    - name: account_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    - name: capability
+      in: path
+      required: true
+      schema: {type: string}
+    put:
+      tags: [Admin]
+      operationId: admin_rbac_override_set
+      summary: Assign a direct ALLOW or DENY
+      description: Requires system.settings.manage and a reason. Explicit DENY always overrides role defaults and direct ALLOW.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason]
+              additionalProperties: false
+              properties:
+                decision: {type: string, enum: [ALLOW, DENY]}
+                reason: {type: string, minLength: 8, maxLength: 500}
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/RBACNotFound'
+        '409':
+          $ref: '#/components/responses/RBACConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/RBACValidation'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    delete:
+      tags: [Admin]
+      operationId: admin_rbac_override_remove
+      summary: Remove a direct ALLOW or DENY
+      description: Requires system.settings.manage and a reason. Remaining default grants then determine effective permission.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: {type: string, minLength: 8, maxLength: 500}
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/RBACNotFound'
+        '409':
+          $ref: '#/components/responses/RBACConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/RBACValidation'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
   /health/live:
     get:
       tags:
@@ -2094,7 +2324,7 @@ components:
       properties:
         message:
           type: string
-          const: If eligible, a verification email has been sent
+          const: If eligible, a verification email has been queued
         plane:
           type: string
           enum:
@@ -2132,7 +2362,7 @@ components:
       properties:
         version:
           type: string
-          const: auth-foundation-1
+          const: auth-foundation-2
       required:
       - version
     ErrorBody:
@@ -2472,7 +2702,7 @@ components:
             $ref: '#/components/schemas/VersionEnvelope'
           example:
             data:
-              version: auth-foundation-1
+              version: auth-foundation-2
     LoginApp:
       description: Credentials valid. Without 2FA the response contains tokens; with 2FA it contains a challenge
         ID but no tokens.
@@ -2669,8 +2899,8 @@ components:
               email_verified: true
               two_factor_enabled: false
     RegisteredApp:
-      description: Accepted regardless of whether the email is already registered; the eligible new account receives
-        a single-use verification email.
+      description: Accepted regardless of whether the email is already registered; an eligible new account has
+        a single-use verification message queued for asynchronous SMTP delivery.
       headers:
         X-Request-ID:
           $ref: '#/components/headers/RequestID'
@@ -2680,11 +2910,11 @@ components:
             $ref: '#/components/schemas/RegistrationEnvelope'
           example:
             data:
-              message: If eligible, a verification email has been sent
+              message: If eligible, a verification email has been queued
               plane: app
     RegisteredDriver:
-      description: Accepted regardless of whether the email is already registered; the eligible new account receives
-        a single-use verification email.
+      description: Accepted regardless of whether the email is already registered; an eligible new account has
+        a single-use verification message queued for asynchronous SMTP delivery.
       headers:
         X-Request-ID:
           $ref: '#/components/headers/RequestID'
@@ -2694,7 +2924,7 @@ components:
             $ref: '#/components/schemas/RegistrationEnvelope'
           example:
             data:
-              message: If eligible, a verification email has been sent
+              message: If eligible, a verification email has been queued
               plane: driver
     BadRequest:
       description: Malformed JSON, unknown request fields, oversized JSON body (32 KiB), or multiple JSON values.
@@ -2821,6 +3051,68 @@ components:
                   message: Access not permitted for this principal
                   request_id: 00000000-0000-4000-8000-000000000000
                   details: {}
+    AdminForbidden:
+      description: Either the bearer belongs to another principal plane or the authenticated Admin lacks an explicit required capability. A role label alone does not authorize business operations.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            capability_denied:
+              summary: CAPABILITY_DENIED
+              value:
+                error:
+                  code: CAPABILITY_DENIED
+                  message: Administrative capability required
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+            wrong_plane:
+              summary: PRINCIPAL_PLANE_MISMATCH
+              value:
+                error:
+                  code: PRINCIPAL_PLANE_MISMATCH
+                  message: Access not permitted for this principal
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    RBACNotFound:
+      description: No matching Admin principal or RBAC route exists.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            error:
+              code: NOT_FOUND
+              message: Admin not found
+              request_id: 00000000-0000-4000-8000-000000000000
+              details: {}
+    RBACConflict:
+      description: Conflicting role assignment or a privilege change rejected to avoid administrative lockout.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            error:
+              code: CONFLICT
+              message: RBAC change would violate a safety rule
+              request_id: 00000000-0000-4000-8000-000000000000
+              details: {}
+    RBACValidation:
+      description: Invalid Admin role, capability, decision or audit reason.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            error:
+              code: VALIDATION_FAILED
+              message: Invalid RBAC request
+              request_id: 00000000-0000-4000-8000-000000000000
+              details: {}
     StateConflict:
       description: Requested 2FA state already exists or changed concurrently.
       headers:
