@@ -247,8 +247,10 @@ extra Caddy site configuration. The OpenAPI server URL is `/` (same origin),
 so browser requests work both on loopback development and through the existing
 Cloudflare/Caddy endpoint. The JavaScript prevents selecting a different spec
 through URL query parameters and disables persistent authorization. The docs
-have a restrictive CSP and `noindex` response header. They are publicly
-accessible and are **not** an admin dashboard or authentication bypass.
+have a restrictive CSP. Swagger UI and its assets retain a `noindex, nofollow`
+response header; `/openapi.yaml` intentionally does not, allowing the public
+machine-readable contract to be discovered and fetched by capable clients.
+They are publicly accessible and are **not** an admin dashboard or authentication bypass.
 
 On the Windows development checkout, review the add-on and run:
 

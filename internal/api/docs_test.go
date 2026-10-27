@@ -38,10 +38,17 @@ func TestDocumentationRoutesWithoutExternalServices(t *testing.T) {
 			if !strings.Contains(w.Body.String(), tc.contentSubstring) {
 				t.Fatalf("GET %s did not include expected content", tc.path)
 			}
-			for _, name := range []string{"Content-Security-Policy", "X-Content-Type-Options", "X-Robots-Tag"} {
+			for _, name := range []string{"Content-Security-Policy", "X-Content-Type-Options"} {
 				if w.Header().Get(name) == "" {
 					t.Fatalf("GET %s missing %s", tc.path, name)
 				}
+			}
+			if got := w.Header().Get("X-Robots-Tag"); tc.path == "/openapi.yaml" {
+				if got != "" {
+					t.Fatalf("public OpenAPI contract must be indexable; got X-Robots-Tag %q", got)
+				}
+			} else if got != "noindex, nofollow" {
+				t.Fatalf("Swagger asset %s must remain noindex; got %q", tc.path, got)
 			}
 			if got := w.Header().Get("Cache-Control"); got != "no-store" {
 				t.Fatalf("GET %s cache policy %q", tc.path, got)
@@ -59,6 +66,9 @@ func TestDocumentationRoutesWithoutExternalServices(t *testing.T) {
 		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodHead, path, nil))
 		if rec.Code != 200 || rec.Body.Len() != 0 {
 			t.Fatalf("HEAD %s: status %d, body bytes %d", path, rec.Code, rec.Body.Len())
+		}
+		if got := rec.Header().Get("X-Robots-Tag"); (path == "/openapi.yaml" && got != "") || (path != "/openapi.yaml" && got != "noindex, nofollow") {
+			t.Fatalf("HEAD %s has unexpected robots directive %q", path, got)
 		}
 	}
 	for _, path := range []string{"/swagger/", "/openapi.yaml"} {

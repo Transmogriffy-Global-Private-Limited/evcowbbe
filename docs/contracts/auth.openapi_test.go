@@ -15,11 +15,11 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 	expected := map[string]bool{
 		"POST /api/v1/auth/verify-email":        false,
 		"POST /api/v1/auth/resend-verification": false,
-		"POST /api/v1/auth/forgot-password":    false,
-		"POST /api/v1/auth/reset-password":     false,
-		"GET /health/live":                     false,
-		"GET /health/ready":                    false,
-		"GET /version":                         false,
+		"POST /api/v1/auth/forgot-password":     false,
+		"POST /api/v1/auth/reset-password":      false,
+		"GET /health/live":                      false,
+		"GET /health/ready":                     false,
+		"GET /version":                          false,
 	}
 	for _, plane := range []string{"app", "driver", "admin"} {
 		prefix := "/api/v1/" + plane
@@ -36,13 +36,31 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 		}
 		expected["GET "+prefix+"/me"] = false
 	}
-	if len(expected) != 45 {
-		t.Fatalf("expected route fixture count %d, want 45", len(expected))
+	for _, op := range []string{
+		"GET /api/v1/admin/rbac/me",
+		"GET /api/v1/admin/rbac/catalog",
+		"GET /api/v1/admin/rbac/accounts/{account_id}",
+		"POST /api/v1/admin/rbac/accounts/{account_id}/roles",
+		"DELETE /api/v1/admin/rbac/accounts/{account_id}/roles/{role}",
+		"PUT /api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}",
+		"DELETE /api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}",
+	} {
+		expected[op] = false
+	}
+	if len(expected) != 52 {
+		t.Fatalf("expected route fixture count %d, want 52", len(expected))
 	}
 
-	contract := string(AuthOpenAPI())
+	// Embedded bytes preserve checkout line endings (CRLF on some Windows
+	// Git configurations). Validate YAML content independently of transport
+	// line endings, without relaxing the required first-line declaration.
+	contract := strings.ReplaceAll(string(AuthOpenAPI()), "\r\n", "\n")
 	if !strings.HasPrefix(contract, "openapi: 3.1.0\n") {
 		t.Fatal("embedded specification must declare OpenAPI 3.1")
+	}
+	if !strings.Contains(contract, "const: If eligible, a verification email has been queued") ||
+		strings.Contains(contract, "verification email has been sent") {
+		t.Fatal("registration OpenAPI response does not match transactional outbox queue semantics")
 	}
 	for _, marker := range []string{
 		"  securitySchemes:", "  schemas:", "  responses:",
@@ -97,7 +115,7 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 		if strings.HasPrefix(line, "  /") && strings.HasSuffix(line, ":") {
 			finish()
 			currentPath = strings.TrimSuffix(strings.TrimPrefix(line, "  "), ":")
-		} else if line == "    post:" || line == "    get:" {
+		} else if line == "    post:" || line == "    get:" || line == "    put:" || line == "    delete:" {
 			finish()
 			currentMethod = strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(line), ":"))
 		} else if currentMethod != "" {
@@ -127,7 +145,7 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 				t.Errorf("%s missing %q", key, mandatory)
 			}
 		}
-		if op.method == "POST" {
+		if op.method == "POST" || op.method == "PUT" || op.method == "DELETE" {
 			for _, mandatory := range []string{"      requestBody:", "        '415':"} {
 				if !strings.Contains(op.body, mandatory) {
 					t.Errorf("%s missing %q", key, mandatory)

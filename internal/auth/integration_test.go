@@ -69,6 +69,9 @@ func TestIntegrationRegisterRefreshMFA(t *testing.T) {
 	if _, err = svc.Login(ctx, "app", email, password); !errors.Is(err, ErrUnverified) {
 		t.Fatal("unverified login should be blocked", err)
 	}
+	if _, err = svc.DeliverPending(ctx, 10); err != nil {
+		t.Fatal("outbox delivery", err)
+	}
 	if err = svc.VerifyEmail(ctx, box.Code()); err != nil {
 		t.Fatal("verify email", err)
 	}
@@ -109,6 +112,9 @@ func TestIntegrationRegisterRefreshMFA(t *testing.T) {
 	if err != nil {
 		t.Fatal("enable begin", err)
 	}
+	if _, err = svc.DeliverPending(ctx, 10); err != nil {
+		t.Fatal("outbox delivery", err)
+	}
 	if err = svc.Confirm2FA(ctx, principal, challenge, box.Code(), true); err != nil {
 		t.Fatal("enable confirm", err)
 	}
@@ -118,6 +124,9 @@ func TestIntegrationRegisterRefreshMFA(t *testing.T) {
 	step, err := svc.Login(ctx, "app", email, password)
 	if err != nil || !step.TwoFactorRequired || step.Tokens != nil {
 		t.Fatal("two-factor login bypass", err)
+	}
+	if _, err = svc.DeliverPending(ctx, 10); err != nil {
+		t.Fatal("outbox delivery", err)
 	}
 	badCode := "999999"
 	if box.Code() == badCode {
@@ -137,5 +146,97 @@ func TestIntegrationRegisterRefreshMFA(t *testing.T) {
 	}
 	if _, err = svc.Authenticate(ctx, final.AccessToken, "app"); err != nil {
 		t.Fatal("OTP-backed session invalid", err)
+	}
+}
+
+type unreliableMail struct {
+	failed bool
+	box    *capturedEmail
+}
+
+func (m *unreliableMail) Send(ctx context.Context, to, kind string, params map[string]string) error {
+	if !m.failed {
+		m.failed = true
+		return errors.New("simulated SMTP outage")
+	}
+	return m.box.Send(ctx, to, kind, params)
+}
+
+func TestIntegrationTransactionalEmailRetryAndExpiry(t *testing.T) {
+	uri := os.Getenv("TEST_DATABASE_URL")
+	if uri == "" {
+		t.Skip("isolated *_test database unavailable")
+	}
+	u, err := url.Parse(uri)
+	if err != nil || !strings.HasSuffix(u.Path, "_test") || strings.Count(u.Path, "/") != 1 {
+		t.Fatal("unsafe test DB")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	db, err := database.Open(ctx, uri, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = database.Migrate(ctx, db, "up"); err != nil {
+		t.Fatal(err)
+	}
+	c := config.Config{PasswordPepper: []byte(strings.Repeat("a", 48)), OTPPepper: []byte(strings.Repeat("b", 48)), ArgonMemory: 65536, ArgonIterations: 3, ArgonParallelism: 1, OTPTTL: 10 * time.Minute, OTPAttempts: 5, OTPPerHour: 30}
+	svc := New(db, c)
+	box := &capturedEmail{}
+	flaky := &unreliableMail{box: box}
+	svc.Mail = flaky
+	id, err := security.UUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	email := "outbox-" + id + "@example.test"
+	if err := svc.Register(ctx, "app", email, "A unique transactional email test password 2026!"); err != nil {
+		t.Fatal(err)
+	}
+	var cipherData []byte
+	if err := db.QueryRow(ctx, `SELECT payload_ciphertext FROM auth_mail_outbox WHERE recipient_email=$1`, email).Scan(&cipherData); err != nil {
+		t.Fatal(err)
+	}
+	if len(cipherData) < 20 || strings.Contains(string(cipherData), "A unique") {
+		t.Fatal("outbox mail not encrypted")
+	}
+	if n, err := svc.DeliverPending(ctx, 10); err != nil || n != 1 {
+		t.Fatalf("first attempt count=%d err=%v", n, err)
+	}
+	var state string
+	if err := db.QueryRow(ctx, `SELECT state FROM auth_mail_outbox WHERE recipient_email=$1`, email).Scan(&state); err != nil || state != "PENDING" {
+		t.Fatalf("retry not scheduled: %s", state)
+	}
+	if _, err := db.Exec(ctx, `UPDATE auth_mail_outbox SET next_attempt_at=now() WHERE recipient_email=$1 AND state='PENDING'`, email); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := svc.DeliverPending(ctx, 10); err != nil || n != 1 {
+		t.Fatalf("retry count=%d err=%v", n, err)
+	}
+	if code := box.Code(); len(code) != 43 {
+		t.Fatal("delivered verification token missing")
+	}
+	if n, err := svc.DeliverPending(ctx, 10); err != nil || n != 0 {
+		t.Fatal("acknowledged mail redelivered")
+	}
+	if err := db.QueryRow(ctx, `SELECT state,payload_ciphertext FROM auth_mail_outbox WHERE recipient_email=$1`, email).Scan(&state, &cipherData); err != nil || state != "SENT" || cipherData != nil {
+		t.Fatal("sent outbox payload not erased")
+	}
+	// A resend invalidates its predecessor before any stale queued token can be sent.
+	svc.Mail = box
+	newEmail := "stale-" + id + "@example.test"
+	if err := svc.Register(ctx, "app", newEmail, "A unique transactional email test password 2026!"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ResendVerification(ctx, newEmail); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := svc.DeliverPending(ctx, 10); err != nil || n != 2 {
+		t.Fatalf("stale suppression count=%d err=%v", n, err)
+	}
+	var expired, sent int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FILTER(WHERE state='EXPIRED'),COUNT(*) FILTER(WHERE state='SENT') FROM auth_mail_outbox WHERE recipient_email=$1`, newEmail).Scan(&expired, &sent); err != nil || expired != 1 || sent != 1 {
+		t.Fatal("superseded token email was not suppressed")
 	}
 }

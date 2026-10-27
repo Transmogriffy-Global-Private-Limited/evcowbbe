@@ -24,19 +24,21 @@ import (
 )
 
 const (
-	testPassword   = "A unique integration password 2026!"
-	nextPassword   = "A different integration password 2026!"
-	resetPassword  = "A third integration password 2026!"
+	testPassword  = "A unique integration password 2026!"
+	nextPassword  = "A different integration password 2026!"
+	resetPassword = "A third integration password 2026!"
 )
 
 type fakeMail struct {
 	mu       sync.Mutex
 	messages []testMessage
+	drain    func() error
 }
 type testMessage struct {
 	to, kind string
 	values   map[string]string
 }
+
 func (m *fakeMail) Send(_ context.Context, to, kind string, values map[string]string) error {
 	clone := make(map[string]string, len(values))
 	for k, v := range values {
@@ -49,6 +51,11 @@ func (m *fakeMail) Send(_ context.Context, to, kind string, values map[string]st
 }
 func (m *fakeMail) code(t *testing.T, to, kind string) string {
 	t.Helper()
+	if m.drain != nil {
+		if err := m.drain(); err != nil {
+			t.Fatalf("outbox drain failed: %v", err)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := len(m.messages) - 1; i >= 0; i-- {
@@ -156,6 +163,8 @@ func newAPIHarness(t *testing.T) *apiHarness {
 			"auth_sessions": true, "consumed_refresh_tokens": true,
 			"auth_challenges": true, "auth_action_tokens": true,
 			"auth_rate_limits": true, "security_audit": true,
+			"auth_mail_outbox": true, "admin_role_assignments": true,
+			"admin_capability_overrides": true, "admin_rbac_audit": true,
 		}
 		for rows.Next() {
 			var table string
@@ -188,6 +197,12 @@ func newAPIHarness(t *testing.T) *apiHarness {
 	svc := auth.New(db, c)
 	mailer := &fakeMail{}
 	svc.Mail = mailer
+	mailer.drain = func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, err := svc.DeliverPending(ctx, 100)
+		return err
+	}
 	handler := (&Server{Auth: svc, DB: db, C: c}).Handler()
 	// Do not share IP-based limiter keys with the actual localhost Admin login.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +242,7 @@ func (h *apiHarness) call(t *testing.T, method, path string, payload any, bearer
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method == http.MethodPost {
+	if method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if bearer != "" {
@@ -449,4 +464,54 @@ func TestIntegrationHTTPConcurrentRefresh(t *testing.T) {
 		t.Fatalf("concurrent refresh: success=%d reuse_revoked=%d", succeeded, revoked)
 	}
 	h.call(t, "GET", "/api/v1/app/me", nil, issued.AccessToken, 401)
+}
+
+func TestIntegrationAdminRBACAuthorizationAndAudit(t *testing.T) {
+	if os.Getenv("AUTH_TEST_APP_DATABASE_URL") != "" {
+		t.Skip("RBAC mutation acceptance runs only on isolated *_test database")
+	}
+	h := newAPIHarness(t)
+	actorEmail := uniqueTestEmail(t, "rbac-actor")
+	targetEmail := uniqueTestEmail(t, "rbac-target")
+	if err := h.auth.BootstrapAdmin(context.Background(), actorEmail, testPassword); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.auth.BootstrapAdmin(context.Background(), targetEmail, testPassword); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	var actorID, targetID string
+	if err := h.auth.Pool.QueryRow(ctx, `SELECT id FROM accounts WHERE email=$1`, actorEmail).Scan(&actorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.auth.Pool.QueryRow(ctx, `SELECT id FROM accounts WHERE email=$1`, targetEmail).Scan(&targetID); err != nil {
+		t.Fatal(err)
+	}
+	actor := mustTokens(t, h.login(t, "admin", actorEmail, testPassword), "admin")
+	target := mustTokens(t, h.login(t, "admin", targetEmail, testPassword), "admin")
+	// Admin authentication grants no implicit role or capability.
+	h.call(t, "GET", "/api/v1/admin/rbac/me", nil, actor.AccessToken, 200)
+	h.call(t, "GET", "/api/v1/admin/rbac/catalog", nil, actor.AccessToken, 403)
+	h.call(t, "POST", "/api/v1/admin/rbac/accounts/"+actorID+"/roles", map[string]string{"role": "FULL_ADMIN", "reason": "No authorization allowed"}, actor.AccessToken, 403)
+	// Simulate explicitly trusted offline role bootstrap, only in isolated test DB.
+	if _, err := h.auth.Pool.Exec(ctx, `INSERT INTO admin_role_assignments(account_id,role_key) VALUES($1,'FULL_ADMIN')`, actorID); err != nil {
+		t.Fatal(err)
+	}
+	h.call(t, "GET", "/api/v1/admin/rbac/catalog", nil, actor.AccessToken, 200)
+	path := "/api/v1/admin/rbac/accounts/" + targetID
+	h.call(t, "GET", path, nil, actor.AccessToken, 200)
+	h.call(t, "POST", path+"/roles", map[string]string{"role": "READ_ONLY", "reason": "Assign support visibility"}, actor.AccessToken, 200)
+	h.call(t, "GET", "/api/v1/admin/rbac/catalog", nil, target.AccessToken, 200)
+	h.call(t, "PUT", path+"/overrides/system.settings.read", map[string]string{"decision": "DENY", "reason": "Restrict settings metadata"}, actor.AccessToken, 200)
+	h.call(t, "GET", "/api/v1/admin/rbac/catalog", nil, target.AccessToken, 403)
+	h.call(t, "DELETE", path+"/overrides/system.settings.read", map[string]string{"reason": "Restore regular visibility"}, actor.AccessToken, 200)
+	h.call(t, "GET", "/api/v1/admin/rbac/catalog", nil, target.AccessToken, 200)
+	h.call(t, "POST", "/api/v1/admin/rbac/accounts/"+actorID+"/roles", map[string]string{"role": "READ_ONLY", "reason": "Self change prohibited"}, actor.AccessToken, 403)
+	h.call(t, "DELETE", path+"/roles/READ_ONLY", map[string]string{"reason": "End temporary access scope"}, actor.AccessToken, 200)
+	h.call(t, "GET", "/api/v1/admin/rbac/catalog", nil, target.AccessToken, 403)
+	var auditCount int
+	if err := h.auth.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_rbac_audit WHERE actor_id=$1 AND target_id=$2`, actorID, targetID).Scan(&auditCount); err != nil || auditCount != 4 {
+		t.Fatalf("RBAC audit count %d, expected four valid mutations", auditCount)
+	}
 }

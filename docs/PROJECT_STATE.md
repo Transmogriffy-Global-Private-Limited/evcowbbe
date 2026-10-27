@@ -11,3 +11,7 @@ Risks/gates: No transactional mail outbox/retries, password reset notice best-ef
 ## External-service setup change — 26 October 2026
 
 At user request, removed all Docker and Mailpit dependencies. Configure existing PostgreSQL + genuine TLS-enabled SMTP through hidden prompts in `scripts/configure.ps1`, retaining previously generated peppers; follow with explicit `continue-setup.ps1` preflight/tests and interactive migration consent. No database or container is auto-provisioned. Added a read-only SMTP AUTH handshake probe and an opt-in real test-email sender; SMTP delivery and PostgreSQL integration remain unverified until run against user's services. Existing GitHub and VPS2 untouched.
+
+## Current code continuation — 27 October 2026
+
+Repository baseline `bf6ef5c` includes the live manual VPS2 deployment and Swagger/OpenAPI. This continuation adds encrypted transactional authentication-email outbox and first Admin capability-based RBAC (migration 002, seven API operations, explicit one-time offline role grant). API and SQL contract need fresh review against this patch. Compile/unit/contract tests are local checks; separately provisioned disposable PostgreSQL `_test`, real SMTP inbox delivery, recovery and backup/restore evidence are not implied by a green local suite. Do not automatically apply migration 002, push to GitHub or deploy to VPS2.

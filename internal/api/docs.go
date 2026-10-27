@@ -27,7 +27,11 @@ func isDocumentationPath(path string) bool {
 
 func serveDocumentation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", swaggerCSP)
-	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	// Permit indexing of the public, machine-readable API contract while
+	// keeping the interactive Swagger UI and its assets out of search results.
+	if r.URL.Path != "/openapi.yaml" {
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	}
 	if r.URL.Path == "/swagger" {
 		http.Redirect(w, r, "/swagger/", http.StatusPermanentRedirect)
 		return

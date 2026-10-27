@@ -9,6 +9,7 @@ import (
 
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/config"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/mailer"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/outbox"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/internal/security"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,13 +32,29 @@ type Mailer interface {
 	Send(context.Context, string, string, map[string]string) error
 }
 type Service struct {
-	Pool *pgxpool.Pool
-	C    config.Config
-	Mail Mailer
+	Pool   *pgxpool.Pool
+	C      config.Config
+	Mail   Mailer
+	Outbox *outbox.Store
 }
 
 func New(pool *pgxpool.Pool, c config.Config) *Service {
-	return &Service{Pool: pool, C: c, Mail: mailer.Sender{Cfg: c}}
+	m := mailer.Sender{Cfg: c}
+	return &Service{Pool: pool, C: c, Mail: m, Outbox: outbox.New(pool, c.OTPPepper, m)}
+}
+
+// DeliverPending is intended for explicit integration acceptance. Production
+// uses the same outbox with a background worker, not request-thread SMTP.
+func (s *Service) DeliverPending(ctx context.Context, limit int) (int, error) {
+	s.Outbox.Mail = s.Mail
+	return s.Outbox.DeliverBatch(ctx, limit)
+}
+
+func (s *Service) queue(ctx context.Context, tx pgx.Tx, account, email, kind string, values map[string]string, source outbox.Credential) error {
+	if err := s.Outbox.Queue(ctx, tx, account, email, kind, values, source); err != nil {
+		return ErrDependency
+	}
+	return nil
 }
 
 type Tokens struct {
@@ -180,7 +197,7 @@ func (s *Service) Register(ctx context.Context, plane, email, password string) e
 	if err = audit(ctx, tx, id, plane, "ACCOUNT_REGISTERED"); err != nil {
 		return ErrDependency
 	}
-	if err = s.Mail.Send(ctx, e, "verification", map[string]string{"Code": token, "Minutes": "1440"}); err != nil {
+	if err = s.queue(ctx, tx, id, e, "verification", map[string]string{"Code": token, "Minutes": "1440"}, outbox.Credential{Kind: "VERIFY_EMAIL", Digest: digest, ExpiresAt: time.Now().Add(24 * time.Hour)}); err != nil {
 		return ErrDependency
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -250,7 +267,7 @@ func (s *Service) ResendVerification(ctx context.Context, email string) error {
 	if err != nil {
 		return ErrDependency
 	}
-	if err = s.Mail.Send(ctx, e, "verification", map[string]string{"Code": token, "Minutes": "1440"}); err != nil {
+	if err = s.queue(ctx, tx, aid, e, "verification", map[string]string{"Code": token, "Minutes": "1440"}, outbox.Credential{Kind: "VERIFY_EMAIL", Digest: digest, ExpiresAt: time.Now().Add(24 * time.Hour)}); err != nil {
 		return ErrDependency
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -337,8 +354,8 @@ func (s *Service) makeChallenge(ctx context.Context, tx pgx.Tx, account, email, 
 	if _, err = tx.Exec(ctx, `INSERT INTO auth_challenges(id,account_id,plane,purpose,digest,expires_at) VALUES($1,$2,$3,$4,$5,now()+$6::interval)`, id, account, plane, purpose, digest, fmt.Sprintf("%d seconds", int(s.C.OTPTTL.Seconds()))); err != nil {
 		return "", ErrDependency
 	}
-	// Fail closed: if email cannot be handed off, entire new challenge rolls back.
-	if err = s.Mail.Send(ctx, email, "otp", map[string]string{"Code": code, "Action": strings.ReplaceAll(purpose, "_", " "), "Minutes": fmt.Sprint(int(s.C.OTPTTL.Minutes()))}); err != nil {
+	// Commit challenge and encrypted email intent together; delivery is retried.
+	if err = s.queue(ctx, tx, account, email, "otp", map[string]string{"Code": code, "Action": strings.ReplaceAll(purpose, "_", " "), "Minutes": fmt.Sprint(int(s.C.OTPTTL.Minutes()))}, outbox.Credential{Kind: "OTP", Digest: digest, ChallengeID: id, ExpiresAt: time.Now().Add(s.C.OTPTTL)}); err != nil {
 		return "", ErrDependency
 	}
 	return id, nil
@@ -448,7 +465,7 @@ func (s *Service) ResendOTP(ctx context.Context, id, requestedPlane string) erro
 	if err != nil {
 		return ErrDependency
 	}
-	if err = s.Mail.Send(ctx, email, "otp", map[string]string{"Code": code, "Action": strings.ReplaceAll(purpose, "_", " "), "Minutes": fmt.Sprint(int(s.C.OTPTTL.Minutes()))}); err != nil {
+	if err = s.queue(ctx, tx, aid, email, "otp", map[string]string{"Code": code, "Action": strings.ReplaceAll(purpose, "_", " "), "Minutes": fmt.Sprint(int(s.C.OTPTTL.Minutes()))}, outbox.Credential{Kind: "OTP", Digest: digest, ChallengeID: id, ExpiresAt: time.Now().Add(s.C.OTPTTL)}); err != nil {
 		return ErrDependency
 	}
 	return tx.Commit(ctx)
@@ -593,10 +610,12 @@ func (s *Service) ChangePassword(ctx context.Context, p Principal, current, next
 	if err = audit(ctx, tx, p.AccountID, p.Plane, "PASSWORD_CHANGED"); err != nil {
 		return ErrDependency
 	}
+	if err = s.queue(ctx, tx, p.AccountID, email, "security", map[string]string{"Action": "Your password was changed", "When": time.Now().UTC().Format(time.RFC3339)}, outbox.Credential{}); err != nil {
+		return err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return ErrDependency
 	}
-	_ = s.Mail.Send(ctx, email, "security", map[string]string{"Action": "Your password was changed", "When": time.Now().UTC().Format(time.RFC3339)})
 	return nil
 }
 func (s *Service) ForgotPassword(ctx context.Context, email string) error {
@@ -630,7 +649,7 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 	if _, err = tx.Exec(ctx, `INSERT INTO auth_action_tokens(digest,account_id,kind,expires_at) VALUES($1,$2,'RESET_PASSWORD',now()+interval '20 minutes')`, digest, account); err != nil {
 		return ErrDependency
 	}
-	if err = s.Mail.Send(ctx, e, "reset", map[string]string{"Code": token, "Minutes": "20"}); err != nil {
+	if err = s.queue(ctx, tx, account, e, "reset", map[string]string{"Code": token, "Minutes": "20"}, outbox.Credential{Kind: "RESET_PASSWORD", Digest: digest, ExpiresAt: time.Now().Add(20 * time.Minute)}); err != nil {
 		return ErrDependency
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -670,10 +689,12 @@ func (s *Service) ResetPassword(ctx context.Context, token, next string) error {
 	if err = audit(ctx, tx, account, "", "PASSWORD_RESET"); err != nil {
 		return ErrDependency
 	}
+	if err = s.queue(ctx, tx, account, email, "security", map[string]string{"Action": "A password reset was completed", "When": time.Now().UTC().Format(time.RFC3339)}, outbox.Credential{}); err != nil {
+		return err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return ErrDependency
 	}
-	_ = s.Mail.Send(ctx, email, "security", map[string]string{"Action": "A password reset was completed", "When": time.Now().UTC().Format(time.RFC3339)})
 	return nil
 }
 func (s *Service) Begin2FA(ctx context.Context, p Principal, password string, enable bool) (string, error) {
