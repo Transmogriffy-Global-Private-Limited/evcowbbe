@@ -1,1162 +1,2626 @@
 openapi: 3.1.0
 info:
-  title: Charger on Wheels Auth Foundation API
+  title: EVCOWBBE | Charger on Wheels Authentication API
   version: 0.1.0
-  description: One-plane opaque bearer tokens. Explicitly no production admin capability
-    grants or driver operational access in this slice.
+  description: |
+    Implemented EVCOWBBE authentication foundation only (45 operations). Customer app, driver and administrator are distinct authorization planes; no charger booking, dispatch, payment, driver-approval or admin business capability APIs exist in this release.
+
+    All successful API responses contain a `data` envelope; failures contain an `error` object with `code`, `message`, `request_id` and `details`. All POST operations require `Content-Type: application/json`, even logout operations whose body is ignored. Strict JSON decoding rejects unknown fields, multiple JSON values and bodies above 32 KiB on decoded routes. Responses include `X-Request-ID` and `Cache-Control: no-store`.
+
+    **Interactive safety:** Swagger `Try it out` invokes the actual same-origin server and can register users, send real email, revoke tokens/sessions, or change passwords/2FA. Use only specifically authorized test accounts. Example tokens, passwords, UUIDs and addresses are illustrative and intentionally not real credentials. Never paste real tokens into screenshots/logs, or store them in browser persistent storage. The UI does not persist authorization across reloads.
+
+    Auth: access and refresh are separate opaque 256-bit random tokens, not JWTs. Access defaults to 15 minutes; refresh is rotated with a default rolling 30-day window and 90-day absolute session cap. Each token belongs to one plane. Email OTP 2FA is optional, not phishing-resistant, and depends on the same mailbox used for recovery. Admin accounts are bootstrapped by trusted local CLI only. A driver's `PENDING` status is not operating approval.
 servers:
 - url: /
-  description: Same origin as the Swagger UI (local or deployed HTTPS host)
+  description: Same origin as the Swagger page, either localhost or the deployed HTTPS host
+tags:
+- name: Email & Recovery
+  description: Global, publicly callable one-time email verification and password recovery.
+- name: Customer App
+  description: 'The `app` plane: end-customer account authentication and profile.'
+- name: Driver
+  description: 'The `driver` plane: authentication only; `PENDING` is not operational approval.'
+- name: Admin
+  description: 'The `admin` plane: CLI-bootstrapped administrator authentication, without future RBAC capabilities.'
+- name: Diagnostics
+  description: Public liveness, database readiness and logical API version.
 paths:
   /api/v1/auth/verify-email:
     post:
+      tags:
+      - Email & Recovery
       operationId: verifyEmail
-      summary: verifyEmail
+      summary: Verify registered email
+      description: Consume the single-use 24-hour token received after app/driver registration (or resend). Repeated/expired/invalid
+        tokens are rejected. No bearer authentication is required. This does **not** log the account in.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                token:
-                  type: string
-              required:
-              - token
+              $ref: '#/components/schemas/ActionTokenRequest'
+            example:
+              token: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
   /api/v1/auth/resend-verification:
     post:
+      tags:
+      - Email & Recovery
       operationId: resendVerification
-      summary: resendVerification
+      summary: Resend an email verification token
+      description: 'Deliberately returns the same `accepted: true` response for unknown, invalid or already-verified
+        addresses. Eligible unverified accounts receive a replacement token; previous verification tokens are invalidated.
+        Subject to IP and per-account rate limits and SMTP availability.'
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/Accepted'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                email:
-                  type: string
-              required:
-              - email
+              $ref: '#/components/schemas/EmailRequest'
+            example:
+              email: person@example.test
   /api/v1/auth/forgot-password:
     post:
+      tags:
+      - Email & Recovery
       operationId: forgotPassword
-      summary: forgotPassword
+      summary: Request an emailed password-reset token
+      description: Deliberately hides email/account existence. If eligible and previously verified, a single-use
+        20-minute reset token is emailed; prior reset tokens are replaced. Do not display whether an email was delivered.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/Accepted'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                email:
-                  type: string
-              required:
-              - email
+              $ref: '#/components/schemas/EmailRequest'
+            example:
+              email: person@example.test
   /api/v1/auth/reset-password:
     post:
+      tags:
+      - Email & Recovery
       operationId: resetPassword
-      summary: resetPassword
+      summary: Reset password using email token
+      description: Consumes the emailed single-use 20-minute reset token, enforces password policy, and **revokes
+        all sessions across planes** for the account. Sign in again after success. Notification email failures after
+        commit do not roll back the reset.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/PasswordPolicy'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                token:
-                  type: string
-                new_password:
-                  type: string
-              required:
-              - token
-              - new_password
+              $ref: '#/components/schemas/ResetPasswordRequest'
+            example:
+              token: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+              new_password: IllustrativeOnly!2026NeverReuse
   /api/v1/app/auth/register:
     post:
+      tags:
+      - Customer App
       operationId: register_app
-      summary: register app
+      summary: Register customer app account
+      description: Create a new account and send the 24-hour verification token. A valid duplicate email intentionally
+        returns the same HTTP 202 response, preventing account enumeration. One email maps to one account; no automatic
+        linking/promotion exists. Customer principal begins as `ACTIVE`, but cannot log in until the email is verified.
       security: []
       responses:
         '202':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/RegisteredApp'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/PasswordPolicy'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                email:
-                  type: string
-                password:
-                  type: string
-              required:
-              - email
-              - password
+              $ref: '#/components/schemas/CredentialsRequest'
+            example:
+              email: person@example.test
+              password: IllustrativeOnly!2026NeverReuse
   /api/v1/app/auth/login:
     post:
+      tags:
+      - Customer App
       operationId: app_auth_login
-      summary: app auth login
+      summary: Log in as customer app
+      description: 'Requires a verified email and the matching plane principal. If email 2FA is disabled, `data.tokens`
+        contains new credentials. If enabled, only `data.challenge_id` and `data.two_factor_required: true` are
+        returned; call this plane''s `verify-otp` endpoint with the emailed code to receive tokens. Admin accounts
+        cannot be created through public registration.'
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/LoginApp'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/EmailNotVerified'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                email:
-                  type: string
-                password:
-                  type: string
-              required:
-              - email
-              - password
+              $ref: '#/components/schemas/CredentialsRequest'
+            example:
+              email: person@example.test
+              password: IllustrativeOnly!2026NeverReuse
   /api/v1/app/auth/verify-otp:
     post:
+      tags:
+      - Customer App
       operationId: app_auth_verify_otp
-      summary: app auth verify otp
+      summary: Complete customer app 2FA login
+      description: Use the LOGIN_2FA challenge ID returned by `login` and its emailed six-digit code. A code is
+        single-use, expires after the configured TTL and has a bounded number of attempts. The challenge must belong
+        to this plane. A successful response issues opaque access and refresh credentials.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/TokensApp'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
   /api/v1/app/auth/refresh:
     post:
+      tags:
+      - Customer App
       operationId: app_auth_refresh
-      summary: app auth refresh
+      summary: Rotate customer app session tokens
+      description: 'Exchange the current opaque refresh token for a new access/refresh pair in the **same server-side
+        session**. Previous refresh token is consumed atomically; reusing it revokes the session. The session also
+        has an absolute time limit (default 90 days). This is not a Bearer-authorized endpoint: pass the refresh
+        credential only in JSON.'
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/TokensApp'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrReusedRefresh'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                refresh_token:
-                  type: string
-              required:
-              - refresh_token
+              $ref: '#/components/schemas/RefreshRequest'
+            example:
+              refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
   /api/v1/app/auth/2fa/resend:
     post:
+      tags:
+      - Customer App
       operationId: app_auth_2fa_resend
-      summary: app auth 2fa resend
+      summary: Resend customer app login OTP
+      description: Resends only an existing active LOGIN_2FA challenge, **not** a 2FA enable/disable challenge.
+        Resend rotates the code and extends the challenge's TTL, subject to cooldown/attempt/send limits. Same challenge
+        ID is retained; previous code stops working.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-              required:
-              - challenge_id
-  /api/v1/app/auth/logout:
-    post:
-      operationId: app_auth_logout
-      summary: app auth logout
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-  /api/v1/app/auth/logout-all:
-    post:
-      operationId: app_auth_logout_all
-      summary: app auth logout all
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-  /api/v1/app/auth/password/change:
-    post:
-      operationId: app_auth_password_change
-      summary: app auth password change
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                current_password:
-                  type: string
-                new_password:
-                  type: string
-              required:
-              - current_password
-              - new_password
-  /api/v1/app/auth/2fa/enable/begin:
-    post:
-      operationId: app_auth_2fa_enable_begin
-      summary: app auth 2fa enable begin
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                password:
-                  type: string
-              required:
-              - password
-  /api/v1/app/auth/2fa/enable/confirm:
-    post:
-      operationId: app_auth_2fa_enable_confirm
-      summary: app auth 2fa enable confirm
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
-  /api/v1/app/auth/2fa/disable/begin:
-    post:
-      operationId: app_auth_2fa_disable_begin
-      summary: app auth 2fa disable begin
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                password:
-                  type: string
-              required:
-              - password
-  /api/v1/app/auth/2fa/disable/confirm:
-    post:
-      operationId: app_auth_2fa_disable_confirm
-      summary: app auth 2fa disable confirm
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
+              $ref: '#/components/schemas/ChallengeRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
   /api/v1/app/me:
     get:
+      tags:
+      - Customer App
       operationId: app_me
-      summary: app me
+      summary: Read current customer app profile
+      description: Returns only the profile associated with the bearer token's exact plane; there is no cross-plane
+        access. `principal_status` is informational; for drivers, `PENDING` does not authorize any driver operational
+        workflow.
       security:
       - BearerAuth: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/ProfileApp'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/auth/logout:
+    post:
+      tags:
+      - Customer App
+      operationId: app_auth_logout
+      summary: Log out current customer app session
+      description: 'Immediately revokes the session identified by the access bearer; other sessions stay active.
+        Send `Content-Type: application/json` (and `{}` if using Swagger''s request body), even though the server
+        ignores the payload. Repeating with the revoked bearer no longer authenticates.'
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        description: 'Payload is ignored by the server, but `Content-Type: application/json` is mandatory. Send
+          `{}` from Swagger/curl for compatibility; no credentials belong in the body.'
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Ignored payload; `{}` recommended.
+            example: {}
+  /api/v1/app/auth/logout-all:
+    post:
+      tags:
+      - Customer App
+      operationId: app_auth_logout_all
+      summary: Log out of every session
+      description: Revokes all non-revoked sessions belonging to the account **across all planes**, including the
+        session used to call this endpoint. The JSON payload is ignored, but a JSON content-type is mandatory.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        description: 'Payload is ignored by the server, but `Content-Type: application/json` is mandatory. Send
+          `{}` from Swagger/curl for compatibility; no credentials belong in the body.'
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Ignored payload; `{}` recommended.
+            example: {}
+  /api/v1/app/auth/password/change:
+    post:
+      tags:
+      - Customer App
+      operationId: app_auth_password_change
+      summary: Change customer app account password
+      description: Requires current password, a new policy-compliant password and the access bearer. On success,
+        revokes **every session of the account across planes**, including this request's session; obtain fresh credentials
+        before further calls. A security email is attempted after commit.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/PasswordPolicy'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+            example:
+              current_password: YourExistingSecretNotAnExample
+              new_password: IllustrativeOnly!2026NeverReuse
+  /api/v1/app/auth/2fa/enable/begin:
+    post:
+      tags:
+      - Customer App
+      operationId: app_auth_2fa_enable_begin
+      summary: Begin enable email 2FA
+      description: Reconfirm the current account password and email a purpose-bound six-digit code to enable 2FA.
+        The account's current state must differ from the requested state, and a successful response includes `challenge_id`.
+        Confirm in the **same plane** and for the same action. The login OTP resend endpoint does not apply to these
+        challenges.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Begin2FA'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Begin2FARequest'
+            example:
+              password: IllustrativeOnly!2026NeverReuse
+  /api/v1/app/auth/2fa/enable/confirm:
+    post:
+      tags:
+      - Customer App
+      operationId: app_auth_2fa_enable_confirm
+      summary: Confirm enable email 2FA
+      description: Submit the six-digit code and challenge ID created by this plane's `enable/begin` action. On
+        success, account-wide 2FA becomes enabled; **other sessions are revoked** while the current session remains
+        valid. Expired, consumed, mismatched, or exhausted challenges are rejected.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
+  /api/v1/app/auth/2fa/disable/begin:
+    post:
+      tags:
+      - Customer App
+      operationId: app_auth_2fa_disable_begin
+      summary: Begin disable email 2FA
+      description: Reconfirm the current account password and email a purpose-bound six-digit code to disable 2FA.
+        The account's current state must differ from the requested state, and a successful response includes `challenge_id`.
+        Confirm in the **same plane** and for the same action. The login OTP resend endpoint does not apply to these
+        challenges.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Begin2FA'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Begin2FARequest'
+            example:
+              password: IllustrativeOnly!2026NeverReuse
+  /api/v1/app/auth/2fa/disable/confirm:
+    post:
+      tags:
+      - Customer App
+      operationId: app_auth_2fa_disable_confirm
+      summary: Confirm disable email 2FA
+      description: Submit the six-digit code and challenge ID created by this plane's `disable/begin` action. On
+        success, account-wide 2FA becomes disabled; **other sessions are revoked** while the current session remains
+        valid. Expired, consumed, mismatched, or exhausted challenges are rejected.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
   /api/v1/driver/auth/register:
     post:
+      tags:
+      - Driver
       operationId: register_driver
-      summary: register driver
+      summary: Register driver account
+      description: Create a new account and send the 24-hour verification token. A valid duplicate email intentionally
+        returns the same HTTP 202 response, preventing account enumeration. One email maps to one account; no automatic
+        linking/promotion exists. Driver principal begins as `PENDING`; successful login is **not** driver operational
+        approval.
       security: []
       responses:
         '202':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/RegisteredDriver'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/PasswordPolicy'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                email:
-                  type: string
-                password:
-                  type: string
-              required:
-              - email
-              - password
+              $ref: '#/components/schemas/CredentialsRequest'
+            example:
+              email: person@example.test
+              password: IllustrativeOnly!2026NeverReuse
   /api/v1/driver/auth/login:
     post:
+      tags:
+      - Driver
       operationId: driver_auth_login
-      summary: driver auth login
+      summary: Log in as driver
+      description: 'Requires a verified email and the matching plane principal. If email 2FA is disabled, `data.tokens`
+        contains new credentials. If enabled, only `data.challenge_id` and `data.two_factor_required: true` are
+        returned; call this plane''s `verify-otp` endpoint with the emailed code to receive tokens. Admin accounts
+        cannot be created through public registration.'
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/LoginDriver'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/EmailNotVerified'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                email:
-                  type: string
-                password:
-                  type: string
-              required:
-              - email
-              - password
+              $ref: '#/components/schemas/CredentialsRequest'
+            example:
+              email: person@example.test
+              password: IllustrativeOnly!2026NeverReuse
   /api/v1/driver/auth/verify-otp:
     post:
+      tags:
+      - Driver
       operationId: driver_auth_verify_otp
-      summary: driver auth verify otp
+      summary: Complete driver 2FA login
+      description: Use the LOGIN_2FA challenge ID returned by `login` and its emailed six-digit code. A code is
+        single-use, expires after the configured TTL and has a bounded number of attempts. The challenge must belong
+        to this plane. A successful response issues opaque access and refresh credentials.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/TokensDriver'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
   /api/v1/driver/auth/refresh:
     post:
+      tags:
+      - Driver
       operationId: driver_auth_refresh
-      summary: driver auth refresh
+      summary: Rotate driver session tokens
+      description: 'Exchange the current opaque refresh token for a new access/refresh pair in the **same server-side
+        session**. Previous refresh token is consumed atomically; reusing it revokes the session. The session also
+        has an absolute time limit (default 90 days). This is not a Bearer-authorized endpoint: pass the refresh
+        credential only in JSON.'
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/TokensDriver'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrReusedRefresh'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                refresh_token:
-                  type: string
-              required:
-              - refresh_token
+              $ref: '#/components/schemas/RefreshRequest'
+            example:
+              refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
   /api/v1/driver/auth/2fa/resend:
     post:
+      tags:
+      - Driver
       operationId: driver_auth_2fa_resend
-      summary: driver auth 2fa resend
+      summary: Resend driver login OTP
+      description: Resends only an existing active LOGIN_2FA challenge, **not** a 2FA enable/disable challenge.
+        Resend rotates the code and extends the challenge's TTL, subject to cooldown/attempt/send limits. Same challenge
+        ID is retained; previous code stops working.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-              required:
-              - challenge_id
-  /api/v1/driver/auth/logout:
-    post:
-      operationId: driver_auth_logout
-      summary: driver auth logout
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-  /api/v1/driver/auth/logout-all:
-    post:
-      operationId: driver_auth_logout_all
-      summary: driver auth logout all
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-  /api/v1/driver/auth/password/change:
-    post:
-      operationId: driver_auth_password_change
-      summary: driver auth password change
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                current_password:
-                  type: string
-                new_password:
-                  type: string
-              required:
-              - current_password
-              - new_password
-  /api/v1/driver/auth/2fa/enable/begin:
-    post:
-      operationId: driver_auth_2fa_enable_begin
-      summary: driver auth 2fa enable begin
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                password:
-                  type: string
-              required:
-              - password
-  /api/v1/driver/auth/2fa/enable/confirm:
-    post:
-      operationId: driver_auth_2fa_enable_confirm
-      summary: driver auth 2fa enable confirm
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
-  /api/v1/driver/auth/2fa/disable/begin:
-    post:
-      operationId: driver_auth_2fa_disable_begin
-      summary: driver auth 2fa disable begin
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                password:
-                  type: string
-              required:
-              - password
-  /api/v1/driver/auth/2fa/disable/confirm:
-    post:
-      operationId: driver_auth_2fa_disable_confirm
-      summary: driver auth 2fa disable confirm
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
+              $ref: '#/components/schemas/ChallengeRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
   /api/v1/driver/me:
     get:
+      tags:
+      - Driver
       operationId: driver_me
-      summary: driver me
+      summary: Read current driver profile
+      description: Returns only the profile associated with the bearer token's exact plane; there is no cross-plane
+        access. `principal_status` is informational; for drivers, `PENDING` does not authorize any driver operational
+        workflow.
       security:
       - BearerAuth: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/ProfileDriver'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/driver/auth/logout:
+    post:
+      tags:
+      - Driver
+      operationId: driver_auth_logout
+      summary: Log out current driver session
+      description: 'Immediately revokes the session identified by the access bearer; other sessions stay active.
+        Send `Content-Type: application/json` (and `{}` if using Swagger''s request body), even though the server
+        ignores the payload. Repeating with the revoked bearer no longer authenticates.'
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        description: 'Payload is ignored by the server, but `Content-Type: application/json` is mandatory. Send
+          `{}` from Swagger/curl for compatibility; no credentials belong in the body.'
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Ignored payload; `{}` recommended.
+            example: {}
+  /api/v1/driver/auth/logout-all:
+    post:
+      tags:
+      - Driver
+      operationId: driver_auth_logout_all
+      summary: Log out of every session
+      description: Revokes all non-revoked sessions belonging to the account **across all planes**, including the
+        session used to call this endpoint. The JSON payload is ignored, but a JSON content-type is mandatory.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        description: 'Payload is ignored by the server, but `Content-Type: application/json` is mandatory. Send
+          `{}` from Swagger/curl for compatibility; no credentials belong in the body.'
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Ignored payload; `{}` recommended.
+            example: {}
+  /api/v1/driver/auth/password/change:
+    post:
+      tags:
+      - Driver
+      operationId: driver_auth_password_change
+      summary: Change driver account password
+      description: Requires current password, a new policy-compliant password and the access bearer. On success,
+        revokes **every session of the account across planes**, including this request's session; obtain fresh credentials
+        before further calls. A security email is attempted after commit.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/PasswordPolicy'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+            example:
+              current_password: YourExistingSecretNotAnExample
+              new_password: IllustrativeOnly!2026NeverReuse
+  /api/v1/driver/auth/2fa/enable/begin:
+    post:
+      tags:
+      - Driver
+      operationId: driver_auth_2fa_enable_begin
+      summary: Begin enable email 2FA
+      description: Reconfirm the current account password and email a purpose-bound six-digit code to enable 2FA.
+        The account's current state must differ from the requested state, and a successful response includes `challenge_id`.
+        Confirm in the **same plane** and for the same action. The login OTP resend endpoint does not apply to these
+        challenges.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Begin2FA'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Begin2FARequest'
+            example:
+              password: IllustrativeOnly!2026NeverReuse
+  /api/v1/driver/auth/2fa/enable/confirm:
+    post:
+      tags:
+      - Driver
+      operationId: driver_auth_2fa_enable_confirm
+      summary: Confirm enable email 2FA
+      description: Submit the six-digit code and challenge ID created by this plane's `enable/begin` action. On
+        success, account-wide 2FA becomes enabled; **other sessions are revoked** while the current session remains
+        valid. Expired, consumed, mismatched, or exhausted challenges are rejected.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
+  /api/v1/driver/auth/2fa/disable/begin:
+    post:
+      tags:
+      - Driver
+      operationId: driver_auth_2fa_disable_begin
+      summary: Begin disable email 2FA
+      description: Reconfirm the current account password and email a purpose-bound six-digit code to disable 2FA.
+        The account's current state must differ from the requested state, and a successful response includes `challenge_id`.
+        Confirm in the **same plane** and for the same action. The login OTP resend endpoint does not apply to these
+        challenges.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Begin2FA'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Begin2FARequest'
+            example:
+              password: IllustrativeOnly!2026NeverReuse
+  /api/v1/driver/auth/2fa/disable/confirm:
+    post:
+      tags:
+      - Driver
+      operationId: driver_auth_2fa_disable_confirm
+      summary: Confirm disable email 2FA
+      description: Submit the six-digit code and challenge ID created by this plane's `disable/begin` action. On
+        success, account-wide 2FA becomes disabled; **other sessions are revoked** while the current session remains
+        valid. Expired, consumed, mismatched, or exhausted challenges are rejected.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
   /api/v1/admin/auth/login:
     post:
+      tags:
+      - Admin
       operationId: admin_auth_login
-      summary: admin auth login
+      summary: Log in as administrator
+      description: 'Requires a verified email and the matching plane principal. If email 2FA is disabled, `data.tokens`
+        contains new credentials. If enabled, only `data.challenge_id` and `data.two_factor_required: true` are
+        returned; call this plane''s `verify-otp` endpoint with the emailed code to receive tokens. Admin accounts
+        cannot be created through public registration.'
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/LoginAdmin'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/EmailNotVerified'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                email:
-                  type: string
-                password:
-                  type: string
-              required:
-              - email
-              - password
+              $ref: '#/components/schemas/CredentialsRequest'
+            example:
+              email: person@example.test
+              password: IllustrativeOnly!2026NeverReuse
   /api/v1/admin/auth/verify-otp:
     post:
+      tags:
+      - Admin
       operationId: admin_auth_verify_otp
-      summary: admin auth verify otp
+      summary: Complete administrator 2FA login
+      description: Use the LOGIN_2FA challenge ID returned by `login` and its emailed six-digit code. A code is
+        single-use, expires after the configured TTL and has a bounded number of attempts. The challenge must belong
+        to this plane. A successful response issues opaque access and refresh credentials.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/TokensAdmin'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
   /api/v1/admin/auth/refresh:
     post:
+      tags:
+      - Admin
       operationId: admin_auth_refresh
-      summary: admin auth refresh
+      summary: Rotate administrator session tokens
+      description: 'Exchange the current opaque refresh token for a new access/refresh pair in the **same server-side
+        session**. Previous refresh token is consumed atomically; reusing it revokes the session. The session also
+        has an absolute time limit (default 90 days). This is not a Bearer-authorized endpoint: pass the refresh
+        credential only in JSON.'
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/TokensAdmin'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrReusedRefresh'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                refresh_token:
-                  type: string
-              required:
-              - refresh_token
+              $ref: '#/components/schemas/RefreshRequest'
+            example:
+              refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
   /api/v1/admin/auth/2fa/resend:
     post:
+      tags:
+      - Admin
       operationId: admin_auth_2fa_resend
-      summary: admin auth 2fa resend
+      summary: Resend administrator login OTP
+      description: Resends only an existing active LOGIN_2FA challenge, **not** a 2FA enable/disable challenge.
+        Resend rotates the code and extends the challenge's TTL, subject to cooldown/attempt/send limits. Same challenge
+        ID is retained; previous code stops working.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-              required:
-              - challenge_id
-  /api/v1/admin/auth/logout:
-    post:
-      operationId: admin_auth_logout
-      summary: admin auth logout
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-  /api/v1/admin/auth/logout-all:
-    post:
-      operationId: admin_auth_logout_all
-      summary: admin auth logout all
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-  /api/v1/admin/auth/password/change:
-    post:
-      operationId: admin_auth_password_change
-      summary: admin auth password change
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                current_password:
-                  type: string
-                new_password:
-                  type: string
-              required:
-              - current_password
-              - new_password
-  /api/v1/admin/auth/2fa/enable/begin:
-    post:
-      operationId: admin_auth_2fa_enable_begin
-      summary: admin auth 2fa enable begin
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                password:
-                  type: string
-              required:
-              - password
-  /api/v1/admin/auth/2fa/enable/confirm:
-    post:
-      operationId: admin_auth_2fa_enable_confirm
-      summary: admin auth 2fa enable confirm
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
-  /api/v1/admin/auth/2fa/disable/begin:
-    post:
-      operationId: admin_auth_2fa_disable_begin
-      summary: admin auth 2fa disable begin
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                password:
-                  type: string
-              required:
-              - password
-  /api/v1/admin/auth/2fa/disable/confirm:
-    post:
-      operationId: admin_auth_2fa_disable_confirm
-      summary: admin auth 2fa disable confirm
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                challenge_id:
-                  type: string
-                code:
-                  type: string
-              required:
-              - challenge_id
-              - code
+              $ref: '#/components/schemas/ChallengeRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
   /api/v1/admin/me:
     get:
+      tags:
+      - Admin
       operationId: admin_me
-      summary: admin me
+      summary: Read current administrator profile
+      description: Returns only the profile associated with the bearer token's exact plane; there is no cross-plane
+        access. `principal_status` is informational; for drivers, `PENDING` does not authorize any driver operational
+        workflow.
       security:
       - BearerAuth: []
       responses:
         '200':
-          description: Successful response in data envelope
+          $ref: '#/components/responses/ProfileAdmin'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/admin/auth/logout:
+    post:
+      tags:
+      - Admin
+      operationId: admin_auth_logout
+      summary: Log out current administrator session
+      description: 'Immediately revokes the session identified by the access bearer; other sessions stay active.
+        Send `Content-Type: application/json` (and `{}` if using Swagger''s request body), even though the server
+        ignores the payload. Repeating with the revoked bearer no longer authenticates.'
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        description: 'Payload is ignored by the server, but `Content-Type: application/json` is mandatory. Send
+          `{}` from Swagger/curl for compatibility; no credentials belong in the body.'
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Ignored payload; `{}` recommended.
+            example: {}
+  /api/v1/admin/auth/logout-all:
+    post:
+      tags:
+      - Admin
+      operationId: admin_auth_logout_all
+      summary: Log out of every session
+      description: Revokes all non-revoked sessions belonging to the account **across all planes**, including the
+        session used to call this endpoint. The JSON payload is ignored, but a JSON content-type is mandatory.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        description: 'Payload is ignored by the server, but `Content-Type: application/json` is mandatory. Send
+          `{}` from Swagger/curl for compatibility; no credentials belong in the body.'
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Ignored payload; `{}` recommended.
+            example: {}
+  /api/v1/admin/auth/password/change:
+    post:
+      tags:
+      - Admin
+      operationId: admin_auth_password_change
+      summary: Change administrator account password
+      description: Requires current password, a new policy-compliant password and the access bearer. On success,
+        revokes **every session of the account across planes**, including this request's session; obtain fresh credentials
+        before further calls. A security email is attempted after commit.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
         '400':
-          description: Invalid JSON or body
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/PasswordPolicy'
         '429':
-          description: Rate limited
+          $ref: '#/components/responses/RateLimit'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+            example:
+              current_password: YourExistingSecretNotAnExample
+              new_password: IllustrativeOnly!2026NeverReuse
+  /api/v1/admin/auth/2fa/enable/begin:
+    post:
+      tags:
+      - Admin
+      operationId: admin_auth_2fa_enable_begin
+      summary: Begin enable email 2FA
+      description: Reconfirm the current account password and email a purpose-bound six-digit code to enable 2FA.
+        The account's current state must differ from the requested state, and a successful response includes `challenge_id`.
+        Confirm in the **same plane** and for the same action. The login OTP resend endpoint does not apply to these
+        challenges.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Begin2FA'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Begin2FARequest'
+            example:
+              password: IllustrativeOnly!2026NeverReuse
+  /api/v1/admin/auth/2fa/enable/confirm:
+    post:
+      tags:
+      - Admin
+      operationId: admin_auth_2fa_enable_confirm
+      summary: Confirm enable email 2FA
+      description: Submit the six-digit code and challenge ID created by this plane's `enable/begin` action. On
+        success, account-wide 2FA becomes enabled; **other sessions are revoked** while the current session remains
+        valid. Expired, consumed, mismatched, or exhausted challenges are rejected.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
+  /api/v1/admin/auth/2fa/disable/begin:
+    post:
+      tags:
+      - Admin
+      operationId: admin_auth_2fa_disable_begin
+      summary: Begin disable email 2FA
+      description: Reconfirm the current account password and email a purpose-bound six-digit code to disable 2FA.
+        The account's current state must differ from the requested state, and a successful response includes `challenge_id`.
+        Confirm in the **same plane** and for the same action. The login OTP resend endpoint does not apply to these
+        challenges.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Begin2FA'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Begin2FARequest'
+            example:
+              password: IllustrativeOnly!2026NeverReuse
+  /api/v1/admin/auth/2fa/disable/confirm:
+    post:
+      tags:
+      - Admin
+      operationId: admin_auth_2fa_disable_confirm
+      summary: Confirm disable email 2FA
+      description: Submit the six-digit code and challenge ID created by this plane's `disable/begin` action. On
+        success, account-wide 2FA becomes disabled; **other sessions are revoked** while the current session remains
+        valid. Expired, consumed, mismatched, or exhausted challenges are rejected.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidOrExpiredOTP'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPRequest'
+            example:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              code: '012345'
   /health/live:
     get:
+      tags:
+      - Diagnostics
       operationId: health_live
-      summary: health live
+      summary: Liveness probe
+      description: Reports that the process can handle requests. **Does not** test PostgreSQL, SMTP delivery, or
+        end-to-end authentication. Avoid using this alone for deployment acceptance.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/Live'
   /health/ready:
     get:
+      tags:
+      - Diagnostics
       operationId: health_ready
-      summary: health ready
+      summary: Database readiness probe
+      description: Pings PostgreSQL with a two-second timeout. HTTP 200 means this dependency was reachable for
+        that request; it does **not** prove SMTP message delivery or successful login.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
+          $ref: '#/components/responses/Ready'
         '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/ReadinessUnavailable'
   /version:
     get:
+      tags:
+      - Diagnostics
       operationId: version
-      summary: version
+      summary: Logical API version
+      description: Returns the fixed version identifier for this authentication foundation. This is not a Git revision,
+        binary hash, or build timestamp.
       security: []
       responses:
         '200':
-          description: Successful response in data envelope
-        '400':
-          description: Invalid JSON or body
-        '429':
-          description: Rate limited
-        '503':
-          description: Dependency unavailable
+          $ref: '#/components/responses/Version'
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      description: Opaque random access token, not JWT
+      bearerFormat: opaque
+      description: Paste an *access* token received from login/verify-otp/refresh for this exact app, driver or
+        admin plane. Not JWT, not a refresh token. No cookies or implicit OAuth flow.
+  headers:
+    RequestID:
+      description: Request correlation UUID; also returned in JSON error bodies.
+      schema:
+        type: string
+        format: uuid
+      example: 00000000-0000-4000-8000-000000000000
+    RetryAfter:
+      description: Seconds until retry is advised (currently 60).
+      schema:
+        type: integer
+        minimum: 0
+      example: 60
+  schemas:
+    Email:
+      type: string
+      description: Case-insensitive; trimmed and normalized to lowercase. Maximum 254 bytes. One account per email
+        across planes.
+      format: email
+      maxLength: 254
+      example: person@example.test
+    Password:
+      type: string
+      description: 12-256 UTF-8 **bytes** (not necessarily 12-256 Unicode characters). Common substrings are rejected.
+        Use a unique secret, never the illustrative sample.
+      format: password
+      writeOnly: true
+      example: IllustrativeOnly!2026NeverReuse
+    ActionToken:
+      type: string
+      description: Single-use opaque 43-character URL-safe token delivered by email. Not a JWT; never include it
+        in a URL, log or screenshot.
+      minLength: 43
+      maxLength: 43
+      pattern: ^[A-Za-z0-9_-]{43}$
+      writeOnly: true
+      example: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+    RefreshToken:
+      type: string
+      description: Opaque 43-character rotating refresh credential. Single-use on refresh; reuse revokes its session
+        family. Never use as an access bearer.
+      minLength: 43
+      maxLength: 43
+      pattern: ^[A-Za-z0-9_-]{43}$
+      writeOnly: true
+      example: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+    ChallengeID:
+      type: string
+      description: Challenge identifier returned by login or a 2FA begin operation. OTP challenges are bound to
+        their plane and purpose.
+      format: uuid
+      example: 00000000-0000-4000-8000-000000000000
+    OTPCode:
+      type: string
+      description: Six-digit emailed one-time code, including leading zeroes. Expires after configured TTL (10 minutes
+        in the documented default) with limited attempts.
+      minLength: 6
+      maxLength: 6
+      pattern: ^[0-9]{6}$
+      writeOnly: true
+      example: '012345'
+    CredentialsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          $ref: '#/components/schemas/Email'
+        password:
+          $ref: '#/components/schemas/Password'
+      required:
+      - email
+      - password
+    EmailRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          $ref: '#/components/schemas/Email'
+      required:
+      - email
+    ActionTokenRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        token:
+          $ref: '#/components/schemas/ActionToken'
+      required:
+      - token
+    ResetPasswordRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        token:
+          $ref: '#/components/schemas/ActionToken'
+        new_password:
+          $ref: '#/components/schemas/Password'
+      required:
+      - token
+      - new_password
+    OTPRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        challenge_id:
+          $ref: '#/components/schemas/ChallengeID'
+        code:
+          $ref: '#/components/schemas/OTPCode'
+      required:
+      - challenge_id
+      - code
+    ChallengeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        challenge_id:
+          $ref: '#/components/schemas/ChallengeID'
+      required:
+      - challenge_id
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        refresh_token:
+          $ref: '#/components/schemas/RefreshToken'
+      required:
+      - refresh_token
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        current_password:
+          $ref: '#/components/schemas/Password'
+        new_password:
+          $ref: '#/components/schemas/Password'
+      required:
+      - current_password
+      - new_password
+    Begin2FARequest:
+      type: object
+      additionalProperties: false
+      properties:
+        password:
+          $ref: '#/components/schemas/Password'
+      required:
+      - password
+    TokenPair:
+      type: object
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+          description: Opaque access bearer; 43 URL-safe characters, not JWT.
+          minLength: 43
+          maxLength: 43
+          example: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        refresh_token:
+          type: string
+          description: Rotating opaque refresh token; do not use as a bearer token.
+          minLength: 43
+          maxLength: 43
+          example: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+        token_type:
+          type: string
+          description: HTTP Authorization scheme.
+          const: Bearer
+          example: Bearer
+        access_expires_at:
+          type: string
+          description: Access-token expiry in RFC 3339 UTC (default 15 minutes after issuance).
+          format: date-time
+        refresh_expires_at:
+          type: string
+          description: Refresh-token expiry in RFC 3339 UTC, capped by the session absolute expiry.
+          format: date-time
+        session_id:
+          type: string
+          description: Identity of the server-side PostgreSQL session.
+          format: uuid
+        plane:
+          type: string
+          description: Token is valid only for this API plane.
+          enum:
+          - app
+          - driver
+          - admin
+      required:
+      - access_token
+      - refresh_token
+      - token_type
+      - access_expires_at
+      - refresh_expires_at
+      - session_id
+      - plane
+    LoginWithTokens:
+      type: object
+      additionalProperties: false
+      properties:
+        two_factor_required:
+          type: boolean
+          description: False when the login immediately issued credentials.
+          const: false
+        tokens:
+          $ref: '#/components/schemas/TokenPair'
+      required:
+      - two_factor_required
+      - tokens
+    LoginWithChallenge:
+      type: object
+      additionalProperties: false
+      properties:
+        two_factor_required:
+          type: boolean
+          description: True when the one-time email challenge must be verified before tokens are issued.
+          const: true
+        challenge_id:
+          $ref: '#/components/schemas/ChallengeID'
+      required:
+      - two_factor_required
+      - challenge_id
+    LoginOutcome:
+      oneOf:
+      - $ref: '#/components/schemas/LoginWithTokens'
+      - $ref: '#/components/schemas/LoginWithChallenge'
+      description: 'Exactly one of two outcomes: token issuance or a required email-OTP challenge. Never assume
+        `tokens` exists without checking `two_factor_required`.'
+    Profile:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: Account UUID, shared identity; not a per-plane driver approval ID.
+          format: uuid
+        email:
+          $ref: '#/components/schemas/Email'
+        plane:
+          type: string
+          description: Current authenticated plane.
+          enum:
+          - app
+          - driver
+          - admin
+        principal_status:
+          type: string
+          description: Driver PENDING status is not permission to dispatch or operate chargers.
+          enum:
+          - ACTIVE
+          - PENDING
+          - SUSPENDED
+        email_verified:
+          type: boolean
+          description: Whether the account email was verified.
+        two_factor_enabled:
+          type: boolean
+          description: Whether email OTP is required on new logins.
+      required:
+      - id
+      - email
+      - plane
+      - principal_status
+      - email_verified
+      - two_factor_enabled
+    AckData:
+      type: object
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+          const: true
+      required:
+      - ok
+    AcceptedData:
+      type: object
+      additionalProperties: false
+      properties:
+        accepted:
+          type: boolean
+          const: true
+      required:
+      - accepted
+    RegistrationData:
+      type: object
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+          const: If eligible, a verification email has been sent
+        plane:
+          type: string
+          enum:
+          - app
+          - driver
+      required:
+      - message
+      - plane
+    Begin2FAData:
+      type: object
+      additionalProperties: false
+      properties:
+        challenge_id:
+          $ref: '#/components/schemas/ChallengeID'
+        message:
+          type: string
+          const: Check email for one-time code
+      required:
+      - challenge_id
+      - message
+    HealthData:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum:
+          - live
+          - ready
+      required:
+      - status
+    VersionData:
+      type: object
+      additionalProperties: false
+      properties:
+        version:
+          type: string
+          const: auth-foundation-1
+      required:
+      - version
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          description: Stable application error identifier; use with HTTP status.
+        message:
+          type: string
+          description: Human-readable safe description; contains no internal database/SMTP diagnostics.
+        request_id:
+          type: string
+          description: Correlates this error with the `X-Request-ID` response header.
+          format: uuid
+        details:
+          type: object
+          description: Present as an empty JSON object in this implementation.
+          additionalProperties: true
+          example: {}
+      required:
+      - code
+      - message
+      - request_id
+      - details
+    AckEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/AckData'
+      required:
+      - data
+    AcceptedEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/AcceptedData'
+      required:
+      - data
+    RegistrationEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/RegistrationData'
+      required:
+      - data
+    LoginEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/LoginOutcome'
+      required:
+      - data
+    TokenEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/TokenPair'
+      required:
+      - data
+    ProfileEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/Profile'
+      required:
+      - data
+    Begin2FAEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/Begin2FAData'
+      required:
+      - data
+    HealthEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/HealthData'
+      required:
+      - data
+    VersionEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/VersionData'
+      required:
+      - data
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      required:
+      - error
+  responses:
+    Ack:
+      description: Action completed. For password changes, all existing sessions are revoked; for 2FA confirmation,
+        other sessions are revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AckEnvelope'
+          example:
+            data:
+              ok: true
+    Accepted:
+      description: Generic accepted result. Deliberately does not disclose whether the email/account exists or was
+        eligible.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AcceptedEnvelope'
+          example:
+            data:
+              accepted: true
+    Begin2FA:
+      description: A purpose-bound email-OTP challenge was created; use its ID and the emailed code on the matching
+        confirm route.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Begin2FAEnvelope'
+          example:
+            data:
+              challenge_id: 00000000-0000-4000-8000-000000000000
+              message: Check email for one-time code
+    Live:
+      description: Process is responding. Does not check the database.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HealthEnvelope'
+          example:
+            data:
+              status: live
+    Ready:
+      description: PostgreSQL responded to a bounded readiness ping.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HealthEnvelope'
+          example:
+            data:
+              status: ready
+    Version:
+      description: Current program's logical API foundation version (not the Git commit or release ID).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VersionEnvelope'
+          example:
+            data:
+              version: auth-foundation-1
+    LoginApp:
+      description: Credentials valid. Without 2FA the response contains tokens; with 2FA it contains a challenge
+        ID but no tokens.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LoginEnvelope'
+          examples:
+            without_2fa:
+              summary: 2FA disabled; credentials issued
+              value:
+                data:
+                  two_factor_required: false
+                  tokens:
+                    access_token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                    refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+                    token_type: Bearer
+                    access_expires_at: '2026-10-27T10:15:00Z'
+                    refresh_expires_at: '2026-11-26T10:00:00Z'
+                    session_id: 00000000-0000-4000-8000-000000000000
+                    plane: app
+            with_2fa:
+              summary: 2FA enabled; verify emailed code
+              value:
+                data:
+                  two_factor_required: true
+                  challenge_id: 00000000-0000-4000-8000-000000000000
+    TokensApp:
+      description: New access + rotating refresh tokens. Store both securely; older refresh tokens are invalidated.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TokenEnvelope'
+          example:
+            data:
+              access_token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+              refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+              token_type: Bearer
+              access_expires_at: '2026-10-27T10:15:00Z'
+              refresh_expires_at: '2026-11-26T10:00:00Z'
+              session_id: 00000000-0000-4000-8000-000000000000
+              plane: app
+    ProfileApp:
+      description: Profile for the authenticated principal in the requested plane.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProfileEnvelope'
+          example:
+            data:
+              id: 00000000-0000-4000-8000-000000000000
+              email: app.user@example.test
+              plane: app
+              principal_status: ACTIVE
+              email_verified: true
+              two_factor_enabled: false
+    LoginDriver:
+      description: Credentials valid. Without 2FA the response contains tokens; with 2FA it contains a challenge
+        ID but no tokens.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LoginEnvelope'
+          examples:
+            without_2fa:
+              summary: 2FA disabled; credentials issued
+              value:
+                data:
+                  two_factor_required: false
+                  tokens:
+                    access_token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                    refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+                    token_type: Bearer
+                    access_expires_at: '2026-10-27T10:15:00Z'
+                    refresh_expires_at: '2026-11-26T10:00:00Z'
+                    session_id: 00000000-0000-4000-8000-000000000000
+                    plane: driver
+            with_2fa:
+              summary: 2FA enabled; verify emailed code
+              value:
+                data:
+                  two_factor_required: true
+                  challenge_id: 00000000-0000-4000-8000-000000000000
+    TokensDriver:
+      description: New access + rotating refresh tokens. Store both securely; older refresh tokens are invalidated.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TokenEnvelope'
+          example:
+            data:
+              access_token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+              refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+              token_type: Bearer
+              access_expires_at: '2026-10-27T10:15:00Z'
+              refresh_expires_at: '2026-11-26T10:00:00Z'
+              session_id: 00000000-0000-4000-8000-000000000000
+              plane: driver
+    ProfileDriver:
+      description: Profile for the authenticated principal in the requested plane.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProfileEnvelope'
+          example:
+            data:
+              id: 00000000-0000-4000-8000-000000000000
+              email: driver.user@example.test
+              plane: driver
+              principal_status: PENDING
+              email_verified: true
+              two_factor_enabled: false
+    LoginAdmin:
+      description: Credentials valid. Without 2FA the response contains tokens; with 2FA it contains a challenge
+        ID but no tokens.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LoginEnvelope'
+          examples:
+            without_2fa:
+              summary: 2FA disabled; credentials issued
+              value:
+                data:
+                  two_factor_required: false
+                  tokens:
+                    access_token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                    refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+                    token_type: Bearer
+                    access_expires_at: '2026-10-27T10:15:00Z'
+                    refresh_expires_at: '2026-11-26T10:00:00Z'
+                    session_id: 00000000-0000-4000-8000-000000000000
+                    plane: admin
+            with_2fa:
+              summary: 2FA enabled; verify emailed code
+              value:
+                data:
+                  two_factor_required: true
+                  challenge_id: 00000000-0000-4000-8000-000000000000
+    TokensAdmin:
+      description: New access + rotating refresh tokens. Store both securely; older refresh tokens are invalidated.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TokenEnvelope'
+          example:
+            data:
+              access_token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+              refresh_token: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+              token_type: Bearer
+              access_expires_at: '2026-10-27T10:15:00Z'
+              refresh_expires_at: '2026-11-26T10:00:00Z'
+              session_id: 00000000-0000-4000-8000-000000000000
+              plane: admin
+    ProfileAdmin:
+      description: Profile for the authenticated principal in the requested plane.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProfileEnvelope'
+          example:
+            data:
+              id: 00000000-0000-4000-8000-000000000000
+              email: admin.user@example.test
+              plane: admin
+              principal_status: ACTIVE
+              email_verified: true
+              two_factor_enabled: false
+    RegisteredApp:
+      description: Accepted regardless of whether the email is already registered; the eligible new account receives
+        a single-use verification email.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RegistrationEnvelope'
+          example:
+            data:
+              message: If eligible, a verification email has been sent
+              plane: app
+    RegisteredDriver:
+      description: Accepted regardless of whether the email is already registered; the eligible new account receives
+        a single-use verification email.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RegistrationEnvelope'
+          example:
+            data:
+              message: If eligible, a verification email has been sent
+              plane: driver
+    BadRequest:
+      description: Malformed JSON, unknown request fields, oversized JSON body (32 KiB), or multiple JSON values.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            validation_failed:
+              summary: VALIDATION_FAILED
+              value:
+                error:
+                  code: VALIDATION_FAILED
+                  message: Invalid JSON request
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    InvalidCredentials:
+      description: Invalid credentials, verification/reset token, access token, refresh token or OTP.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            invalid_credentials:
+              summary: INVALID_CREDENTIALS
+              value:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid credentials or token
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    InvalidOrExpiredOTP:
+      description: Invalid or expired/exhausted OTP challenge.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            invalid_credentials:
+              summary: INVALID_CREDENTIALS
+              value:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid credentials or token
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+            otp_expired:
+              summary: OTP_EXPIRED
+              value:
+                error:
+                  code: OTP_EXPIRED
+                  message: Code expired or exhausted
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    InvalidOrReusedRefresh:
+      description: Invalid refresh token; reuse of a previously rotated token revokes that session family.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            invalid_credentials:
+              summary: INVALID_CREDENTIALS
+              value:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid credentials or token
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+            refresh_token_reused:
+              summary: REFRESH_TOKEN_REUSED
+              value:
+                error:
+                  code: REFRESH_TOKEN_REUSED
+                  message: Session revoked; sign in again
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    EmailNotVerified:
+      description: Account email must be verified before login.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            email_not_verified:
+              summary: EMAIL_NOT_VERIFIED
+              value:
+                error:
+                  code: EMAIL_NOT_VERIFIED
+                  message: Verify your email first
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    WrongPlane:
+      description: The principal, challenge or token does not belong to the specified plane, or its state forbids
+        this action.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            principal_plane_mismatch:
+              summary: PRINCIPAL_PLANE_MISMATCH
+              value:
+                error:
+                  code: PRINCIPAL_PLANE_MISMATCH
+                  message: Access not permitted for this principal
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    StateConflict:
+      description: Requested 2FA state already exists or changed concurrently.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            conflict:
+              summary: CONFLICT
+              value:
+                error:
+                  code: CONFLICT
+                  message: Account or state already exists
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    UnsupportedContentType:
+      description: 'POST requires `Content-Type: application/json`, even for empty logout bodies.'
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            unsupported_media_type:
+              summary: UNSUPPORTED_MEDIA_TYPE
+              value:
+                error:
+                  code: UNSUPPORTED_MEDIA_TYPE
+                  message: Expected application/json
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    PasswordPolicy:
+      description: New password violates length or common-password policy.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            validation_failed:
+              summary: VALIDATION_FAILED
+              value:
+                error:
+                  code: VALIDATION_FAILED
+                  message: password must contain 12-256 UTF-8 bytes
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    RateLimit:
+      description: Rate limit or OTP resend cooldown reached; consult Retry-After.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            rate_limited:
+              summary: RATE_LIMITED
+              value:
+                error:
+                  code: RATE_LIMITED
+                  message: Please try again later
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    DependencyUnavailable:
+      description: A required database or mail subsystem is unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            dependency_unavailable:
+              summary: DEPENDENCY_UNAVAILABLE
+              value:
+                error:
+                  code: DEPENDENCY_UNAVAILABLE
+                  message: Required service unavailable
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    ReadinessUnavailable:
+      description: Database readiness ping failed; liveness may still be healthy.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            dependency_unavailable:
+              summary: DEPENDENCY_UNAVAILABLE
+              value:
+                error:
+                  code: DEPENDENCY_UNAVAILABLE
+                  message: Database unavailable
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    Internal:
+      description: Unexpected internal failure; contact an operator with the request ID, never credentials.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            internal_error:
+              summary: INTERNAL_ERROR
+              value:
+                error:
+                  code: INTERNAL_ERROR
+                  message: Internal error
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
+    WrongMethod:
+      description: HTTP method not supported for this endpoint. Some protected routes authenticate before checking
+        the method.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            method_not_allowed:
+              summary: METHOD_NOT_ALLOWED
+              value:
+                error:
+                  code: METHOD_NOT_ALLOWED
+                  message: Method not allowed
+                  request_id: 00000000-0000-4000-8000-000000000000
+                  details: {}
