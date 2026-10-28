@@ -110,7 +110,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/version" && r.Method == "GET" {
-		s.ok(w, 200, map[string]string{"version": "auth-foundation-2"})
+		s.ok(w, 200, map[string]string{"version": "fleet-inventory-1"})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
@@ -320,6 +320,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if plane == "admin" && strings.HasPrefix(action, "rbac/") {
 		s.handleRBAC(w, r, id, principal, strings.TrimPrefix(action, "rbac/"))
+		return
+	}
+	if plane == "admin" && isFleetRoute(action) {
+		s.handleFleet(w, r, id, principal, action)
 		return
 	}
 	switch action {

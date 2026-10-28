@@ -47,8 +47,36 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 	} {
 		expected[op] = false
 	}
-	if len(expected) != 52 {
-		t.Fatalf("expected route fixture count %d, want 52", len(expected))
+	for _, op := range []string{
+		"GET /api/v1/admin/vehicles",
+		"POST /api/v1/admin/vehicles",
+		"GET /api/v1/admin/vehicles/{vehicle_id}",
+		"PATCH /api/v1/admin/vehicles/{vehicle_id}",
+		"GET /api/v1/admin/vehicles/{vehicle_id}/history",
+		"GET /api/v1/admin/vehicles/{vehicle_id}/availability",
+		"POST /api/v1/admin/vehicles/{vehicle_id}/deactivate",
+		"POST /api/v1/admin/vehicles/{vehicle_id}/reactivate",
+		"POST /api/v1/admin/vehicles/{vehicle_id}/maintenance",
+		"GET /api/v1/admin/chargers",
+		"POST /api/v1/admin/chargers",
+		"GET /api/v1/admin/chargers/{charger_id}",
+		"PATCH /api/v1/admin/chargers/{charger_id}",
+		"GET /api/v1/admin/chargers/{charger_id}/history",
+		"GET /api/v1/admin/chargers/{charger_id}/availability",
+		"POST /api/v1/admin/chargers/{charger_id}/deactivate",
+		"POST /api/v1/admin/chargers/{charger_id}/reactivate",
+		"POST /api/v1/admin/chargers/{charger_id}/maintenance",
+		"GET /api/v1/admin/chargers/{charger_id}/connectors",
+		"POST /api/v1/admin/chargers/{charger_id}/connectors",
+		"PATCH /api/v1/admin/chargers/{charger_id}/connectors/{connector_id}",
+		"GET /api/v1/admin/pairings",
+		"POST /api/v1/admin/pairings",
+		"POST /api/v1/admin/pairings/{pairing_id}/end",
+	} {
+		expected[op] = false
+	}
+	if len(expected) != 76 {
+		t.Fatalf("expected route fixture count %d, want 76", len(expected))
 	}
 
 	// Embedded bytes preserve checkout line endings (CRLF on some Windows
@@ -115,7 +143,7 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 		if strings.HasPrefix(line, "  /") && strings.HasSuffix(line, ":") {
 			finish()
 			currentPath = strings.TrimSuffix(strings.TrimPrefix(line, "  "), ":")
-		} else if line == "    post:" || line == "    get:" || line == "    put:" || line == "    delete:" {
+		} else if line == "    post:" || line == "    get:" || line == "    put:" || line == "    patch:" || line == "    delete:" {
 			finish()
 			currentMethod = strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(line), ":"))
 		} else if currentMethod != "" {
@@ -145,7 +173,7 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 				t.Errorf("%s missing %q", key, mandatory)
 			}
 		}
-		if op.method == "POST" || op.method == "PUT" || op.method == "DELETE" {
+		if op.method == "POST" || op.method == "PUT" || op.method == "PATCH" || op.method == "DELETE" {
 			for _, mandatory := range []string{"      requestBody:", "        '415':"} {
 				if !strings.Contains(op.body, mandatory) {
 					t.Errorf("%s missing %q", key, mandatory)
