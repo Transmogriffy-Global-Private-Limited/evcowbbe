@@ -44,11 +44,17 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 		"DELETE /api/v1/admin/rbac/accounts/{account_id}/roles/{role}",
 		"PUT /api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}",
 		"DELETE /api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}",
+		"POST /api/v1/app/vehicles",
+		"GET /api/v1/app/vehicles",
+		"GET /api/v1/app/vehicles/{id}",
+		"PUT /api/v1/app/vehicles/{id}",
+		"DELETE /api/v1/app/vehicles/{id}",
+		"POST /api/v1/app/vehicles/{id}/default",
 	} {
 		expected[op] = false
 	}
-	if len(expected) != 52 {
-		t.Fatalf("expected route fixture count %d, want 52", len(expected))
+	if len(expected) != 58 {
+		t.Fatalf("expected route fixture count %d, want 58", len(expected))
 	}
 
 	// Embedded bytes preserve checkout line endings (CRLF on some Windows
@@ -145,13 +151,13 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 				t.Errorf("%s missing %q", key, mandatory)
 			}
 		}
-		if op.method == "POST" || op.method == "PUT" || op.method == "DELETE" {
+		if op.method == "POST" || op.method == "PUT" || (op.method == "DELETE" && strings.HasPrefix(op.path, "/api/v1/admin/rbac/")) {
 			for _, mandatory := range []string{"      requestBody:", "        '415':"} {
 				if !strings.Contains(op.body, mandatory) {
 					t.Errorf("%s missing %q", key, mandatory)
 				}
 			}
-		} else if (op.method == "GET" || op.method == "DELETE") && strings.Contains(op.body, "      requestBody:") {
+		} else if (op.method == "GET" || (op.method == "DELETE" && !strings.HasPrefix(op.path, "/api/v1/admin/rbac/"))) && strings.Contains(op.body, "      requestBody:") {
 			t.Errorf("%s route unexpectedly declares a request body", key)
 		}
 		if !strings.Contains(op.body, "        $ref: '#/components/responses/") {
