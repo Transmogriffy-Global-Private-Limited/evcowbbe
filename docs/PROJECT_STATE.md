@@ -15,3 +15,9 @@ At user request, removed all Docker and Mailpit dependencies. Configure existing
 ## Current code continuation — 27 October 2026
 
 Repository baseline `bf6ef5c` includes the live manual VPS2 deployment and Swagger/OpenAPI. This continuation adds encrypted transactional authentication-email outbox and first Admin capability-based RBAC (migration 002, seven API operations, explicit one-time offline role grant). API and SQL contract need fresh review against this patch. Compile/unit/contract tests are local checks; separately provisioned disposable PostgreSQL `_test`, real SMTP inbox delivery, recovery and backup/restore evidence are not implied by a green local suite. Do not automatically apply migration 002, push to GitHub or deploy to VPS2.
+
+## Admin Fleet source sprint — 28 October 2026
+
+Foundation 2 was reported successfully deployed to VPS2 from commit `58c36ba1986895edeb41dcb1f2fd267d66907efc`, with migration 002 and one-time full Admin grant. The sprint's scratch checkout began at `bf6ef5c` with pre-existing **uncommitted** Foundation 2 source edits, which must be preserved. The Fleet deliverable must be compared against published `58c36ba` so that only new Fleet changes are included; preserve separate publication and acceptance evidence.
+
+New local-only source: migration `003_fleet_inventory.sql` (identical two-copy files), `internal/fleet` domain, Admin Fleet HTTP routes, embedded OpenAPI/contract tests and local verification. Scope covers master inventory and pairing/maintenance, **not** runtime HAL, Driver assignments/duty, dispatch, customer, payments, or production hardware certification. Verification and deployment status are maintained in `docs/FLEET_INVENTORY_AND_ASSET_MANAGEMENT.md`.

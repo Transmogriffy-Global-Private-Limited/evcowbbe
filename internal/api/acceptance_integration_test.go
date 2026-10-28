@@ -165,6 +165,10 @@ func newAPIHarness(t *testing.T) *apiHarness {
 			"auth_rate_limits": true, "security_audit": true,
 			"auth_mail_outbox": true, "admin_role_assignments": true,
 			"admin_capability_overrides": true, "admin_rbac_audit": true,
+			"service_vehicles": true, "chargers": true,
+			"charger_connectors": true, "vehicle_charger_pairings": true,
+			"asset_maintenance_periods": true, "fleet_asset_audit": true,
+			"mutation_idempotency_receipts": true,
 		}
 		for rows.Next() {
 			var table string

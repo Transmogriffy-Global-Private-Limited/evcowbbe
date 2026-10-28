@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: EVCOWBBE | Charger on Wheels Authentication API
-  version: 0.2.0
+  title: EVCOWBBE | Charger on Wheels API
+  version: 0.3.0
   description: |
-    Implemented EVCOWBBE authentication and Admin RBAC foundation (52 operations). Customer app, driver and administrator are distinct authorization planes; no charger booking, dispatch, payment, driver-approval or business-domain Admin operations exist in this release.
+    Implemented EVCOWBBE authentication, Admin RBAC and first Admin Fleet inventory/asset-management slice (76 operations). Customer app, driver and administrator are distinct authorization planes. Fleet master data is not live duty/claim or HAL evidence; no booking, dispatch, payment, or driver-approval business handlers are in this release.
 
     All successful API responses contain a `data` envelope; failures contain an `error` object with `code`, `message`, `request_id` and `details`. JSON mutations (POST, PUT, DELETE where implemented) require `Content-Type: application/json`, even logout operations whose body is ignored. Strict JSON decoding rejects unknown fields, multiple JSON values and bodies above 32 KiB on decoded routes. Responses include `X-Request-ID` and `Cache-Control: no-store`.
 
@@ -21,7 +21,9 @@ tags:
 - name: Driver
   description: 'The `driver` plane: authentication only; `PENDING` is not operational approval.'
 - name: Admin
-  description: 'The `admin` plane: CLI-bootstrapped authentication plus explicit Annex 44 RBAC capabilities; no business-domain Admin actions yet.'
+  description: 'The `admin` plane: CLI-bootstrapped authentication and explicit Annex 44 RBAC capabilities.'
+- name: Admin Fleet
+  description: 'Capability-gated master inventory, connectors, exclusive pairings, maintenance windows and audit history. Physical dispatchability is not inferred.'
 - name: Diagnostics
   description: Public liveness, database readiness and logical API version.
 paths:
@@ -2030,6 +2032,1281 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Version'
+  /api/v1/admin/vehicles:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehiclesList
+      summary: List service vehicles
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      - in: query
+        name: after
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: status
+        schema:
+          type: string
+      - in: query
+        name: active
+        schema:
+          type: boolean
+      - in: query
+        name: q
+        schema:
+          type: string
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetListResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehiclesCreate
+      summary: Create a service vehicle
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetVehicleCreate'
+      responses:
+        '201':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/vehicles/{vehicle_id}:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehicleGet
+      summary: Read a service vehicle
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: vehicle_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    patch:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehiclePatch
+      summary: Versioned vehicle metadata update
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: vehicle_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - in: header
+        name: If-Match
+        required: true
+        description: Strong quoted integer version from the resource ETag.
+        schema:
+          type: string
+          example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetVehiclePatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/vehicles/{vehicle_id}/history:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehicleHistory
+      summary: Read append-only vehicle history
+      description: |
+        Requires effective Admin capability: fleet.read + audit.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: vehicle_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetHistoryResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/vehicles/{vehicle_id}/availability:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehicleAvailability
+      summary: Inspect inventory-only availability evidence
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: vehicle_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetAvailabilityResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/vehicles/{vehicle_id}/deactivate:
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehicleDeactivate
+      summary: Deactivate an unpaired service vehicle
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: vehicle_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - in: header
+        name: If-Match
+        required: true
+        description: Strong quoted integer version from the resource ETag.
+        schema:
+          type: string
+          example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetReason'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/vehicles/{vehicle_id}/reactivate:
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehicleReactivate
+      summary: Reactivate an eligible service vehicle
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: vehicle_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - in: header
+        name: If-Match
+        required: true
+        description: Strong quoted integer version from the resource ETag.
+        schema:
+          type: string
+          example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetReason'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/vehicles/{vehicle_id}/maintenance:
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetVehicleMaintenance
+      summary: Record a nonoverlapping vehicle maintenance window
+      description: |
+        Requires effective Admin capability: fleet.maintenance. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: vehicle_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetMaintenanceCreate'
+      responses:
+        '201':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargersList
+      summary: List chargers
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      - in: query
+        name: after
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: status
+        schema:
+          type: string
+      - in: query
+        name: active
+        schema:
+          type: boolean
+      - in: query
+        name: q
+        schema:
+          type: string
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetListResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargersCreate
+      summary: Register charger master metadata
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetChargerCreate'
+      responses:
+        '201':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargerGet
+      summary: Read charger master metadata
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    patch:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargerPatch
+      summary: Versioned charger metadata update
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - in: header
+        name: If-Match
+        required: true
+        description: Strong quoted integer version from the resource ETag.
+        schema:
+          type: string
+          example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetChargerPatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}/history:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargerHistory
+      summary: Read append-only charger history
+      description: |
+        Requires effective Admin capability: fleet.read + audit.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetHistoryResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}/availability:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargerAvailability
+      summary: Inspect inventory-only charger availability
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetAvailabilityResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}/deactivate:
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargerDeactivate
+      summary: Deactivate an unpaired charger
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - in: header
+        name: If-Match
+        required: true
+        description: Strong quoted integer version from the resource ETag.
+        schema:
+          type: string
+          example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetReason'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}/reactivate:
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargerReactivate
+      summary: Reactivate an eligible charger
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - in: header
+        name: If-Match
+        required: true
+        description: Strong quoted integer version from the resource ETag.
+        schema:
+          type: string
+          example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetReason'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}/maintenance:
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetChargerMaintenance
+      summary: Record a nonoverlapping charger maintenance window
+      description: |
+        Requires effective Admin capability: fleet.maintenance. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetMaintenanceCreate'
+      responses:
+        '201':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}/connectors:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetConnectorsList
+      summary: List charger connectors
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetListResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetConnectorCreate
+      summary: Create a charger connector
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetConnectorCreate'
+      responses:
+        '201':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/chargers/{charger_id}/connectors/{connector_id}:
+    patch:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetConnectorPatch
+      summary: Versioned connector metadata update
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: charger_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: connector_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - in: header
+        name: If-Match
+        required: true
+        description: Strong quoted integer version from the resource ETag.
+        schema:
+          type: string
+          example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetConnectorPatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/pairings:
+    get:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetPairingsList
+      summary: List pairing history
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      - in: query
+        name: vehicle_id
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: charger_id
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: status
+        schema:
+          type: string
+      description: |
+        Requires effective Admin capability: fleet.read. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetListResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetPairCreate
+      summary: Start an exclusive charger pairing
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetPairCreate'
+      responses:
+        '201':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/pairings/{pairing_id}/end:
+    post:
+      tags:
+      - Admin Fleet
+      operationId: adminFleetPairEnd
+      summary: Close an active pairing without rewriting history
+      description: |
+        Requires effective Admin capability: fleet.manage. Every mutation is audited and commits atomically with its
+        Idempotency-Key receipt. Inventory state never proves HAL connectivity or Driver dispatch eligibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: path
+        name: pairing_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: Idempotency-Key
+        required: true
+        description: A per-actor unique key; reuse with a different request is rejected.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetReason'
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetItemResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
 components:
   securitySchemes:
     BearerAuth:
@@ -2052,6 +3329,382 @@ components:
         minimum: 0
       example: 60
   schemas:
+    FleetVehicleCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        asset_tag:
+          type: string
+          minLength: 2
+          maxLength: 64
+        registration_number:
+          type: string
+          minLength: 2
+          maxLength: 32
+        make:
+          type: string
+          minLength: 1
+          maxLength: 120
+        model:
+          type: string
+          minLength: 1
+          maxLength: 120
+        variant:
+          type: string
+          maxLength: 120
+        vehicle_type:
+          type: string
+          maxLength: 80
+        ownership_type:
+          type: string
+          maxLength: 80
+        registration_valid_until:
+          type: string
+          format: date
+        insurance_valid_until:
+          type: string
+          format: date
+        inspection_status:
+          type: string
+          enum: [UNKNOWN, VALID, FAILED, EXPIRED]
+        notes:
+          type: string
+          maxLength: 4000
+      required:
+      - asset_tag
+      - make
+      - model
+    FleetVehiclePatch:
+      type: object
+      additionalProperties: false
+      properties:
+        asset_tag:
+          type: string
+          minLength: 2
+          maxLength: 64
+        registration_number:
+          type: string
+          minLength: 2
+          maxLength: 32
+        make:
+          type: string
+          minLength: 1
+          maxLength: 120
+        model:
+          type: string
+          minLength: 1
+          maxLength: 120
+        variant:
+          type: string
+          maxLength: 120
+        vehicle_type:
+          type: string
+          maxLength: 80
+        ownership_type:
+          type: string
+          maxLength: 80
+        registration_valid_until:
+          type: string
+          format: date
+        insurance_valid_until:
+          type: string
+          format: date
+        inspection_status:
+          type: string
+          enum: [UNKNOWN, VALID, FAILED, EXPIRED]
+        notes:
+          type: string
+          maxLength: 4000
+      minProperties: 1
+    FleetChargerCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        asset_tag:
+          type: string
+          minLength: 2
+          maxLength: 64
+        serial_number:
+          type: string
+          minLength: 2
+          maxLength: 120
+        manufacturer:
+          type: string
+          minLength: 1
+          maxLength: 120
+        model:
+          type: string
+          minLength: 1
+          maxLength: 120
+        rated_power_w:
+          type: integer
+          minimum: 1
+        protocol_family:
+          type: string
+          maxLength: 80
+        protocol_version:
+          type: string
+          maxLength: 80
+        hal_identity:
+          type: string
+          maxLength: 150
+        notes:
+          type: string
+          maxLength: 4000
+      required:
+      - asset_tag
+      - manufacturer
+      - model
+    FleetChargerPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        asset_tag:
+          type: string
+          minLength: 2
+          maxLength: 64
+        serial_number:
+          type: string
+          minLength: 2
+          maxLength: 120
+        manufacturer:
+          type: string
+          minLength: 1
+          maxLength: 120
+        model:
+          type: string
+          minLength: 1
+          maxLength: 120
+        rated_power_w:
+          type: integer
+          minimum: 1
+        protocol_family:
+          type: string
+          maxLength: 80
+        protocol_version:
+          type: string
+          maxLength: 80
+        hal_identity:
+          type: string
+          maxLength: 150
+        notes:
+          type: string
+          maxLength: 4000
+      minProperties: 1
+    FleetConnectorCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        connector_number:
+          type: integer
+          minimum: 1
+        connector_type:
+          type: string
+          minLength: 2
+          maxLength: 64
+        max_power_w:
+          type: integer
+          minimum: 1
+        supports_ac:
+          type: boolean
+        supports_dc:
+          type: boolean
+        is_active:
+          type: boolean
+      required:
+      - connector_number
+      - connector_type
+      - max_power_w
+      - supports_ac
+      - supports_dc
+    FleetConnectorPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        connector_number:
+          type: integer
+          minimum: 1
+        connector_type:
+          type: string
+          minLength: 2
+          maxLength: 64
+        max_power_w:
+          type: integer
+          minimum: 1
+        supports_ac:
+          type: boolean
+        supports_dc:
+          type: boolean
+        is_active:
+          type: boolean
+      minProperties: 1
+    FleetReason:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 8
+          maxLength: 500
+    FleetPairCreate:
+      type: object
+      additionalProperties: false
+      required: [vehicle_id, charger_id, reason]
+      properties:
+        vehicle_id:
+          type: string
+          format: uuid
+        charger_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 8
+          maxLength: 500
+    FleetMaintenanceCreate:
+      type: object
+      additionalProperties: false
+      required: [starts_at, ends_at, reason]
+      properties:
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 8
+          maxLength: 500
+    FleetVehicleRecord:
+      type: object
+      description: Versioned authoritative vehicle record. Live HAL/duty state is not implied.
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+      additionalProperties: true
+    FleetChargerRecord:
+      type: object
+      description: Versioned authoritative charger record. Live HAL/duty state is not implied.
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+      additionalProperties: true
+    FleetConnectorRecord:
+      type: object
+      description: Versioned authoritative connector record. Live HAL/duty state is not implied.
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+      additionalProperties: true
+    FleetPairingRecord:
+      type: object
+      description: Versioned authoritative pairing record. Live HAL/duty state is not implied.
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ACTIVE, ENDED, INVALIDATED]
+      additionalProperties: true
+    FleetMaintenanceRecord:
+      type: object
+      description: Versioned authoritative maintenance record. Live HAL/duty state is not implied.
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+      additionalProperties: true
+    FleetAnyRecord:
+      anyOf:
+      - $ref: '#/components/schemas/FleetVehicleRecord'
+      - $ref: '#/components/schemas/FleetChargerRecord'
+      - $ref: '#/components/schemas/FleetConnectorRecord'
+      - $ref: '#/components/schemas/FleetPairingRecord'
+      - $ref: '#/components/schemas/FleetMaintenanceRecord'
+    FleetItemEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/FleetAnyRecord'
+    FleetListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/FleetAnyRecord'
+            next_cursor:
+              type: string
+              format: uuid
+    FleetHistoryEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                required: [asset_kind, asset_id, action, created_at]
+                properties:
+                  asset_kind:
+                    type: string
+                  asset_id:
+                    type: string
+                  action:
+                    type: string
+                  created_at:
+                    type: string
+                additionalProperties: true
+    FleetAvailabilityEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [asset_id, inventory_state, active_pairings, maintenance_now, dispatch_eligibility, hal_connectivity]
+          properties:
+            asset_id:
+              type: string
+            inventory_state:
+              type: string
+            active_pairings:
+              type: integer
+            maintenance_now:
+              type: boolean
+            dispatch_eligibility:
+              type: string
+            hal_connectivity:
+              type: string
     Email:
       type: string
       description: Case-insensitive; trimmed and normalized to lowercase. Maximum 254 bytes. One account per email
@@ -2627,6 +4280,82 @@ components:
               type: string
               example: vehicle deleted successfully
   responses:
+    FleetItemResult:
+      description: Versioned Fleet record. An ETag is set when the record has a version.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+        ETag:
+          description: Quoted optimistic integer version, if supported by this resource.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FleetItemEnvelope'
+    FleetListResult:
+      description: Bounded Fleet collection. Client should follow next_cursor when present.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FleetListEnvelope'
+    FleetHistoryResult:
+      description: Most recent 100 append-only Fleet audit entries. Requires audit.read.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FleetHistoryEnvelope'
+    FleetAvailabilityResult:
+      description: Inventory state only; not HAL or dispatch certification.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FleetAvailabilityEnvelope'
+    FleetNotFound:
+      description: 404 Fleet resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    FleetConflict:
+      description: 409 Unsafe or conflicting Fleet state; retry only after reconciliation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    FleetVersionMismatch:
+      description: 412 If-Match version is stale; reload before attempting a different mutation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    FleetValidation:
+      description: 422 Invalid Fleet metadata, maintenance window or reason.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    FleetPrecondition:
+      description: 428 Required Idempotency-Key or If-Match header is missing.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    FleetKeyReuse:
+      description: 409 Idempotency-Key was reused for a different operation or body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
     Ack:
       description: Action completed. For password changes, all existing sessions are revoked; for 2FA confirmation,
         other sessions are revoked.

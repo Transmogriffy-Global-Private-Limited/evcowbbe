@@ -1,6 +1,8 @@
 # Charger on Wheels — Go + PostgreSQL authentication foundation
 
-**Scope:** human authentication plus encrypted transactional email outbox and capability-based Admin RBAC; not the EV service-job, fleet, billing, HAL, or dispatch implementation. No automatic CI/CD or database migrations. VPS2 uses the separate, manual-only `ops/vps` deployment scripts; see [the hosting runbook](docs/VPS2_MANUAL_DEPLOYMENT.md).
+**Foundation 2 deployed scope:** human authentication plus encrypted transactional email outbox and capability-based Admin RBAC; not EV service jobs, billing, HAL, or dispatch. A subsequent, **unreleased** Fleet inventory source continuation is described below. No automatic CI/CD or database migrations. VPS2 uses the separate, manual-only `ops/vps` deployment scripts; see [the hosting runbook](docs/VPS2_MANUAL_DEPLOYMENT.md).
+
+**Source continuation (not yet released):** an Admin Fleet inventory/asset-management implementation has now been added. It introduces pending migration `003`, vehicle/charger/connector master data, pairings, maintenance, capability-gated HTTP routes, optimistic versions, idempotency and audit snapshots. See [Fleet implementation and acceptance](docs/FLEET_INVENTORY_AND_ASSET_MANAGEMENT.md). This source addition does **not** imply that VPS2 has migrated or that any asset is dispatch-/HAL-ready.
 
 Built against the project's 24 September 2026 sole-source blueprint: human auth and payload standard (annex 11), security (annex 15), configuration (annex 17), repository discipline (annex 22), and Admin RBAC boundary (annex 44).
 
