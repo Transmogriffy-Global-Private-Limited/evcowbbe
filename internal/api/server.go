@@ -79,6 +79,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if s.C.Env != "development" {
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 	}
+	if s.cors(w, r, id) {
+		return
+	}
 	if r.Method == http.MethodOptions {
 		s.fail(w, id, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
 		return
