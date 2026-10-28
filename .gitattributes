@@ -1,0 +1,2 @@
+migrations/*.sql text eol=lf
+internal/database/migrations/*.sql text eol=lf

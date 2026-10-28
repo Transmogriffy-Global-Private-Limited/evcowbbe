@@ -110,7 +110,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/version" && r.Method == "GET" {
-		s.ok(w, 200, map[string]string{"version": "fleet-inventory-1"})
+		s.ok(w, 200, map[string]string{"version": "admin-pricing-policy-1"})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
@@ -324,6 +324,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if plane == "admin" && isFleetRoute(action) {
 		s.handleFleet(w, r, id, principal, action)
+		return
+	}
+	if plane == "admin" && isPricingRoute(action) {
+		s.handlePricing(w, r, id, principal, action)
 		return
 	}
 	switch action {

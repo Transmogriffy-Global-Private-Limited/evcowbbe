@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: EVCOWBBE | Charger on Wheels API
-  version: 0.3.0
+  version: 0.4.0
   description: |
-    Implemented EVCOWBBE authentication, Admin RBAC and first Admin Fleet inventory/asset-management slice (76 operations). Customer app, driver and administrator are distinct authorization planes. Fleet master data is not live duty/claim or HAL evidence; no booking, dispatch, payment, or driver-approval business handlers are in this release.
+    Implemented EVCOWBBE authentication, Admin RBAC, Admin Fleet inventory/asset-management and Admin pricing-policy publication (82 operations). Customer app, driver and administrator are distinct authorization planes. Fleet master data is not live duty/claim or HAL evidence; pricing policy publication does not authorize a customer quote or a final charge until independently approved tax decisions and authoritative job/HAL facts are integrated. No booking, dispatch, payment, or driver-approval business handlers are in this release.
 
     All successful API responses contain a `data` envelope; failures contain an `error` object with `code`, `message`, `request_id` and `details`. JSON mutations (POST, PUT, DELETE where implemented) require `Content-Type: application/json`, even logout operations whose body is ignored. Strict JSON decoding rejects unknown fields, multiple JSON values and bodies above 32 KiB on decoded routes. Responses include `X-Request-ID` and `Cache-Control: no-store`.
 
@@ -24,6 +24,8 @@ tags:
   description: 'The `admin` plane: CLI-bootstrapped authentication and explicit Annex 44 RBAC capabilities.'
 - name: Admin Fleet
   description: 'Capability-gated master inventory, connectors, exclusive pairings, maintenance windows and audit history. Physical dispatchability is not inferred.'
+- name: Admin Pricing
+  description: 'Hub-independent immutable tariff revisions, temporal publication, conflict control and audit; no live quotation or billing.'
 - name: Diagnostics
   description: Public liveness, database readiness and logical API version.
 paths:
@@ -3120,6 +3122,211 @@ paths:
           $ref: '#/components/responses/DependencyUnavailable'
         '405':
           $ref: '#/components/responses/WrongMethod'
+  /api/v1/admin/pricing/policies:
+    get:
+      tags:
+      - Admin Pricing
+      operationId: adminPricingList
+      summary: List bounded Admin tariff-policy revisions
+      description: Requires pricing.read. Drafts and published revisions remain Admin-only; no customer quote is issued.
+      security:
+      - BearerAuth: []
+      parameters:
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [DRAFT, PUBLISHED, WITHDRAWN]
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          $ref: '#/components/responses/PricingList'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+    post:
+      tags:
+      - Admin Pricing
+      operationId: adminPricingCreateDraft
+      summary: Create an immutable proposed tariff revision
+      description: |
+        Requires pricing.manage and Idempotency-Key. Creates a DRAFT, never silently applies a tariff to customers.
+        A change to rules creates a new policy_key/policy_version pair; no in-place rule PATCH is supported.
+        All rate amounts are INR decimal strings, not floating point JSON numbers. Values and tax decisions need business approval.
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/MutationKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingDraftRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/PricingItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/admin/pricing/policies/{policy_id}:
+    get:
+      tags:
+      - Admin Pricing
+      operationId: adminPricingGet
+      summary: Read one versioned Admin tariff policy
+      description: Requires pricing.read. ETag is the mutable publication state_version, not the frozen policy_version.
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PricingPolicyID'
+      responses:
+        '200':
+          $ref: '#/components/responses/PricingItem'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/admin/pricing/policies/{policy_id}/history:
+    get:
+      tags:
+      - Admin Pricing
+      operationId: adminPricingHistory
+      summary: Read recent immutable policy audit records
+      description: Requires both pricing.read and audit.read. Returns at most 100 recent audit events.
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PricingPolicyID'
+      responses:
+        '200':
+          $ref: '#/components/responses/PricingHistory'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/admin/pricing/policies/{policy_id}/publish:
+    post:
+      tags:
+      - Admin Pricing
+      operationId: adminPricingPublish
+      summary: Publish a tariff revision after temporal-conflict validation
+      description: |
+        Requires pricing.manage, current If-Match ETag and Idempotency-Key. Publication is audited and serialized
+        within the exact scope. Crossing/identical bounded windows and duplicate open-ended roots are rejected.
+        Publishing this record does NOT enable customer quotations or settlement without separately approved tax
+        treatment and authoritative service/charging evidence.
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PricingPolicyID'
+      - $ref: '#/components/parameters/PricingStateETag'
+      - $ref: '#/components/parameters/MutationKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingTransition'
+      responses:
+        '200':
+          $ref: '#/components/responses/PricingItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/admin/pricing/policies/{policy_id}/withdraw:
+    post:
+      tags:
+      - Admin Pricing
+      operationId: adminPricingWithdraw
+      summary: Withdraw a published policy for future selection
+      description: |
+        Requires pricing.manage, current If-Match ETag and Idempotency-Key. Withdrawal never reprices accepted
+        quotes or historical jobs. If no fallback policy remains, future selection fails closed.
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PricingPolicyID'
+      - $ref: '#/components/parameters/PricingStateETag'
+      - $ref: '#/components/parameters/MutationKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingTransition'
+      responses:
+        '200':
+          $ref: '#/components/responses/PricingItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AdminForbidden'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
 components:
   securitySchemes:
     BearerAuth:
@@ -3141,7 +3348,157 @@ components:
         type: integer
         minimum: 0
       example: 60
+  parameters:
+    PricingPolicyID:
+      in: path
+      name: policy_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PricingStateETag:
+      in: header
+      name: If-Match
+      required: true
+      description: Strong, quoted state_version from GET; concurrency guard for publication lifecycle.
+      schema:
+        type: string
+        example: '"1"'
+    MutationKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      description: Unique ASCII key per actor and operation. Keep it stable across retries.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
   schemas:
+    PricingScope:
+      type: object
+      additionalProperties: false
+      required: [kind, key]
+      properties:
+        kind:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{0,63}$'
+          example: SERVICE_ZONE
+        key:
+          type: string
+          maxLength: 160
+          example: ZONE_7
+      description: |
+        A validated operational scope identifier, NOT a hub ID. Examples are GLOBAL/ALL, SERVICE_ZONE/ZONE_7,
+        SERVICE_TIER/PRIORITY. Exact scope precedence belongs to the trusted quote orchestrator, never the browser.
+    PricingRule:
+      type: object
+      additionalProperties: false
+      required: [id, kind, rate, priority]
+      properties:
+        id:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{0,63}$'
+        kind:
+          type: string
+          enum: [BASE, OVERRIDE_RATE, MULTIPLIER, DISCOUNT_PERCENT]
+        component:
+          type: string
+          description: Required on BASE; e.g. VISIT, TRAVEL, CHARGING_ENERGY.
+        basis:
+          type: string
+          description: Required on BASE; e.g. VISITS, ROUTE_KM, METER_KWH, WAIT_MINUTES.
+        rate:
+          type: string
+          pattern: '^(0|[1-9][0-9]{0,11})(\.[0-9]{1,6})?$'
+          description: |
+            INR per basis unit on BASE and OVERRIDE_RATE; percent on MULTIPLIER (100 unchanged) and
+            DISCOUNT_PERCENT (0-100). Six fractional digits maximum. JSON numbers are rejected.
+          example: '16.91'
+        target:
+          type: string
+          description: For modifiers, ID of exactly one BASE rule.
+        tax_class:
+          type: string
+          description: Required on BASE; a reference to an independently approved tax decision.
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        conditions:
+          type: object
+          additionalProperties:
+            type: string
+          description: Simple equality conditions evaluated only against trusted, normalized facts.
+    PricingDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [policy_key, policy_version, scope, currency, rules, reason]
+      properties:
+        policy_key:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{0,63}$'
+        policy_version:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '#/components/schemas/PricingScope'
+        starts_at:
+          type: [string, 'null']
+          format: date-time
+          description: Inclusive UTC instant; omit both dates for an unbounded root policy.
+        ends_at:
+          type: [string, 'null']
+          format: date-time
+          description: Exclusive UTC instant; cannot be set without starts_at.
+        currency:
+          type: string
+          const: INR
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/PricingRule'
+        reason:
+          type: string
+          minLength: 8
+          maxLength: 500
+          description: Auditable business justification, not a rate approval by itself.
+    PricingTransition:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 8
+          maxLength: 500
+    PricingItemEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          description: Stored policy revision with lifecycle, state_version, terms and audit actor metadata.
+    PricingListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+    PricingHistoryEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          maxItems: 100
+          items:
+            type: object
     FleetVehicleCreate:
       type: object
       additionalProperties: false
@@ -3936,6 +4293,37 @@ components:
       required:
       - error
   responses:
+    PricingItem:
+      description: Stored immutable Admin pricing revision; ETag identifies publication state_version.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+        ETag:
+          description: Current quoted state_version for publish or withdraw.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PricingItemEnvelope'
+    PricingList:
+      description: At most 100 Admin pricing records, newest first, no cursor in this initial slice.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PricingListEnvelope'
+    PricingHistory:
+      description: Most recent 100 immutable publication audit records, requiring audit.read.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PricingHistoryEnvelope'
     FleetItemResult:
       description: Versioned Fleet record. An ETag is set when the record has a version.
       headers:

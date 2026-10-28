@@ -1,8 +1,8 @@
 # Charger on Wheels — Go + PostgreSQL authentication foundation
 
-**Foundation 2 deployed scope:** human authentication plus encrypted transactional email outbox and capability-based Admin RBAC; not EV service jobs, billing, HAL, or dispatch. A subsequent, **unreleased** Fleet inventory source continuation is described below. No automatic CI/CD or database migrations. VPS2 uses the separate, manual-only `ops/vps` deployment scripts; see [the hosting runbook](docs/VPS2_MANUAL_DEPLOYMENT.md).
+**Deployed as reported by the operator on 28 Oct 2026:** Foundation 2 (authentication, transactional outbox, Admin RBAC), CORS corrections, and Admin Fleet inventory release `c0db398d106ae84cd01ceff7501fc4fb23d576ba`. Fleet migration 003 was applied and verified on VPS2. This does **not** imply active service jobs, billing, HAL, driver dispatch or customer pricing. VPS2 uses manual-only `ops/vps` scripts; see [hosting runbook](docs/VPS2_MANUAL_DEPLOYMENT.md).
 
-**Source continuation (not yet released):** an Admin Fleet inventory/asset-management implementation has now been added. It introduces pending migration `003`, vehicle/charger/connector master data, pairings, maintenance, capability-gated HTTP routes, optimistic versions, idempotency and audit snapshots. See [Fleet implementation and acceptance](docs/FLEET_INVENTORY_AND_ASSET_MANAGEMENT.md). This source addition does **not** imply that VPS2 has migrated or that any asset is dispatch-/HAL-ready.
+**New Admin pricing source continuation (NOT committed/deployed):** hub-independent policy resolution and exact-money tariff evaluation, immutable Admin policy revisions, effective-date publication, audit, and protected Admin HTTP endpoints. Migration `005` is reserved for pricing, **depends on the junior's separate migration `004`**, and must not be applied until that branch is reviewed and merged. See [Admin Pricing Rules and Tariff Engine](docs/ADMIN_PRICING_RULES_AND_TARIFF_ENGINE.md). Existing Fleet design notes remain in [Fleet implementation and acceptance](docs/FLEET_INVENTORY_AND_ASSET_MANAGEMENT.md). A published tariff is not yet an approved customer quotation or charge.
 
 Built against the project's 24 September 2026 sole-source blueprint: human auth and payload standard (annex 11), security (annex 15), configuration (annex 17), repository discipline (annex 22), and Admin RBAC boundary (annex 44).
 
@@ -94,6 +94,18 @@ Admin RBAC routes (all require a valid **admin-plane** access bearer; privileges
 | DELETE | `/api/v1/admin/rbac/accounts/{account_id}/overrides/{capability}` | `system.settings.manage`; `{"reason":"Documented removal"}` |
 
 The exact capability/role catalog is part of `internal/adminrbac/catalog.go` and the embedded OpenAPI document. See [the deployment and acceptance runbook](docs/OUTBOX_RBAC_DEPLOYMENT_AND_ACCEPTANCE.md) before any migration or release.
+
+New **source-only** Admin pricing routes (not available on VPS2 until the coordinated release):
+
+| Method | Route | Capability / conditions |
+| --- | --- | --- |
+| GET, POST | `/api/v1/admin/pricing/policies` | `pricing.read` for listing; `pricing.manage` for immutable draft creation |
+| GET | `/api/v1/admin/pricing/policies/{policy_id}` | `pricing.read`; returns strong ETag |
+| GET | `/api/v1/admin/pricing/policies/{policy_id}/history` | `pricing.read` and `audit.read` |
+| POST | `/api/v1/admin/pricing/policies/{policy_id}/publish` | `pricing.manage`, `If-Match`, `Idempotency-Key`, reason; temporal conflict rejection |
+| POST | `/api/v1/admin/pricing/policies/{policy_id}/withdraw` | Same mutation guards; does not reprice accepted history |
+
+See [pricing rules implementation](docs/ADMIN_PRICING_RULES_AND_TARIFF_ENGINE.md) for complete request schemas, CMS-derived invariants, approvals, missing components, safety gates and manual migration sequence. No user/driver quotation or billing routes are implemented in this sprint.
 
 ## Example: register + verify + login
 
