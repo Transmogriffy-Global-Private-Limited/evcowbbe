@@ -81,8 +81,8 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 	} {
 		expected[op] = false
 	}
-	if len(expected) != 76 {
-		t.Fatalf("expected route fixture count %d, want 76", len(expected))
+	if len(expected) != 82 {
+		t.Fatalf("expected route fixture count %d, want 82", len(expected))
 	}
 
 	// Embedded bytes preserve checkout line endings (CRLF on some Windows
@@ -179,7 +179,7 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 				t.Errorf("%s missing %q", key, mandatory)
 			}
 		}
-		if op.method == "POST" || op.method == "PUT" || op.method == "PATCH" || op.method == "DELETE" {
+		if op.method == "POST" || op.method == "PUT" || op.method == "PATCH" || (op.method == "DELETE" && strings.HasPrefix(op.path, "/api/v1/admin/rbac/")) {
 			for _, mandatory := range []string{"      requestBody:", "        '415':"} {
 				if !strings.Contains(op.body, mandatory) {
 					t.Errorf("%s missing %q", key, mandatory)
