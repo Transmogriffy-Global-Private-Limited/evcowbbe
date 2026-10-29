@@ -1,0 +1,7 @@
+{
+  "contract":"cow-hal.v1",
+  "command_id":"11111111-1111-4111-8111-111111111111",
+  "charger_identity":"physical-001",
+  "kind":"StartCharging",
+  "parameters":{"connector_number":1}
+}

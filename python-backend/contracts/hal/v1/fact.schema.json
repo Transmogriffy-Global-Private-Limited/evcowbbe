@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Charger on Wheels HAL normalized fact v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "event_id", "kind", "charger_identity", "emitted_at", "data"],
+  "properties": {
+    "contract": {"const": "cow-hal.v1"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "kind": {"enum": ["ChargerConnected", "ChargerDisconnected", "ConnectorStateChanged", "TransactionStarted", "TransactionEnded", "MeterSampleObserved", "FaultObserved", "CommandAccepted", "CommandRejected", "CommandOutcomeUnknown", "CapabilityChanged"]},
+    "charger_identity": {"type": "string", "minLength": 1, "maxLength": 128},
+    "emitted_at": {"type": "string", "format": "date-time"},
+    "data": {"type": "object"}
+  }
+}

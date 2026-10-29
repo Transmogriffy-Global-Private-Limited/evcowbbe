@@ -1,0 +1,7 @@
+# Charger on Wheels Python CMS (review branch)
+
+Build in the existing evcowbbe Git repository on an isolated review branch; this folder is staged under `python-backend/` without modifying current Go deployment. Target architecture is **in-place** Python replacement using the same VPS2, original `evcowbbe` PostgreSQL database, same root-protected environment files/values, existing public API, systemd identity, and established rehost operator interface. No permanent secondary CMS installation.
+
+The running Go API is FE integration truth until the entire replacement is accepted. Current Python foundation is incomplete. Never merge/push to main, erase live data, restart services or claim release acceptance just because unit tests compile. Inspect live FE usage and preserve 74 paths/82 methods (plus behavior) before cutover. No destructive migration or service activation without explicit operator-approved maintenance, verified restore and rollback pairing.
+
+Single Django ORM + Django migration ledger. No startup auto-DDL. Three identity planes (Customer/Driver/Admin), capability checks with DENY wins, immutable history, idempotency, exact monetary arithmetic, auditable side effects. Go HAL is independent: signed normalized facts/commands, no shared DB, command acceptance is not physical charging; verify with simulator and later physical acceptance. Secrets must never appear in Git or logs. Read `docs/BLUEPRINT_IMPLEMENTATION_STATUS.md` and original normative blueprint for all unfinished domains.

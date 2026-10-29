@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Charger on Wheels HAL semantic command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "command_id", "charger_identity", "kind", "parameters"],
+  "properties": {
+    "contract": {"const": "cow-hal.v1"},
+    "command_id": {"type": "string", "format": "uuid"},
+    "charger_identity": {"type": "string", "minLength": 1, "maxLength": 128},
+    "kind": {"enum": ["StartCharging", "StopCharging", "Reset", "UnlockConnector", "SetChargingLimit", "ChangeAvailability", "GetCapabilities"]},
+    "parameters": {"type": "object"}
+  }
+}

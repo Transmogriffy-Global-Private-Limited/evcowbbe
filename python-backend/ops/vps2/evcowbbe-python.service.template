@@ -1,0 +1,30 @@
+# TEMPLATE ONLY - DO NOT INSTALL ON VPS2 UNTIL INDEPENDENT ACCEPTANCE.
+# Must provision non-root evcowbbe-python account, private /etc env file and
+# isolated /srv/evcowbbe-python/current. This unit does not replace Go service.
+[Unit]
+Description=Charger on Wheels Python CMS v2 (candidate, isolated)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=evcowbbe-python
+Group=evcowbbe-python
+WorkingDirectory=/srv/evcowbbe-python/current
+EnvironmentFile=/etc/evcowbbe-python.env
+ExecStart=/srv/evcowbbe-python/current/.venv/bin/gunicorn --bind 127.0.0.1:18081 --workers 1 --threads 4 --timeout 45 config.wsgi:application
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

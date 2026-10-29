@@ -1,0 +1,8 @@
+{
+  "contract":"cow-hal.v1",
+  "event_id":"22222222-2222-4222-8222-222222222222",
+  "kind":"TransactionStarted",
+  "charger_identity":"physical-001",
+  "emitted_at":"2026-10-29T09:30:00Z",
+  "data":{"command_id":"11111111-1111-4111-8111-111111111111", "transaction_id":"ocpp-exact-789","connector_number":1,"meter_start_wh":6000}
+}
