@@ -46,6 +46,19 @@ EXPECTED_FUNCTIONS = {
     "cow_protect_request_snapshot",
     "cow_protect_published_pricing",
 }
+EXPECTED_PARTIAL_UNIQUE_INDEXES = {
+    "cow_one_active_default_address",
+    "cow_one_current_vehicle_per_charger",
+    "cow_one_active_driver_duty",
+    "cow_one_active_vehicle_claim",
+    "cow_one_active_charger_claim",
+    "cow_one_active_pricing_policy",
+    "cow_one_accepted_quote_per_request",
+    "cow_one_active_session_per_connector",
+}
+EXPECTED_PG_CONSTRAINTS = (
+    EXPECTED_CONSTRAINTS - EXPECTED_PARTIAL_UNIQUE_INDEXES
+)
 EXPECTED_INDEXES = EXPECTED_CONSTRAINTS - {"cow_email_lower"}
 
 
@@ -81,7 +94,7 @@ def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
             """SELECT conname FROM pg_constraint AS c
                JOIN pg_namespace AS n ON n.oid = c.connamespace
                WHERE n.nspname = 'public' AND conname = ANY(%s)""",
-            [sorted(EXPECTED_CONSTRAINTS)],
+            [sorted(EXPECTED_PG_CONSTRAINTS)],
         )
         constraints = {row[0] for row in cursor.fetchall()}
         cursor.execute(
@@ -90,6 +103,19 @@ def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
             [sorted(EXPECTED_INDEXES)],
         )
         indexes = {row[0] for row in cursor.fetchall()}
+        cursor.execute(
+            """SELECT idx.relname, ix.indisunique, ix.indpred IS NOT NULL
+               FROM pg_index AS ix
+               JOIN pg_class AS idx ON idx.oid = ix.indexrelid
+               JOIN pg_namespace AS ns ON ns.oid = idx.relnamespace
+               WHERE ns.nspname = 'public'
+                 AND idx.relname = ANY(%s)""",
+            [sorted(EXPECTED_PARTIAL_UNIQUE_INDEXES)],
+        )
+        partial_unique_indexes = {
+            name for name, unique, partial in cursor.fetchall()
+            if unique and partial
+        }
         cursor.execute(
             """SELECT tgname FROM pg_trigger AS t
                JOIN pg_class AS c ON c.oid = t.tgrelid
@@ -108,13 +134,13 @@ def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
         cursor.execute(
             """SELECT source_table.relname, source_column.attname,
                       target_table.relname, target_column.attname
-               FROM pg_constraint AS constraint
-               JOIN pg_class AS source_table ON source_table.oid = constraint.conrelid
+               FROM pg_constraint AS fk_constraint
+               JOIN pg_class AS source_table ON source_table.oid = fk_constraint.conrelid
                JOIN pg_namespace AS source_schema ON source_schema.oid = source_table.relnamespace
-               JOIN pg_class AS target_table ON target_table.oid = constraint.confrelid
-               JOIN LATERAL unnest(constraint.conkey) WITH ORDINALITY
+               JOIN pg_class AS target_table ON target_table.oid = fk_constraint.confrelid
+               JOIN LATERAL unnest(fk_constraint.conkey) WITH ORDINALITY
                     AS source_key(attnum, position) ON true
-               JOIN LATERAL unnest(constraint.confkey) WITH ORDINALITY
+               JOIN LATERAL unnest(fk_constraint.confkey) WITH ORDINALITY
                     AS target_key(attnum, position) ON target_key.position = source_key.position
                JOIN pg_attribute AS source_column
                     ON source_column.attrelid = source_table.oid
@@ -122,7 +148,7 @@ def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
                JOIN pg_attribute AS target_column
                     ON target_column.attrelid = target_table.oid
                    AND target_column.attnum = target_key.attnum
-               WHERE constraint.contype = 'f'
+               WHERE fk_constraint.contype = 'f'
                  AND source_schema.nspname = 'public'
                  AND source_table.relname LIKE 'cow\\_%' ESCAPE '\\'"""
         )
@@ -133,8 +159,9 @@ def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
         )
         sequences = {row[0] for row in cursor.fetchall()}
     assert actual_tables == expected_tables
-    assert EXPECTED_CONSTRAINTS <= constraints
+    assert EXPECTED_PG_CONSTRAINTS <= constraints
     assert EXPECTED_INDEXES <= indexes
+    assert EXPECTED_PARTIAL_UNIQUE_INDEXES <= partial_unique_indexes
     assert foreign_keys == expected_foreign_keys
     assert EXPECTED_TRIGGERS <= triggers
     assert EXPECTED_FUNCTIONS <= functions
