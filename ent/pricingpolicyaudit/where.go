@@ -116,26 +116,6 @@ func ActorIDNotIn(vs ...uuid.UUID) predicate.PricingPolicyAudit {
 	return predicate.PricingPolicyAudit(sql.FieldNotIn(FieldActorID, vs...))
 }
 
-// ActorIDGT applies the GT predicate on the "actor_id" field.
-func ActorIDGT(v uuid.UUID) predicate.PricingPolicyAudit {
-	return predicate.PricingPolicyAudit(sql.FieldGT(FieldActorID, v))
-}
-
-// ActorIDGTE applies the GTE predicate on the "actor_id" field.
-func ActorIDGTE(v uuid.UUID) predicate.PricingPolicyAudit {
-	return predicate.PricingPolicyAudit(sql.FieldGTE(FieldActorID, v))
-}
-
-// ActorIDLT applies the LT predicate on the "actor_id" field.
-func ActorIDLT(v uuid.UUID) predicate.PricingPolicyAudit {
-	return predicate.PricingPolicyAudit(sql.FieldLT(FieldActorID, v))
-}
-
-// ActorIDLTE applies the LTE predicate on the "actor_id" field.
-func ActorIDLTE(v uuid.UUID) predicate.PricingPolicyAudit {
-	return predicate.PricingPolicyAudit(sql.FieldLTE(FieldActorID, v))
-}
-
 // ActorIDIsNil applies the IsNil predicate on the "actor_id" field.
 func ActorIDIsNil() predicate.PricingPolicyAudit {
 	return predicate.PricingPolicyAudit(sql.FieldIsNull(FieldActorID))
@@ -279,6 +259,29 @@ func OccurredAtLT(v time.Time) predicate.PricingPolicyAudit {
 // OccurredAtLTE applies the LTE predicate on the "occurred_at" field.
 func OccurredAtLTE(v time.Time) predicate.PricingPolicyAudit {
 	return predicate.PricingPolicyAudit(sql.FieldLTE(FieldOccurredAt, v))
+}
+
+// HasActor applies the HasEdge predicate on the "actor" edge.
+func HasActor() predicate.PricingPolicyAudit {
+	return predicate.PricingPolicyAudit(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, ActorTable, ActorColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasActorWith applies the HasEdge predicate on the "actor" edge with a given conditions (other predicates).
+func HasActorWith(preds ...predicate.Account) predicate.PricingPolicyAudit {
+	return predicate.PricingPolicyAudit(func(s *sql.Selector) {
+		step := newActorStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
 }
 
 // HasPolicy applies the HasEdge predicate on the "policy" edge.

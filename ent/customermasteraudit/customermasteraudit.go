@@ -32,10 +32,19 @@ const (
 	FieldChangedFields = "changed_fields"
 	// FieldOccurredAt holds the string denoting the occurred_at field in the database.
 	FieldOccurredAt = "occurred_at"
+	// EdgeActorAccount holds the string denoting the actor_account edge name in mutations.
+	EdgeActorAccount = "actor_account"
 	// EdgeCustomer holds the string denoting the customer edge name in mutations.
 	EdgeCustomer = "customer"
 	// Table holds the table name of the customermasteraudit in the database.
 	Table = "customer_master_audit"
+	// ActorAccountTable is the table that holds the actor_account relation/edge.
+	ActorAccountTable = "customer_master_audit"
+	// ActorAccountInverseTable is the table name for the Account entity.
+	// It exists in this package in order to avoid circular dependency with the "account" package.
+	ActorAccountInverseTable = "accounts"
+	// ActorAccountColumn is the table column denoting the actor_account relation/edge.
+	ActorAccountColumn = "actor_account_id"
 	// CustomerTable is the table that holds the customer relation/edge.
 	CustomerTable = "customer_master_audit"
 	// CustomerInverseTable is the table name for the CustomerProfile entity.
@@ -151,11 +160,25 @@ func ByOccurredAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldOccurredAt, opts...).ToFunc()
 }
 
+// ByActorAccountField orders the results by actor_account field.
+func ByActorAccountField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newActorAccountStep(), sql.OrderByField(field, opts...))
+	}
+}
+
 // ByCustomerField orders the results by customer field.
 func ByCustomerField(field string, opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newCustomerStep(), sql.OrderByField(field, opts...))
 	}
+}
+func newActorAccountStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(ActorAccountInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, false, ActorAccountTable, ActorAccountColumn),
+	)
 }
 func newCustomerStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(

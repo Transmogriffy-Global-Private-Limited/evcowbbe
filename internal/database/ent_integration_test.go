@@ -28,7 +28,8 @@ func TestIntegrationEntSharedPoolCRUD(t *testing.T) {
 	u, err := url.Parse(uri)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") ||
 		u.Hostname() == "" || strings.Count(u.Path, "/") != 1 ||
-		!strings.HasPrefix(strings.TrimPrefix(u.Path, "/"), "evcowbbe_f3_") ||
+		!(strings.HasPrefix(strings.TrimPrefix(u.Path, "/"), "evcowbbe_f3_") ||
+			strings.HasPrefix(strings.TrimPrefix(u.Path, "/"), "evcowbbe_atlas_")) ||
 		!strings.HasSuffix(u.Path, "_test") || uri == os.Getenv("DATABASE_URL") {
 		t.Fatal("refusing non-disposable Ent integration database")
 	}

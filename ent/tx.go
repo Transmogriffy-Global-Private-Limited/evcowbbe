@@ -12,6 +12,32 @@ import (
 // Tx is a transactional client that is created by calling Client.Tx().
 type Tx struct {
 	config
+	// Account is the client for interacting with the Account builders.
+	Account *AccountClient
+	// AdminCapabilityOverride is the client for interacting with the AdminCapabilityOverride builders.
+	AdminCapabilityOverride *AdminCapabilityOverrideClient
+	// AdminRbacAudit is the client for interacting with the AdminRbacAudit builders.
+	AdminRbacAudit *AdminRbacAuditClient
+	// AdminRoleAssignment is the client for interacting with the AdminRoleAssignment builders.
+	AdminRoleAssignment *AdminRoleAssignmentClient
+	// AssetMaintenancePeriod is the client for interacting with the AssetMaintenancePeriod builders.
+	AssetMaintenancePeriod *AssetMaintenancePeriodClient
+	// AuthActionToken is the client for interacting with the AuthActionToken builders.
+	AuthActionToken *AuthActionTokenClient
+	// AuthChallenge is the client for interacting with the AuthChallenge builders.
+	AuthChallenge *AuthChallengeClient
+	// AuthMailOutbox is the client for interacting with the AuthMailOutbox builders.
+	AuthMailOutbox *AuthMailOutboxClient
+	// AuthRateLimit is the client for interacting with the AuthRateLimit builders.
+	AuthRateLimit *AuthRateLimitClient
+	// AuthSession is the client for interacting with the AuthSession builders.
+	AuthSession *AuthSessionClient
+	// Charger is the client for interacting with the Charger builders.
+	Charger *ChargerClient
+	// ChargerConnector is the client for interacting with the ChargerConnector builders.
+	ChargerConnector *ChargerConnectorClient
+	// ConsumedRefreshToken is the client for interacting with the ConsumedRefreshToken builders.
+	ConsumedRefreshToken *ConsumedRefreshTokenClient
 	// CustomerAddress is the client for interacting with the CustomerAddress builders.
 	CustomerAddress *CustomerAddressClient
 	// CustomerMasterAudit is the client for interacting with the CustomerMasterAudit builders.
@@ -20,10 +46,22 @@ type Tx struct {
 	CustomerProfile *CustomerProfileClient
 	// CustomerVehicle is the client for interacting with the CustomerVehicle builders.
 	CustomerVehicle *CustomerVehicleClient
+	// FleetAssetAudit is the client for interacting with the FleetAssetAudit builders.
+	FleetAssetAudit *FleetAssetAuditClient
+	// MutationIdempotencyReceipt is the client for interacting with the MutationIdempotencyReceipt builders.
+	MutationIdempotencyReceipt *MutationIdempotencyReceiptClient
 	// PricingPolicy is the client for interacting with the PricingPolicy builders.
 	PricingPolicy *PricingPolicyClient
 	// PricingPolicyAudit is the client for interacting with the PricingPolicyAudit builders.
 	PricingPolicyAudit *PricingPolicyAuditClient
+	// Principal is the client for interacting with the Principal builders.
+	Principal *PrincipalClient
+	// SecurityAudit is the client for interacting with the SecurityAudit builders.
+	SecurityAudit *SecurityAuditClient
+	// ServiceVehicle is the client for interacting with the ServiceVehicle builders.
+	ServiceVehicle *ServiceVehicleClient
+	// VehicleChargerPairing is the client for interacting with the VehicleChargerPairing builders.
+	VehicleChargerPairing *VehicleChargerPairingClient
 
 	// lazily loaded.
 	client     *Client
@@ -155,12 +193,31 @@ func (tx *Tx) Client() *Client {
 }
 
 func (tx *Tx) init() {
+	tx.Account = NewAccountClient(tx.config)
+	tx.AdminCapabilityOverride = NewAdminCapabilityOverrideClient(tx.config)
+	tx.AdminRbacAudit = NewAdminRbacAuditClient(tx.config)
+	tx.AdminRoleAssignment = NewAdminRoleAssignmentClient(tx.config)
+	tx.AssetMaintenancePeriod = NewAssetMaintenancePeriodClient(tx.config)
+	tx.AuthActionToken = NewAuthActionTokenClient(tx.config)
+	tx.AuthChallenge = NewAuthChallengeClient(tx.config)
+	tx.AuthMailOutbox = NewAuthMailOutboxClient(tx.config)
+	tx.AuthRateLimit = NewAuthRateLimitClient(tx.config)
+	tx.AuthSession = NewAuthSessionClient(tx.config)
+	tx.Charger = NewChargerClient(tx.config)
+	tx.ChargerConnector = NewChargerConnectorClient(tx.config)
+	tx.ConsumedRefreshToken = NewConsumedRefreshTokenClient(tx.config)
 	tx.CustomerAddress = NewCustomerAddressClient(tx.config)
 	tx.CustomerMasterAudit = NewCustomerMasterAuditClient(tx.config)
 	tx.CustomerProfile = NewCustomerProfileClient(tx.config)
 	tx.CustomerVehicle = NewCustomerVehicleClient(tx.config)
+	tx.FleetAssetAudit = NewFleetAssetAuditClient(tx.config)
+	tx.MutationIdempotencyReceipt = NewMutationIdempotencyReceiptClient(tx.config)
 	tx.PricingPolicy = NewPricingPolicyClient(tx.config)
 	tx.PricingPolicyAudit = NewPricingPolicyAuditClient(tx.config)
+	tx.Principal = NewPrincipalClient(tx.config)
+	tx.SecurityAudit = NewSecurityAuditClient(tx.config)
+	tx.ServiceVehicle = NewServiceVehicleClient(tx.config)
+	tx.VehicleChargerPairing = NewVehicleChargerPairingClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.
@@ -170,7 +227,7 @@ func (tx *Tx) init() {
 // of them in order to commit or rollback the transaction.
 //
 // If a closed transaction is embedded in one of the generated entities, and the entity
-// applies a query, for example: CustomerAddress.QueryXXX(), the query will be executed
+// applies a query, for example: Account.QueryXXX(), the query will be executed
 // through the driver which created this transaction.
 //
 // Note that txDriver is not goroutine safe.

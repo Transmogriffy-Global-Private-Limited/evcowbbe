@@ -16,6 +16,10 @@ import (
 // PricingPolicyAudit is append-only evidence created by Admin policy workflows.
 type PricingPolicyAudit struct{ ent.Schema }
 
+func (PricingPolicyAudit) Mixin() []ent.Mixin {
+	return []ent.Mixin{sqlIntegrity("pricing_policy_audit")}
+}
+
 func (PricingPolicyAudit) Annotations() []schema.Annotation {
 	return []schema.Annotation{entsql.Annotation{Table: "pricing_policy_audit"}}
 }

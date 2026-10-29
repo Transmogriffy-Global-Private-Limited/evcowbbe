@@ -29,10 +29,19 @@ const (
 	FieldAfterValue = "after_value"
 	// FieldOccurredAt holds the string denoting the occurred_at field in the database.
 	FieldOccurredAt = "occurred_at"
+	// EdgeActor holds the string denoting the actor edge name in mutations.
+	EdgeActor = "actor"
 	// EdgePolicy holds the string denoting the policy edge name in mutations.
 	EdgePolicy = "policy"
 	// Table holds the table name of the pricingpolicyaudit in the database.
 	Table = "pricing_policy_audit"
+	// ActorTable is the table that holds the actor relation/edge.
+	ActorTable = "pricing_policy_audit"
+	// ActorInverseTable is the table name for the Account entity.
+	// It exists in this package in order to avoid circular dependency with the "account" package.
+	ActorInverseTable = "accounts"
+	// ActorColumn is the table column denoting the actor relation/edge.
+	ActorColumn = "actor_id"
 	// PolicyTable is the table that holds the policy relation/edge.
 	PolicyTable = "pricing_policy_audit"
 	// PolicyInverseTable is the table name for the PricingPolicy entity.
@@ -128,11 +137,25 @@ func ByOccurredAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldOccurredAt, opts...).ToFunc()
 }
 
+// ByActorField orders the results by actor field.
+func ByActorField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newActorStep(), sql.OrderByField(field, opts...))
+	}
+}
+
 // ByPolicyField orders the results by policy field.
 func ByPolicyField(field string, opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newPolicyStep(), sql.OrderByField(field, opts...))
 	}
+}
+func newActorStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(ActorInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, false, ActorTable, ActorColumn),
+	)
 }
 func newPolicyStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(

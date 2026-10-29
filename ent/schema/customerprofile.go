@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"entgo.io/ent"
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -12,6 +13,8 @@ import (
 // CustomerProfile maps customer_profiles from migration 004. The database owns
 // the composite (account_id, plane) FK into principals; no shadow auth models.
 type CustomerProfile struct{ ent.Schema }
+
+func (CustomerProfile) Mixin() []ent.Mixin { return []ent.Mixin{sqlIntegrity("customer_profiles")} }
 
 func (CustomerProfile) Fields() []ent.Field {
 	return []ent.Field{
@@ -29,8 +32,8 @@ func (CustomerProfile) Fields() []ent.Field {
 
 func (CustomerProfile) Edges() []ent.Edge {
 	return []ent.Edge{
-		edge.To("vehicles", CustomerVehicle.Type),
-		edge.To("addresses", CustomerAddress.Type),
-		edge.To("audit", CustomerMasterAudit.Type),
+		edge.To("vehicles", CustomerVehicle.Type).Annotations(entsql.OnDelete(entsql.Restrict)),
+		edge.To("addresses", CustomerAddress.Type).Annotations(entsql.OnDelete(entsql.Restrict)),
+		edge.To("audit", CustomerMasterAudit.Type).Annotations(entsql.OnDelete(entsql.Restrict)),
 	}
 }

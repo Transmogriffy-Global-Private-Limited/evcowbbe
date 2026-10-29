@@ -5,13 +5,32 @@ package ent
 import (
 	"time"
 
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/admincapabilityoverride"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/adminrbacaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/adminroleassignment"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/assetmaintenanceperiod"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authactiontoken"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authchallenge"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authmailoutbox"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authratelimit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authsession"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/charger"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/chargerconnector"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/consumedrefreshtoken"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customeraddress"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customermasteraudit"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customerprofile"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customervehicle"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/fleetassetaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/mutationidempotencyreceipt"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicy"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicyaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/principal"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/schema"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/securityaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/servicevehicle"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/vehiclechargerpairing"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -20,6 +39,330 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	accountFields := schema.Account{}.Fields()
+	_ = accountFields
+	// accountDescEmail is the schema descriptor for email field.
+	accountDescEmail := accountFields[1].Descriptor()
+	// account.EmailValidator is a validator for the "email" field. It is called by the builders before save.
+	account.EmailValidator = func() func(string) error {
+		validators := accountDescEmail.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(email string) error {
+			for _, fn := range fns {
+				if err := fn(email); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// accountDescTwoFactorEnabled is the schema descriptor for two_factor_enabled field.
+	accountDescTwoFactorEnabled := accountFields[4].Descriptor()
+	// account.DefaultTwoFactorEnabled holds the default value on creation for the two_factor_enabled field.
+	account.DefaultTwoFactorEnabled = accountDescTwoFactorEnabled.Default.(bool)
+	// accountDescCreatedAt is the schema descriptor for created_at field.
+	accountDescCreatedAt := accountFields[6].Descriptor()
+	// account.DefaultCreatedAt holds the default value on creation for the created_at field.
+	account.DefaultCreatedAt = accountDescCreatedAt.Default.(func() time.Time)
+	// accountDescUpdatedAt is the schema descriptor for updated_at field.
+	accountDescUpdatedAt := accountFields[7].Descriptor()
+	// account.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	account.DefaultUpdatedAt = accountDescUpdatedAt.Default.(func() time.Time)
+	// account.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	account.UpdateDefaultUpdatedAt = accountDescUpdatedAt.UpdateDefault.(func() time.Time)
+	admincapabilityoverrideFields := schema.AdminCapabilityOverride{}.Fields()
+	_ = admincapabilityoverrideFields
+	// admincapabilityoverrideDescPlane is the schema descriptor for plane field.
+	admincapabilityoverrideDescPlane := admincapabilityoverrideFields[2].Descriptor()
+	// admincapabilityoverride.DefaultPlane holds the default value on creation for the plane field.
+	admincapabilityoverride.DefaultPlane = admincapabilityoverrideDescPlane.Default.(string)
+	// admincapabilityoverrideDescChangedAt is the schema descriptor for changed_at field.
+	admincapabilityoverrideDescChangedAt := admincapabilityoverrideFields[6].Descriptor()
+	// admincapabilityoverride.DefaultChangedAt holds the default value on creation for the changed_at field.
+	admincapabilityoverride.DefaultChangedAt = admincapabilityoverrideDescChangedAt.Default.(func() time.Time)
+	adminrbacauditFields := schema.AdminRbacAudit{}.Fields()
+	_ = adminrbacauditFields
+	// adminrbacauditDescReason is the schema descriptor for reason field.
+	adminrbacauditDescReason := adminrbacauditFields[5].Descriptor()
+	// adminrbacaudit.ReasonValidator is a validator for the "reason" field. It is called by the builders before save.
+	adminrbacaudit.ReasonValidator = func() func(string) error {
+		validators := adminrbacauditDescReason.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(reason string) error {
+			for _, fn := range fns {
+				if err := fn(reason); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// adminrbacauditDescOccurredAt is the schema descriptor for occurred_at field.
+	adminrbacauditDescOccurredAt := adminrbacauditFields[6].Descriptor()
+	// adminrbacaudit.DefaultOccurredAt holds the default value on creation for the occurred_at field.
+	adminrbacaudit.DefaultOccurredAt = adminrbacauditDescOccurredAt.Default.(func() time.Time)
+	adminroleassignmentFields := schema.AdminRoleAssignment{}.Fields()
+	_ = adminroleassignmentFields
+	// adminroleassignmentDescPlane is the schema descriptor for plane field.
+	adminroleassignmentDescPlane := adminroleassignmentFields[2].Descriptor()
+	// adminroleassignment.DefaultPlane holds the default value on creation for the plane field.
+	adminroleassignment.DefaultPlane = adminroleassignmentDescPlane.Default.(string)
+	// adminroleassignmentDescAssignedAt is the schema descriptor for assigned_at field.
+	adminroleassignmentDescAssignedAt := adminroleassignmentFields[5].Descriptor()
+	// adminroleassignment.DefaultAssignedAt holds the default value on creation for the assigned_at field.
+	adminroleassignment.DefaultAssignedAt = adminroleassignmentDescAssignedAt.Default.(func() time.Time)
+	assetmaintenanceperiodFields := schema.AssetMaintenancePeriod{}.Fields()
+	_ = assetmaintenanceperiodFields
+	// assetmaintenanceperiodDescReason is the schema descriptor for reason field.
+	assetmaintenanceperiodDescReason := assetmaintenanceperiodFields[5].Descriptor()
+	// assetmaintenanceperiod.ReasonValidator is a validator for the "reason" field. It is called by the builders before save.
+	assetmaintenanceperiod.ReasonValidator = func() func(string) error {
+		validators := assetmaintenanceperiodDescReason.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(reason string) error {
+			for _, fn := range fns {
+				if err := fn(reason); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// assetmaintenanceperiodDescCreatedAt is the schema descriptor for created_at field.
+	assetmaintenanceperiodDescCreatedAt := assetmaintenanceperiodFields[7].Descriptor()
+	// assetmaintenanceperiod.DefaultCreatedAt holds the default value on creation for the created_at field.
+	assetmaintenanceperiod.DefaultCreatedAt = assetmaintenanceperiodDescCreatedAt.Default.(func() time.Time)
+	authactiontokenFields := schema.AuthActionToken{}.Fields()
+	_ = authactiontokenFields
+	// authactiontokenDescCreatedAt is the schema descriptor for created_at field.
+	authactiontokenDescCreatedAt := authactiontokenFields[6].Descriptor()
+	// authactiontoken.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authactiontoken.DefaultCreatedAt = authactiontokenDescCreatedAt.Default.(func() time.Time)
+	authchallengeFields := schema.AuthChallenge{}.Fields()
+	_ = authchallengeFields
+	// authchallengeDescAttempts is the schema descriptor for attempts field.
+	authchallengeDescAttempts := authchallengeFields[5].Descriptor()
+	// authchallenge.DefaultAttempts holds the default value on creation for the attempts field.
+	authchallenge.DefaultAttempts = authchallengeDescAttempts.Default.(int32)
+	// authchallenge.AttemptsValidator is a validator for the "attempts" field. It is called by the builders before save.
+	authchallenge.AttemptsValidator = authchallengeDescAttempts.Validators[0].(func(int32) error)
+	// authchallengeDescLastSentAt is the schema descriptor for last_sent_at field.
+	authchallengeDescLastSentAt := authchallengeFields[7].Descriptor()
+	// authchallenge.DefaultLastSentAt holds the default value on creation for the last_sent_at field.
+	authchallenge.DefaultLastSentAt = authchallengeDescLastSentAt.Default.(func() time.Time)
+	// authchallengeDescCreatedAt is the schema descriptor for created_at field.
+	authchallengeDescCreatedAt := authchallengeFields[9].Descriptor()
+	// authchallenge.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authchallenge.DefaultCreatedAt = authchallengeDescCreatedAt.Default.(func() time.Time)
+	authmailoutboxFields := schema.AuthMailOutbox{}.Fields()
+	_ = authmailoutboxFields
+	// authmailoutboxDescAttempts is the schema descriptor for attempts field.
+	authmailoutboxDescAttempts := authmailoutboxFields[11].Descriptor()
+	// authmailoutbox.DefaultAttempts holds the default value on creation for the attempts field.
+	authmailoutbox.DefaultAttempts = authmailoutboxDescAttempts.Default.(int32)
+	// authmailoutbox.AttemptsValidator is a validator for the "attempts" field. It is called by the builders before save.
+	authmailoutbox.AttemptsValidator = authmailoutboxDescAttempts.Validators[0].(func(int32) error)
+	// authmailoutboxDescNextAttemptAt is the schema descriptor for next_attempt_at field.
+	authmailoutboxDescNextAttemptAt := authmailoutboxFields[12].Descriptor()
+	// authmailoutbox.DefaultNextAttemptAt holds the default value on creation for the next_attempt_at field.
+	authmailoutbox.DefaultNextAttemptAt = authmailoutboxDescNextAttemptAt.Default.(func() time.Time)
+	// authmailoutboxDescCreatedAt is the schema descriptor for created_at field.
+	authmailoutboxDescCreatedAt := authmailoutboxFields[16].Descriptor()
+	// authmailoutbox.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authmailoutbox.DefaultCreatedAt = authmailoutboxDescCreatedAt.Default.(func() time.Time)
+	// authmailoutboxDescUpdatedAt is the schema descriptor for updated_at field.
+	authmailoutboxDescUpdatedAt := authmailoutboxFields[17].Descriptor()
+	// authmailoutbox.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	authmailoutbox.DefaultUpdatedAt = authmailoutboxDescUpdatedAt.Default.(func() time.Time)
+	// authmailoutbox.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	authmailoutbox.UpdateDefaultUpdatedAt = authmailoutboxDescUpdatedAt.UpdateDefault.(func() time.Time)
+	authratelimitFields := schema.AuthRateLimit{}.Fields()
+	_ = authratelimitFields
+	// authratelimitDescWindowStart is the schema descriptor for window_start field.
+	authratelimitDescWindowStart := authratelimitFields[3].Descriptor()
+	// authratelimit.DefaultWindowStart holds the default value on creation for the window_start field.
+	authratelimit.DefaultWindowStart = authratelimitDescWindowStart.Default.(func() time.Time)
+	// authratelimitDescHits is the schema descriptor for hits field.
+	authratelimitDescHits := authratelimitFields[4].Descriptor()
+	// authratelimit.HitsValidator is a validator for the "hits" field. It is called by the builders before save.
+	authratelimit.HitsValidator = authratelimitDescHits.Validators[0].(func(int32) error)
+	authsessionFields := schema.AuthSession{}.Fields()
+	_ = authsessionFields
+	// authsessionDescCreatedAt is the schema descriptor for created_at field.
+	authsessionDescCreatedAt := authsessionFields[5].Descriptor()
+	// authsession.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authsession.DefaultCreatedAt = authsessionDescCreatedAt.Default.(func() time.Time)
+	// authsessionDescRefreshGeneration is the schema descriptor for refresh_generation field.
+	authsessionDescRefreshGeneration := authsessionFields[9].Descriptor()
+	// authsession.DefaultRefreshGeneration holds the default value on creation for the refresh_generation field.
+	authsession.DefaultRefreshGeneration = authsessionDescRefreshGeneration.Default.(int32)
+	// authsession.RefreshGenerationValidator is a validator for the "refresh_generation" field. It is called by the builders before save.
+	authsession.RefreshGenerationValidator = authsessionDescRefreshGeneration.Validators[0].(func(int32) error)
+	chargerFields := schema.Charger{}.Fields()
+	_ = chargerFields
+	// chargerDescAssetTag is the schema descriptor for asset_tag field.
+	chargerDescAssetTag := chargerFields[1].Descriptor()
+	// charger.AssetTagValidator is a validator for the "asset_tag" field. It is called by the builders before save.
+	charger.AssetTagValidator = func() func(string) error {
+		validators := chargerDescAssetTag.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(asset_tag string) error {
+			for _, fn := range fns {
+				if err := fn(asset_tag); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// chargerDescSerialNumber is the schema descriptor for serial_number field.
+	chargerDescSerialNumber := chargerFields[2].Descriptor()
+	// charger.SerialNumberValidator is a validator for the "serial_number" field. It is called by the builders before save.
+	charger.SerialNumberValidator = func() func(string) error {
+		validators := chargerDescSerialNumber.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(serial_number string) error {
+			for _, fn := range fns {
+				if err := fn(serial_number); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// chargerDescManufacturer is the schema descriptor for manufacturer field.
+	chargerDescManufacturer := chargerFields[3].Descriptor()
+	// charger.ManufacturerValidator is a validator for the "manufacturer" field. It is called by the builders before save.
+	charger.ManufacturerValidator = func() func(string) error {
+		validators := chargerDescManufacturer.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(manufacturer string) error {
+			for _, fn := range fns {
+				if err := fn(manufacturer); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// chargerDescModel is the schema descriptor for model field.
+	chargerDescModel := chargerFields[4].Descriptor()
+	// charger.ModelValidator is a validator for the "model" field. It is called by the builders before save.
+	charger.ModelValidator = func() func(string) error {
+		validators := chargerDescModel.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(model string) error {
+			for _, fn := range fns {
+				if err := fn(model); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// chargerDescRatedPowerW is the schema descriptor for rated_power_w field.
+	chargerDescRatedPowerW := chargerFields[5].Descriptor()
+	// charger.RatedPowerWValidator is a validator for the "rated_power_w" field. It is called by the builders before save.
+	charger.RatedPowerWValidator = chargerDescRatedPowerW.Validators[0].(func(int32) error)
+	// chargerDescIsActive is the schema descriptor for is_active field.
+	chargerDescIsActive := chargerFields[11].Descriptor()
+	// charger.DefaultIsActive holds the default value on creation for the is_active field.
+	charger.DefaultIsActive = chargerDescIsActive.Default.(bool)
+	// chargerDescNotes is the schema descriptor for notes field.
+	chargerDescNotes := chargerFields[12].Descriptor()
+	// charger.NotesValidator is a validator for the "notes" field. It is called by the builders before save.
+	charger.NotesValidator = chargerDescNotes.Validators[0].(func(string) error)
+	// chargerDescCreatedAt is the schema descriptor for created_at field.
+	chargerDescCreatedAt := chargerFields[15].Descriptor()
+	// charger.DefaultCreatedAt holds the default value on creation for the created_at field.
+	charger.DefaultCreatedAt = chargerDescCreatedAt.Default.(func() time.Time)
+	// chargerDescUpdatedAt is the schema descriptor for updated_at field.
+	chargerDescUpdatedAt := chargerFields[16].Descriptor()
+	// charger.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	charger.DefaultUpdatedAt = chargerDescUpdatedAt.Default.(func() time.Time)
+	// charger.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	charger.UpdateDefaultUpdatedAt = chargerDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// chargerDescVersion is the schema descriptor for version field.
+	chargerDescVersion := chargerFields[17].Descriptor()
+	// charger.DefaultVersion holds the default value on creation for the version field.
+	charger.DefaultVersion = chargerDescVersion.Default.(int64)
+	// charger.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	charger.VersionValidator = chargerDescVersion.Validators[0].(func(int64) error)
+	chargerconnectorFields := schema.ChargerConnector{}.Fields()
+	_ = chargerconnectorFields
+	// chargerconnectorDescConnectorNumber is the schema descriptor for connector_number field.
+	chargerconnectorDescConnectorNumber := chargerconnectorFields[2].Descriptor()
+	// chargerconnector.ConnectorNumberValidator is a validator for the "connector_number" field. It is called by the builders before save.
+	chargerconnector.ConnectorNumberValidator = chargerconnectorDescConnectorNumber.Validators[0].(func(int32) error)
+	// chargerconnectorDescConnectorType is the schema descriptor for connector_type field.
+	chargerconnectorDescConnectorType := chargerconnectorFields[3].Descriptor()
+	// chargerconnector.ConnectorTypeValidator is a validator for the "connector_type" field. It is called by the builders before save.
+	chargerconnector.ConnectorTypeValidator = func() func(string) error {
+		validators := chargerconnectorDescConnectorType.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(connector_type string) error {
+			for _, fn := range fns {
+				if err := fn(connector_type); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// chargerconnectorDescMaxPowerW is the schema descriptor for max_power_w field.
+	chargerconnectorDescMaxPowerW := chargerconnectorFields[4].Descriptor()
+	// chargerconnector.MaxPowerWValidator is a validator for the "max_power_w" field. It is called by the builders before save.
+	chargerconnector.MaxPowerWValidator = chargerconnectorDescMaxPowerW.Validators[0].(func(int32) error)
+	// chargerconnectorDescIsActive is the schema descriptor for is_active field.
+	chargerconnectorDescIsActive := chargerconnectorFields[7].Descriptor()
+	// chargerconnector.DefaultIsActive holds the default value on creation for the is_active field.
+	chargerconnector.DefaultIsActive = chargerconnectorDescIsActive.Default.(bool)
+	// chargerconnectorDescCreatedAt is the schema descriptor for created_at field.
+	chargerconnectorDescCreatedAt := chargerconnectorFields[10].Descriptor()
+	// chargerconnector.DefaultCreatedAt holds the default value on creation for the created_at field.
+	chargerconnector.DefaultCreatedAt = chargerconnectorDescCreatedAt.Default.(func() time.Time)
+	// chargerconnectorDescUpdatedAt is the schema descriptor for updated_at field.
+	chargerconnectorDescUpdatedAt := chargerconnectorFields[11].Descriptor()
+	// chargerconnector.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	chargerconnector.DefaultUpdatedAt = chargerconnectorDescUpdatedAt.Default.(func() time.Time)
+	// chargerconnector.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	chargerconnector.UpdateDefaultUpdatedAt = chargerconnectorDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// chargerconnectorDescVersion is the schema descriptor for version field.
+	chargerconnectorDescVersion := chargerconnectorFields[12].Descriptor()
+	// chargerconnector.DefaultVersion holds the default value on creation for the version field.
+	chargerconnector.DefaultVersion = chargerconnectorDescVersion.Default.(int64)
+	// chargerconnector.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	chargerconnector.VersionValidator = chargerconnectorDescVersion.Validators[0].(func(int64) error)
+	consumedrefreshtokenFields := schema.ConsumedRefreshToken{}.Fields()
+	_ = consumedrefreshtokenFields
+	// consumedrefreshtokenDescConsumedAt is the schema descriptor for consumed_at field.
+	consumedrefreshtokenDescConsumedAt := consumedrefreshtokenFields[3].Descriptor()
+	// consumedrefreshtoken.DefaultConsumedAt holds the default value on creation for the consumed_at field.
+	consumedrefreshtoken.DefaultConsumedAt = consumedrefreshtokenDescConsumedAt.Default.(func() time.Time)
 	customeraddressFields := schema.CustomerAddress{}.Fields()
 	_ = customeraddressFields
 	// customeraddressDescLabel is the schema descriptor for label field.
@@ -356,6 +699,36 @@ func init() {
 	customervehicleDescID := customervehicleFields[0].Descriptor()
 	// customervehicle.DefaultID holds the default value on creation for the id field.
 	customervehicle.DefaultID = customervehicleDescID.Default.(func() uuid.UUID)
+	fleetassetauditFields := schema.FleetAssetAudit{}.Fields()
+	_ = fleetassetauditFields
+	// fleetassetauditDescCreatedAt is the schema descriptor for created_at field.
+	fleetassetauditDescCreatedAt := fleetassetauditFields[9].Descriptor()
+	// fleetassetaudit.DefaultCreatedAt holds the default value on creation for the created_at field.
+	fleetassetaudit.DefaultCreatedAt = fleetassetauditDescCreatedAt.Default.(func() time.Time)
+	mutationidempotencyreceiptFields := schema.MutationIdempotencyReceipt{}.Fields()
+	_ = mutationidempotencyreceiptFields
+	// mutationidempotencyreceiptDescRequestKey is the schema descriptor for request_key field.
+	mutationidempotencyreceiptDescRequestKey := mutationidempotencyreceiptFields[2].Descriptor()
+	// mutationidempotencyreceipt.RequestKeyValidator is a validator for the "request_key" field. It is called by the builders before save.
+	mutationidempotencyreceipt.RequestKeyValidator = func() func(string) error {
+		validators := mutationidempotencyreceiptDescRequestKey.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(request_key string) error {
+			for _, fn := range fns {
+				if err := fn(request_key); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// mutationidempotencyreceiptDescCreatedAt is the schema descriptor for created_at field.
+	mutationidempotencyreceiptDescCreatedAt := mutationidempotencyreceiptFields[6].Descriptor()
+	// mutationidempotencyreceipt.DefaultCreatedAt holds the default value on creation for the created_at field.
+	mutationidempotencyreceipt.DefaultCreatedAt = mutationidempotencyreceiptDescCreatedAt.Default.(func() time.Time)
 	pricingpolicyFields := schema.PricingPolicy{}.Fields()
 	_ = pricingpolicyFields
 	// pricingpolicyDescPolicyKey is the schema descriptor for policy_key field.
@@ -476,4 +849,156 @@ func init() {
 	pricingpolicyauditDescOccurredAt := pricingpolicyauditFields[7].Descriptor()
 	// pricingpolicyaudit.DefaultOccurredAt holds the default value on creation for the occurred_at field.
 	pricingpolicyaudit.DefaultOccurredAt = pricingpolicyauditDescOccurredAt.Default.(func() time.Time)
+	principalFields := schema.Principal{}.Fields()
+	_ = principalFields
+	// principalDescCreatedAt is the schema descriptor for created_at field.
+	principalDescCreatedAt := principalFields[4].Descriptor()
+	// principal.DefaultCreatedAt holds the default value on creation for the created_at field.
+	principal.DefaultCreatedAt = principalDescCreatedAt.Default.(func() time.Time)
+	securityauditFields := schema.SecurityAudit{}.Fields()
+	_ = securityauditFields
+	// securityauditDescOccurredAt is the schema descriptor for occurred_at field.
+	securityauditDescOccurredAt := securityauditFields[4].Descriptor()
+	// securityaudit.DefaultOccurredAt holds the default value on creation for the occurred_at field.
+	securityaudit.DefaultOccurredAt = securityauditDescOccurredAt.Default.(func() time.Time)
+	servicevehicleFields := schema.ServiceVehicle{}.Fields()
+	_ = servicevehicleFields
+	// servicevehicleDescAssetTag is the schema descriptor for asset_tag field.
+	servicevehicleDescAssetTag := servicevehicleFields[1].Descriptor()
+	// servicevehicle.AssetTagValidator is a validator for the "asset_tag" field. It is called by the builders before save.
+	servicevehicle.AssetTagValidator = func() func(string) error {
+		validators := servicevehicleDescAssetTag.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(asset_tag string) error {
+			for _, fn := range fns {
+				if err := fn(asset_tag); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// servicevehicleDescRegistrationNumber is the schema descriptor for registration_number field.
+	servicevehicleDescRegistrationNumber := servicevehicleFields[2].Descriptor()
+	// servicevehicle.RegistrationNumberValidator is a validator for the "registration_number" field. It is called by the builders before save.
+	servicevehicle.RegistrationNumberValidator = func() func(string) error {
+		validators := servicevehicleDescRegistrationNumber.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(registration_number string) error {
+			for _, fn := range fns {
+				if err := fn(registration_number); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// servicevehicleDescMake is the schema descriptor for make field.
+	servicevehicleDescMake := servicevehicleFields[3].Descriptor()
+	// servicevehicle.MakeValidator is a validator for the "make" field. It is called by the builders before save.
+	servicevehicle.MakeValidator = func() func(string) error {
+		validators := servicevehicleDescMake.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(make string) error {
+			for _, fn := range fns {
+				if err := fn(make); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// servicevehicleDescModel is the schema descriptor for model field.
+	servicevehicleDescModel := servicevehicleFields[4].Descriptor()
+	// servicevehicle.ModelValidator is a validator for the "model" field. It is called by the builders before save.
+	servicevehicle.ModelValidator = func() func(string) error {
+		validators := servicevehicleDescModel.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(model string) error {
+			for _, fn := range fns {
+				if err := fn(model); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// servicevehicleDescIsActive is the schema descriptor for is_active field.
+	servicevehicleDescIsActive := servicevehicleFields[13].Descriptor()
+	// servicevehicle.DefaultIsActive holds the default value on creation for the is_active field.
+	servicevehicle.DefaultIsActive = servicevehicleDescIsActive.Default.(bool)
+	// servicevehicleDescNotes is the schema descriptor for notes field.
+	servicevehicleDescNotes := servicevehicleFields[14].Descriptor()
+	// servicevehicle.NotesValidator is a validator for the "notes" field. It is called by the builders before save.
+	servicevehicle.NotesValidator = servicevehicleDescNotes.Validators[0].(func(string) error)
+	// servicevehicleDescCreatedAt is the schema descriptor for created_at field.
+	servicevehicleDescCreatedAt := servicevehicleFields[17].Descriptor()
+	// servicevehicle.DefaultCreatedAt holds the default value on creation for the created_at field.
+	servicevehicle.DefaultCreatedAt = servicevehicleDescCreatedAt.Default.(func() time.Time)
+	// servicevehicleDescUpdatedAt is the schema descriptor for updated_at field.
+	servicevehicleDescUpdatedAt := servicevehicleFields[18].Descriptor()
+	// servicevehicle.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	servicevehicle.DefaultUpdatedAt = servicevehicleDescUpdatedAt.Default.(func() time.Time)
+	// servicevehicle.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	servicevehicle.UpdateDefaultUpdatedAt = servicevehicleDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// servicevehicleDescVersion is the schema descriptor for version field.
+	servicevehicleDescVersion := servicevehicleFields[19].Descriptor()
+	// servicevehicle.DefaultVersion holds the default value on creation for the version field.
+	servicevehicle.DefaultVersion = servicevehicleDescVersion.Default.(int64)
+	// servicevehicle.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	servicevehicle.VersionValidator = servicevehicleDescVersion.Validators[0].(func(int64) error)
+	vehiclechargerpairingFields := schema.VehicleChargerPairing{}.Fields()
+	_ = vehiclechargerpairingFields
+	// vehiclechargerpairingDescCreatedAt is the schema descriptor for created_at field.
+	vehiclechargerpairingDescCreatedAt := vehiclechargerpairingFields[8].Descriptor()
+	// vehiclechargerpairing.DefaultCreatedAt holds the default value on creation for the created_at field.
+	vehiclechargerpairing.DefaultCreatedAt = vehiclechargerpairingDescCreatedAt.Default.(func() time.Time)
+	// vehiclechargerpairingDescReason is the schema descriptor for reason field.
+	vehiclechargerpairingDescReason := vehiclechargerpairingFields[9].Descriptor()
+	// vehiclechargerpairing.ReasonValidator is a validator for the "reason" field. It is called by the builders before save.
+	vehiclechargerpairing.ReasonValidator = func() func(string) error {
+		validators := vehiclechargerpairingDescReason.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(reason string) error {
+			for _, fn := range fns {
+				if err := fn(reason); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// vehiclechargerpairingDescEndReason is the schema descriptor for end_reason field.
+	vehiclechargerpairingDescEndReason := vehiclechargerpairingFields[10].Descriptor()
+	// vehiclechargerpairing.EndReasonValidator is a validator for the "end_reason" field. It is called by the builders before save.
+	vehiclechargerpairing.EndReasonValidator = func() func(string) error {
+		validators := vehiclechargerpairingDescEndReason.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(end_reason string) error {
+			for _, fn := range fns {
+				if err := fn(end_reason); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
 }

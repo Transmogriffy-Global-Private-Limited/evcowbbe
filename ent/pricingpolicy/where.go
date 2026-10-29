@@ -676,26 +676,6 @@ func CreatedByNotIn(vs ...uuid.UUID) predicate.PricingPolicy {
 	return predicate.PricingPolicy(sql.FieldNotIn(FieldCreatedBy, vs...))
 }
 
-// CreatedByGT applies the GT predicate on the "created_by" field.
-func CreatedByGT(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldGT(FieldCreatedBy, v))
-}
-
-// CreatedByGTE applies the GTE predicate on the "created_by" field.
-func CreatedByGTE(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldGTE(FieldCreatedBy, v))
-}
-
-// CreatedByLT applies the LT predicate on the "created_by" field.
-func CreatedByLT(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldLT(FieldCreatedBy, v))
-}
-
-// CreatedByLTE applies the LTE predicate on the "created_by" field.
-func CreatedByLTE(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldLTE(FieldCreatedBy, v))
-}
-
 // CreatedByIsNil applies the IsNil predicate on the "created_by" field.
 func CreatedByIsNil() predicate.PricingPolicy {
 	return predicate.PricingPolicy(sql.FieldIsNull(FieldCreatedBy))
@@ -726,26 +706,6 @@ func PublishedByNotIn(vs ...uuid.UUID) predicate.PricingPolicy {
 	return predicate.PricingPolicy(sql.FieldNotIn(FieldPublishedBy, vs...))
 }
 
-// PublishedByGT applies the GT predicate on the "published_by" field.
-func PublishedByGT(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldGT(FieldPublishedBy, v))
-}
-
-// PublishedByGTE applies the GTE predicate on the "published_by" field.
-func PublishedByGTE(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldGTE(FieldPublishedBy, v))
-}
-
-// PublishedByLT applies the LT predicate on the "published_by" field.
-func PublishedByLT(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldLT(FieldPublishedBy, v))
-}
-
-// PublishedByLTE applies the LTE predicate on the "published_by" field.
-func PublishedByLTE(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldLTE(FieldPublishedBy, v))
-}
-
 // PublishedByIsNil applies the IsNil predicate on the "published_by" field.
 func PublishedByIsNil() predicate.PricingPolicy {
 	return predicate.PricingPolicy(sql.FieldIsNull(FieldPublishedBy))
@@ -774,26 +734,6 @@ func WithdrawnByIn(vs ...uuid.UUID) predicate.PricingPolicy {
 // WithdrawnByNotIn applies the NotIn predicate on the "withdrawn_by" field.
 func WithdrawnByNotIn(vs ...uuid.UUID) predicate.PricingPolicy {
 	return predicate.PricingPolicy(sql.FieldNotIn(FieldWithdrawnBy, vs...))
-}
-
-// WithdrawnByGT applies the GT predicate on the "withdrawn_by" field.
-func WithdrawnByGT(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldGT(FieldWithdrawnBy, v))
-}
-
-// WithdrawnByGTE applies the GTE predicate on the "withdrawn_by" field.
-func WithdrawnByGTE(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldGTE(FieldWithdrawnBy, v))
-}
-
-// WithdrawnByLT applies the LT predicate on the "withdrawn_by" field.
-func WithdrawnByLT(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldLT(FieldWithdrawnBy, v))
-}
-
-// WithdrawnByLTE applies the LTE predicate on the "withdrawn_by" field.
-func WithdrawnByLTE(v uuid.UUID) predicate.PricingPolicy {
-	return predicate.PricingPolicy(sql.FieldLTE(FieldWithdrawnBy, v))
 }
 
 // WithdrawnByIsNil applies the IsNil predicate on the "withdrawn_by" field.
@@ -944,6 +884,75 @@ func WithdrawnAtIsNil() predicate.PricingPolicy {
 // WithdrawnAtNotNil applies the NotNil predicate on the "withdrawn_at" field.
 func WithdrawnAtNotNil() predicate.PricingPolicy {
 	return predicate.PricingPolicy(sql.FieldNotNull(FieldWithdrawnAt))
+}
+
+// HasCreator applies the HasEdge predicate on the "creator" edge.
+func HasCreator() predicate.PricingPolicy {
+	return predicate.PricingPolicy(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, CreatorTable, CreatorColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasCreatorWith applies the HasEdge predicate on the "creator" edge with a given conditions (other predicates).
+func HasCreatorWith(preds ...predicate.Account) predicate.PricingPolicy {
+	return predicate.PricingPolicy(func(s *sql.Selector) {
+		step := newCreatorStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasPublisher applies the HasEdge predicate on the "publisher" edge.
+func HasPublisher() predicate.PricingPolicy {
+	return predicate.PricingPolicy(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, PublisherTable, PublisherColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasPublisherWith applies the HasEdge predicate on the "publisher" edge with a given conditions (other predicates).
+func HasPublisherWith(preds ...predicate.Account) predicate.PricingPolicy {
+	return predicate.PricingPolicy(func(s *sql.Selector) {
+		step := newPublisherStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasWithdrawer applies the HasEdge predicate on the "withdrawer" edge.
+func HasWithdrawer() predicate.PricingPolicy {
+	return predicate.PricingPolicy(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, WithdrawerTable, WithdrawerColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasWithdrawerWith applies the HasEdge predicate on the "withdrawer" edge with a given conditions (other predicates).
+func HasWithdrawerWith(preds ...predicate.Account) predicate.PricingPolicy {
+	return predicate.PricingPolicy(func(s *sql.Selector) {
+		step := newWithdrawerStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
 }
 
 // HasAudit applies the HasEdge predicate on the "audit" edge.

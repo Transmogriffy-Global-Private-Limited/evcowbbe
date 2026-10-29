@@ -11,6 +11,7 @@ import (
 
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicy"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicyaudit"
 	"github.com/google/uuid"
@@ -85,6 +86,11 @@ func (_c *PricingPolicyAuditCreate) SetNillableOccurredAt(v *time.Time) *Pricing
 func (_c *PricingPolicyAuditCreate) SetID(v int64) *PricingPolicyAuditCreate {
 	_c.mutation.SetID(v)
 	return _c
+}
+
+// SetActor sets the "actor" edge to the Account entity.
+func (_c *PricingPolicyAuditCreate) SetActor(v *Account) *PricingPolicyAuditCreate {
+	return _c.SetActorID(v.ID)
 }
 
 // SetPolicy sets the "policy" edge to the PricingPolicy entity.
@@ -195,10 +201,6 @@ func (_c *PricingPolicyAuditCreate) createSpec() (*PricingPolicyAudit, *sqlgraph
 		_node.ID = id
 		_spec.ID.Value = id
 	}
-	if value, ok := _c.mutation.ActorID(); ok {
-		_spec.SetField(pricingpolicyaudit.FieldActorID, field.TypeUUID, value)
-		_node.ActorID = &value
-	}
 	if value, ok := _c.mutation.Action(); ok {
 		_spec.SetField(pricingpolicyaudit.FieldAction, field.TypeEnum, value)
 		_node.Action = value
@@ -218,6 +220,23 @@ func (_c *PricingPolicyAuditCreate) createSpec() (*PricingPolicyAudit, *sqlgraph
 	if value, ok := _c.mutation.OccurredAt(); ok {
 		_spec.SetField(pricingpolicyaudit.FieldOccurredAt, field.TypeTime, value)
 		_node.OccurredAt = value
+	}
+	if nodes := _c.mutation.ActorIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: false,
+			Table:   pricingpolicyaudit.ActorTable,
+			Columns: []string{pricingpolicyaudit.ActorColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.ActorID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.PolicyIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

@@ -10,9 +10,9 @@ import (
 	"entgo.io/ent/schema/field"
 )
 
-// TestModelSQLColumnParity guards both immediately pending SQL migrations 004
-// and 005 against divergence from generated Ent models. SQL remains authority
-// for CHECKs, composite FKs, partial indexes, and authorization boundaries.
+// TestModelSQLColumnParity guards the complete historical CMS table inventory
+// during the Ent/Atlas transition. The operational migration history remains
+// unchanged; SQL-only CHECK/FK/partial-index invariants require separate tests.
 func TestModelSQLColumnParity(t *testing.T) {
 	for _, lineEnding := range []string{"LF", "CRLF"} {
 		t.Run(lineEnding, func(t *testing.T) {
@@ -24,7 +24,10 @@ func TestModelSQLColumnParity(t *testing.T) {
 func checkModelSQLColumnParity(t *testing.T, asCRLF bool) {
 	t.Helper()
 	tables := map[string]map[string]string{}
-	for _, filename := range []string{"004_customer_foundation.sql", "005_admin_pricing_rules.sql"} {
+	for _, filename := range []string{
+		"001_auth.sql", "002_outbox_admin_rbac.sql", "003_fleet_inventory.sql",
+		"004_customer_foundation.sql", "005_admin_pricing_rules.sql",
+	} {
 		raw, err := os.ReadFile("../../migrations/" + filename)
 		if err != nil {
 			t.Fatal(err)
@@ -37,13 +40,37 @@ func checkModelSQLColumnParity(t *testing.T, asCRLF bool) {
 			tables[name] = cols
 		}
 	}
+	// Migration bookkeeping is intentionally not an Ent business model.
+	delete(tables, "schema_migrations")
+	// Six? No: seven legacy natural/bytea primary keys acquire an Ent-friendly
+	// surrogate ID in the explicit additive migration 006. Never assume the
+	// historical 001-005 tables already contain these columns.
+	bridge, err := os.ReadFile("../../migrations/006_ent_identity_bridge.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addedID := regexp.MustCompile(`(?m)^ALTER TABLE ([a-z_]+) ADD COLUMN id bigserial;$`)
+	additions := addedID.FindAllStringSubmatch(string(bridge), -1)
+	if len(additions) != 7 {
+		t.Fatalf("expected 7 explicit surrogate IDs, got %d", len(additions))
+	}
+	for _, match := range additions {
+		cols, ok := tables[match[1]]
+		if !ok {
+			t.Fatalf("006 adds ID to unknown table %q", match[1])
+		}
+		if _, exists := cols["id"]; exists {
+			t.Fatalf("006 adds duplicate ID to %q", match[1])
+		}
+		cols["id"] = "bigserial"
+	}
 	if len(tables) != len(Tables) {
 		t.Fatalf("migration has %d tables; generated model has %d", len(tables), len(Tables))
 	}
 	for _, model := range Tables {
 		actual, ok := tables[model.Name]
 		if !ok {
-			t.Errorf("Ent model %s not found in 004", model.Name)
+			t.Errorf("Ent model %s not found in reviewed SQL", model.Name)
 			continue
 		}
 		want := make(map[string]string)
@@ -63,8 +90,13 @@ func checkModelSQLColumnParity(t *testing.T, asCRLF bool) {
 				}
 			case field.TypeBool:
 				typ = "boolean"
+			case field.TypeBytes:
+				typ = "bytea"
 			case field.TypeTime:
 				typ = "timestamptz"
+				if c.SchemaType["postgres"] == "date" {
+					typ = "date"
+				}
 			case field.TypeOther:
 				typ = c.SchemaType["postgres"]
 			case field.TypeJSON:
@@ -104,7 +136,7 @@ func checkModelSQLColumnParity(t *testing.T, asCRLF bool) {
 func parseDDLColumns(ddl string) map[string]map[string]string {
 	ddl = strings.ReplaceAll(ddl, "\r\n", "\n")
 	block := regexp.MustCompile(`(?ms)^CREATE TABLE ([a-z_]+) \(\n(.*?)^\);`)
-	col := regexp.MustCompile(`^\s*([a-z][a-z0-9_]*)\s+(uuid|text\[\]|text|jsonb|bigserial|bigint|integer|boolean|timestamptz|numeric\([0-9]+,[0-9]+\))(?:\s|,|$)`)
+	col := regexp.MustCompile(`^\s*([a-z][a-z0-9_]*)\s+(uuid|text\[\]|text|jsonb|bigserial|bigint|integer|boolean|timestamptz|bytea|date|numeric\([0-9]+,[0-9]+\))(?:\s|,|$)`)
 	tables := make(map[string]map[string]string)
 	for _, m := range block.FindAllStringSubmatch(ddl, -1) {
 		cols := make(map[string]string)

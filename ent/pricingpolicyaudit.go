@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicy"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicyaudit"
 	"github.com/google/uuid"
@@ -42,11 +43,24 @@ type PricingPolicyAudit struct {
 
 // PricingPolicyAuditEdges holds the relations/edges for other nodes in the graph.
 type PricingPolicyAuditEdges struct {
+	// Actor holds the value of the actor edge.
+	Actor *Account `json:"actor,omitempty"`
 	// Policy holds the value of the policy edge.
 	Policy *PricingPolicy `json:"policy,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [1]bool
+	loadedTypes [2]bool
+}
+
+// ActorOrErr returns the Actor value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e PricingPolicyAuditEdges) ActorOrErr() (*Account, error) {
+	if e.Actor != nil {
+		return e.Actor, nil
+	} else if e.loadedTypes[0] {
+		return nil, &NotFoundError{label: account.Label}
+	}
+	return nil, &NotLoadedError{edge: "actor"}
 }
 
 // PolicyOrErr returns the Policy value or an error if the edge
@@ -54,7 +68,7 @@ type PricingPolicyAuditEdges struct {
 func (e PricingPolicyAuditEdges) PolicyOrErr() (*PricingPolicy, error) {
 	if e.Policy != nil {
 		return e.Policy, nil
-	} else if e.loadedTypes[0] {
+	} else if e.loadedTypes[1] {
 		return nil, &NotFoundError{label: pricingpolicy.Label}
 	}
 	return nil, &NotLoadedError{edge: "policy"}
@@ -156,6 +170,11 @@ func (_m *PricingPolicyAudit) assignValues(columns []string, values []any) error
 // This includes values selected through modifiers, order, etc.
 func (_m *PricingPolicyAudit) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
+}
+
+// QueryActor queries the "actor" edge of the PricingPolicyAudit entity.
+func (_m *PricingPolicyAudit) QueryActor() *AccountQuery {
+	return NewPricingPolicyAuditClient(_m.config).QueryActor(_m)
 }
 
 // QueryPolicy queries the "policy" edge of the PricingPolicyAudit entity.

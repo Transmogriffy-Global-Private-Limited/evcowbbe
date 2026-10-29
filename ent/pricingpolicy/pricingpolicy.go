@@ -50,10 +50,37 @@ const (
 	FieldPublishedAt = "published_at"
 	// FieldWithdrawnAt holds the string denoting the withdrawn_at field in the database.
 	FieldWithdrawnAt = "withdrawn_at"
+	// EdgeCreator holds the string denoting the creator edge name in mutations.
+	EdgeCreator = "creator"
+	// EdgePublisher holds the string denoting the publisher edge name in mutations.
+	EdgePublisher = "publisher"
+	// EdgeWithdrawer holds the string denoting the withdrawer edge name in mutations.
+	EdgeWithdrawer = "withdrawer"
 	// EdgeAudit holds the string denoting the audit edge name in mutations.
 	EdgeAudit = "audit"
 	// Table holds the table name of the pricingpolicy in the database.
 	Table = "pricing_policies"
+	// CreatorTable is the table that holds the creator relation/edge.
+	CreatorTable = "pricing_policies"
+	// CreatorInverseTable is the table name for the Account entity.
+	// It exists in this package in order to avoid circular dependency with the "account" package.
+	CreatorInverseTable = "accounts"
+	// CreatorColumn is the table column denoting the creator relation/edge.
+	CreatorColumn = "created_by"
+	// PublisherTable is the table that holds the publisher relation/edge.
+	PublisherTable = "pricing_policies"
+	// PublisherInverseTable is the table name for the Account entity.
+	// It exists in this package in order to avoid circular dependency with the "account" package.
+	PublisherInverseTable = "accounts"
+	// PublisherColumn is the table column denoting the publisher relation/edge.
+	PublisherColumn = "published_by"
+	// WithdrawerTable is the table that holds the withdrawer relation/edge.
+	WithdrawerTable = "pricing_policies"
+	// WithdrawerInverseTable is the table name for the Account entity.
+	// It exists in this package in order to avoid circular dependency with the "account" package.
+	WithdrawerInverseTable = "accounts"
+	// WithdrawerColumn is the table column denoting the withdrawer relation/edge.
+	WithdrawerColumn = "withdrawn_by"
 	// AuditTable is the table that holds the audit relation/edge.
 	AuditTable = "pricing_policy_audit"
 	// AuditInverseTable is the table name for the PricingPolicyAudit entity.
@@ -233,6 +260,27 @@ func ByWithdrawnAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWithdrawnAt, opts...).ToFunc()
 }
 
+// ByCreatorField orders the results by creator field.
+func ByCreatorField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newCreatorStep(), sql.OrderByField(field, opts...))
+	}
+}
+
+// ByPublisherField orders the results by publisher field.
+func ByPublisherField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newPublisherStep(), sql.OrderByField(field, opts...))
+	}
+}
+
+// ByWithdrawerField orders the results by withdrawer field.
+func ByWithdrawerField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newWithdrawerStep(), sql.OrderByField(field, opts...))
+	}
+}
+
 // ByAuditCount orders the results by audit count.
 func ByAuditCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -245,6 +293,27 @@ func ByAudit(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newAuditStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
+}
+func newCreatorStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(CreatorInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, false, CreatorTable, CreatorColumn),
+	)
+}
+func newPublisherStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(PublisherInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, false, PublisherTable, PublisherColumn),
+	)
+}
+func newWithdrawerStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(WithdrawerInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, false, WithdrawerTable, WithdrawerColumn),
+	)
 }
 func newAuditStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(

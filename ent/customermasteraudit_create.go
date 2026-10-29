@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customermasteraudit"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customerprofile"
 	"github.com/google/uuid"
@@ -91,6 +92,11 @@ func (_c *CustomerMasterAuditCreate) SetNillableOccurredAt(v *time.Time) *Custom
 func (_c *CustomerMasterAuditCreate) SetID(v int64) *CustomerMasterAuditCreate {
 	_c.mutation.SetID(v)
 	return _c
+}
+
+// SetActorAccount sets the "actor_account" edge to the Account entity.
+func (_c *CustomerMasterAuditCreate) SetActorAccount(v *Account) *CustomerMasterAuditCreate {
+	return _c.SetActorAccountID(v.ID)
 }
 
 // SetCustomer sets the "customer" edge to the CustomerProfile entity.
@@ -216,10 +222,6 @@ func (_c *CustomerMasterAuditCreate) createSpec() (*CustomerMasterAudit, *sqlgra
 		_node.ID = id
 		_spec.ID.Value = id
 	}
-	if value, ok := _c.mutation.ActorAccountID(); ok {
-		_spec.SetField(customermasteraudit.FieldActorAccountID, field.TypeUUID, value)
-		_node.ActorAccountID = &value
-	}
 	if value, ok := _c.mutation.ResourceKind(); ok {
 		_spec.SetField(customermasteraudit.FieldResourceKind, field.TypeEnum, value)
 		_node.ResourceKind = value
@@ -243,6 +245,23 @@ func (_c *CustomerMasterAuditCreate) createSpec() (*CustomerMasterAudit, *sqlgra
 	if value, ok := _c.mutation.OccurredAt(); ok {
 		_spec.SetField(customermasteraudit.FieldOccurredAt, field.TypeTime, value)
 		_node.OccurredAt = value
+	}
+	if nodes := _c.mutation.ActorAccountIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: false,
+			Table:   customermasteraudit.ActorAccountTable,
+			Columns: []string{customermasteraudit.ActorAccountColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.ActorAccountID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.CustomerIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

@@ -7,6 +7,7 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -15,6 +16,8 @@ import (
 // PricingPolicy maps the immutable/versioned Admin tariff policy contract in
 // pending migration 005. Final pricing decisions require the pricing service.
 type PricingPolicy struct{ ent.Schema }
+
+func (PricingPolicy) Mixin() []ent.Mixin { return []ent.Mixin{sqlIntegrity("pricing_policies")} }
 
 func (PricingPolicy) Fields() []ent.Field {
 	return []ent.Field{
@@ -40,5 +43,5 @@ func (PricingPolicy) Fields() []ent.Field {
 }
 
 func (PricingPolicy) Edges() []ent.Edge {
-	return []ent.Edge{edge.To("audit", PricingPolicyAudit.Type)}
+	return []ent.Edge{edge.To("audit", PricingPolicyAudit.Type).Annotations(entsql.OnDelete(entsql.Restrict))}
 }

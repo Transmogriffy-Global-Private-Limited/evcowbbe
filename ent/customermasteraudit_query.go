@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customermasteraudit"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customerprofile"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/predicate"
@@ -20,11 +21,12 @@ import (
 // CustomerMasterAuditQuery is the builder for querying CustomerMasterAudit entities.
 type CustomerMasterAuditQuery struct {
 	config
-	ctx          *QueryContext
-	order        []customermasteraudit.OrderOption
-	inters       []Interceptor
-	predicates   []predicate.CustomerMasterAudit
-	withCustomer *CustomerProfileQuery
+	ctx              *QueryContext
+	order            []customermasteraudit.OrderOption
+	inters           []Interceptor
+	predicates       []predicate.CustomerMasterAudit
+	withActorAccount *AccountQuery
+	withCustomer     *CustomerProfileQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -59,6 +61,28 @@ func (_q *CustomerMasterAuditQuery) Unique(unique bool) *CustomerMasterAuditQuer
 func (_q *CustomerMasterAuditQuery) Order(o ...customermasteraudit.OrderOption) *CustomerMasterAuditQuery {
 	_q.order = append(_q.order, o...)
 	return _q
+}
+
+// QueryActorAccount chains the current query on the "actor_account" edge.
+func (_q *CustomerMasterAuditQuery) QueryActorAccount() *AccountQuery {
+	query := (&AccountClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(customermasteraudit.Table, customermasteraudit.FieldID, selector),
+			sqlgraph.To(account.Table, account.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, customermasteraudit.ActorAccountTable, customermasteraudit.ActorAccountColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
 }
 
 // QueryCustomer chains the current query on the "customer" edge.
@@ -270,16 +294,28 @@ func (_q *CustomerMasterAuditQuery) Clone() *CustomerMasterAuditQuery {
 		return nil
 	}
 	return &CustomerMasterAuditQuery{
-		config:       _q.config,
-		ctx:          _q.ctx.Clone(),
-		order:        append([]customermasteraudit.OrderOption{}, _q.order...),
-		inters:       append([]Interceptor{}, _q.inters...),
-		predicates:   append([]predicate.CustomerMasterAudit{}, _q.predicates...),
-		withCustomer: _q.withCustomer.Clone(),
+		config:           _q.config,
+		ctx:              _q.ctx.Clone(),
+		order:            append([]customermasteraudit.OrderOption{}, _q.order...),
+		inters:           append([]Interceptor{}, _q.inters...),
+		predicates:       append([]predicate.CustomerMasterAudit{}, _q.predicates...),
+		withActorAccount: _q.withActorAccount.Clone(),
+		withCustomer:     _q.withCustomer.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
 	}
+}
+
+// WithActorAccount tells the query-builder to eager-load the nodes that are connected to
+// the "actor_account" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *CustomerMasterAuditQuery) WithActorAccount(opts ...func(*AccountQuery)) *CustomerMasterAuditQuery {
+	query := (&AccountClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withActorAccount = query
+	return _q
 }
 
 // WithCustomer tells the query-builder to eager-load the nodes that are connected to
@@ -371,7 +407,8 @@ func (_q *CustomerMasterAuditQuery) sqlAll(ctx context.Context, hooks ...queryHo
 	var (
 		nodes       = []*CustomerMasterAudit{}
 		_spec       = _q.querySpec()
-		loadedTypes = [1]bool{
+		loadedTypes = [2]bool{
+			_q.withActorAccount != nil,
 			_q.withCustomer != nil,
 		}
 	)
@@ -393,6 +430,12 @@ func (_q *CustomerMasterAuditQuery) sqlAll(ctx context.Context, hooks ...queryHo
 	if len(nodes) == 0 {
 		return nodes, nil
 	}
+	if query := _q.withActorAccount; query != nil {
+		if err := _q.loadActorAccount(ctx, query, nodes, nil,
+			func(n *CustomerMasterAudit, e *Account) { n.Edges.ActorAccount = e }); err != nil {
+			return nil, err
+		}
+	}
 	if query := _q.withCustomer; query != nil {
 		if err := _q.loadCustomer(ctx, query, nodes, nil,
 			func(n *CustomerMasterAudit, e *CustomerProfile) { n.Edges.Customer = e }); err != nil {
@@ -402,6 +445,38 @@ func (_q *CustomerMasterAuditQuery) sqlAll(ctx context.Context, hooks ...queryHo
 	return nodes, nil
 }
 
+func (_q *CustomerMasterAuditQuery) loadActorAccount(ctx context.Context, query *AccountQuery, nodes []*CustomerMasterAudit, init func(*CustomerMasterAudit), assign func(*CustomerMasterAudit, *Account)) error {
+	ids := make([]uuid.UUID, 0, len(nodes))
+	nodeids := make(map[uuid.UUID][]*CustomerMasterAudit)
+	for i := range nodes {
+		if nodes[i].ActorAccountID == nil {
+			continue
+		}
+		fk := *nodes[i].ActorAccountID
+		if _, ok := nodeids[fk]; !ok {
+			ids = append(ids, fk)
+		}
+		nodeids[fk] = append(nodeids[fk], nodes[i])
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	query.Where(account.IDIn(ids...))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		nodes, ok := nodeids[n.ID]
+		if !ok {
+			return fmt.Errorf(`unexpected foreign-key "actor_account_id" returned %v`, n.ID)
+		}
+		for i := range nodes {
+			assign(nodes[i], n)
+		}
+	}
+	return nil
+}
 func (_q *CustomerMasterAuditQuery) loadCustomer(ctx context.Context, query *CustomerProfileQuery, nodes []*CustomerMasterAudit, init func(*CustomerMasterAudit), assign func(*CustomerMasterAudit, *CustomerProfile)) error {
 	ids := make([]uuid.UUID, 0, len(nodes))
 	nodeids := make(map[uuid.UUID][]*CustomerMasterAudit)
@@ -456,6 +531,9 @@ func (_q *CustomerMasterAuditQuery) querySpec() *sqlgraph.QuerySpec {
 			if fields[i] != customermasteraudit.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
+		}
+		if _q.withActorAccount != nil {
+			_spec.Node.AddColumnOnce(customermasteraudit.FieldActorAccountID)
 		}
 		if _q.withCustomer != nil {
 			_spec.Node.AddColumnOnce(customermasteraudit.FieldCustomerID)

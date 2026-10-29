@@ -14,6 +14,8 @@ import (
 // CustomerVehicle is the user's saved vehicle, not the service fleet asset.
 type CustomerVehicle struct{ ent.Schema }
 
+func (CustomerVehicle) Mixin() []ent.Mixin { return []ent.Mixin{sqlIntegrity("customer_vehicles")} }
+
 func (CustomerVehicle) Fields() []ent.Field {
 	return []ent.Field{
 		field.UUID("id", uuid.UUID{}).Default(uuid.New).Immutable(),

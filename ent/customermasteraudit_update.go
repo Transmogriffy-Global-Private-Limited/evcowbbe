@@ -79,9 +79,6 @@ func (_u *CustomerMasterAuditUpdate) sqlSave(ctx context.Context) (_node int, er
 			}
 		}
 	}
-	if _u.mutation.ActorAccountIDCleared() {
-		_spec.ClearField(customermasteraudit.FieldActorAccountID, field.TypeUUID)
-	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{customermasteraudit.Label}
@@ -183,9 +180,6 @@ func (_u *CustomerMasterAuditUpdateOne) sqlSave(ctx context.Context) (_node *Cus
 				ps[i](selector)
 			}
 		}
-	}
-	if _u.mutation.ActorAccountIDCleared() {
-		_spec.ClearField(customermasteraudit.FieldActorAccountID, field.TypeUUID)
 	}
 	_node = &CustomerMasterAudit{config: _u.config}
 	_spec.Assign = _node.assignValues

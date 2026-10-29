@@ -11,6 +11,7 @@ import (
 
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicy"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicyaudit"
 	"github.com/google/uuid"
@@ -217,6 +218,63 @@ func (_c *PricingPolicyCreate) SetNillableID(v *uuid.UUID) *PricingPolicyCreate 
 		_c.SetID(*v)
 	}
 	return _c
+}
+
+// SetCreatorID sets the "creator" edge to the Account entity by ID.
+func (_c *PricingPolicyCreate) SetCreatorID(id uuid.UUID) *PricingPolicyCreate {
+	_c.mutation.SetCreatorID(id)
+	return _c
+}
+
+// SetNillableCreatorID sets the "creator" edge to the Account entity by ID if the given value is not nil.
+func (_c *PricingPolicyCreate) SetNillableCreatorID(id *uuid.UUID) *PricingPolicyCreate {
+	if id != nil {
+		_c = _c.SetCreatorID(*id)
+	}
+	return _c
+}
+
+// SetCreator sets the "creator" edge to the Account entity.
+func (_c *PricingPolicyCreate) SetCreator(v *Account) *PricingPolicyCreate {
+	return _c.SetCreatorID(v.ID)
+}
+
+// SetPublisherID sets the "publisher" edge to the Account entity by ID.
+func (_c *PricingPolicyCreate) SetPublisherID(id uuid.UUID) *PricingPolicyCreate {
+	_c.mutation.SetPublisherID(id)
+	return _c
+}
+
+// SetNillablePublisherID sets the "publisher" edge to the Account entity by ID if the given value is not nil.
+func (_c *PricingPolicyCreate) SetNillablePublisherID(id *uuid.UUID) *PricingPolicyCreate {
+	if id != nil {
+		_c = _c.SetPublisherID(*id)
+	}
+	return _c
+}
+
+// SetPublisher sets the "publisher" edge to the Account entity.
+func (_c *PricingPolicyCreate) SetPublisher(v *Account) *PricingPolicyCreate {
+	return _c.SetPublisherID(v.ID)
+}
+
+// SetWithdrawerID sets the "withdrawer" edge to the Account entity by ID.
+func (_c *PricingPolicyCreate) SetWithdrawerID(id uuid.UUID) *PricingPolicyCreate {
+	_c.mutation.SetWithdrawerID(id)
+	return _c
+}
+
+// SetNillableWithdrawerID sets the "withdrawer" edge to the Account entity by ID if the given value is not nil.
+func (_c *PricingPolicyCreate) SetNillableWithdrawerID(id *uuid.UUID) *PricingPolicyCreate {
+	if id != nil {
+		_c = _c.SetWithdrawerID(*id)
+	}
+	return _c
+}
+
+// SetWithdrawer sets the "withdrawer" edge to the Account entity.
+func (_c *PricingPolicyCreate) SetWithdrawer(v *Account) *PricingPolicyCreate {
+	return _c.SetWithdrawerID(v.ID)
 }
 
 // AddAuditIDs adds the "audit" edge to the PricingPolicyAudit entity by IDs.
@@ -438,18 +496,6 @@ func (_c *PricingPolicyCreate) createSpec() (*PricingPolicy, *sqlgraph.CreateSpe
 		_spec.SetField(pricingpolicy.FieldReason, field.TypeString, value)
 		_node.Reason = value
 	}
-	if value, ok := _c.mutation.CreatedBy(); ok {
-		_spec.SetField(pricingpolicy.FieldCreatedBy, field.TypeUUID, value)
-		_node.CreatedBy = &value
-	}
-	if value, ok := _c.mutation.PublishedBy(); ok {
-		_spec.SetField(pricingpolicy.FieldPublishedBy, field.TypeUUID, value)
-		_node.PublishedBy = &value
-	}
-	if value, ok := _c.mutation.WithdrawnBy(); ok {
-		_spec.SetField(pricingpolicy.FieldWithdrawnBy, field.TypeUUID, value)
-		_node.WithdrawnBy = &value
-	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(pricingpolicy.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
@@ -461,6 +507,57 @@ func (_c *PricingPolicyCreate) createSpec() (*PricingPolicy, *sqlgraph.CreateSpe
 	if value, ok := _c.mutation.WithdrawnAt(); ok {
 		_spec.SetField(pricingpolicy.FieldWithdrawnAt, field.TypeTime, value)
 		_node.WithdrawnAt = &value
+	}
+	if nodes := _c.mutation.CreatorIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: false,
+			Table:   pricingpolicy.CreatorTable,
+			Columns: []string{pricingpolicy.CreatorColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.CreatedBy = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.PublisherIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: false,
+			Table:   pricingpolicy.PublisherTable,
+			Columns: []string{pricingpolicy.PublisherColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.PublishedBy = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.WithdrawerIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: false,
+			Table:   pricingpolicy.WithdrawerTable,
+			Columns: []string{pricingpolicy.WithdrawerColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(account.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.WithdrawnBy = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.AuditIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

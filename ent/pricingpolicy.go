@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicy"
 	"github.com/google/uuid"
 )
@@ -61,17 +62,56 @@ type PricingPolicy struct {
 
 // PricingPolicyEdges holds the relations/edges for other nodes in the graph.
 type PricingPolicyEdges struct {
+	// Creator holds the value of the creator edge.
+	Creator *Account `json:"creator,omitempty"`
+	// Publisher holds the value of the publisher edge.
+	Publisher *Account `json:"publisher,omitempty"`
+	// Withdrawer holds the value of the withdrawer edge.
+	Withdrawer *Account `json:"withdrawer,omitempty"`
 	// Audit holds the value of the audit edge.
 	Audit []*PricingPolicyAudit `json:"audit,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [1]bool
+	loadedTypes [4]bool
+}
+
+// CreatorOrErr returns the Creator value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e PricingPolicyEdges) CreatorOrErr() (*Account, error) {
+	if e.Creator != nil {
+		return e.Creator, nil
+	} else if e.loadedTypes[0] {
+		return nil, &NotFoundError{label: account.Label}
+	}
+	return nil, &NotLoadedError{edge: "creator"}
+}
+
+// PublisherOrErr returns the Publisher value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e PricingPolicyEdges) PublisherOrErr() (*Account, error) {
+	if e.Publisher != nil {
+		return e.Publisher, nil
+	} else if e.loadedTypes[1] {
+		return nil, &NotFoundError{label: account.Label}
+	}
+	return nil, &NotLoadedError{edge: "publisher"}
+}
+
+// WithdrawerOrErr returns the Withdrawer value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e PricingPolicyEdges) WithdrawerOrErr() (*Account, error) {
+	if e.Withdrawer != nil {
+		return e.Withdrawer, nil
+	} else if e.loadedTypes[2] {
+		return nil, &NotFoundError{label: account.Label}
+	}
+	return nil, &NotLoadedError{edge: "withdrawer"}
 }
 
 // AuditOrErr returns the Audit value or an error if the edge
 // was not loaded in eager-loading.
 func (e PricingPolicyEdges) AuditOrErr() ([]*PricingPolicyAudit, error) {
-	if e.loadedTypes[0] {
+	if e.loadedTypes[3] {
 		return e.Audit, nil
 	}
 	return nil, &NotLoadedError{edge: "audit"}
@@ -237,6 +277,21 @@ func (_m *PricingPolicy) assignValues(columns []string, values []any) error {
 // This includes values selected through modifiers, order, etc.
 func (_m *PricingPolicy) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
+}
+
+// QueryCreator queries the "creator" edge of the PricingPolicy entity.
+func (_m *PricingPolicy) QueryCreator() *AccountQuery {
+	return NewPricingPolicyClient(_m.config).QueryCreator(_m)
+}
+
+// QueryPublisher queries the "publisher" edge of the PricingPolicy entity.
+func (_m *PricingPolicy) QueryPublisher() *AccountQuery {
+	return NewPricingPolicyClient(_m.config).QueryPublisher(_m)
+}
+
+// QueryWithdrawer queries the "withdrawer" edge of the PricingPolicy entity.
+func (_m *PricingPolicy) QueryWithdrawer() *AccountQuery {
+	return NewPricingPolicyClient(_m.config).QueryWithdrawer(_m)
 }
 
 // QueryAudit queries the "audit" edge of the PricingPolicy entity.

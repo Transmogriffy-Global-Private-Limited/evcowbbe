@@ -14,6 +14,8 @@ import (
 // CustomerAddress stores reusable addresses, not ephemeral service locations.
 type CustomerAddress struct{ ent.Schema }
 
+func (CustomerAddress) Mixin() []ent.Mixin { return []ent.Mixin{sqlIntegrity("customer_addresses")} }
+
 func (CustomerAddress) Fields() []ent.Field {
 	return []ent.Field{
 		field.UUID("id", uuid.UUID{}).Default(uuid.New).Immutable(),

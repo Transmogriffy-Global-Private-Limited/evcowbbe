@@ -1,2 +1,8 @@
 migrations/*.sql text eol=lf
 internal/database/migrations/*.sql text eol=lf
+ent/*.go text eol=lf
+ent/**/*.go text eol=lf
+cmd/atlas-baseline/*.go text eol=lf
+ent/migrate/migrations/*.sql text eol=lf
+ent/migrate/migrations/atlas.sum text eol=lf
+atlas.hcl text eol=lf

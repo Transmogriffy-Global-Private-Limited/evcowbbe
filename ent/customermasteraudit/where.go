@@ -132,26 +132,6 @@ func ActorAccountIDNotIn(vs ...uuid.UUID) predicate.CustomerMasterAudit {
 	return predicate.CustomerMasterAudit(sql.FieldNotIn(FieldActorAccountID, vs...))
 }
 
-// ActorAccountIDGT applies the GT predicate on the "actor_account_id" field.
-func ActorAccountIDGT(v uuid.UUID) predicate.CustomerMasterAudit {
-	return predicate.CustomerMasterAudit(sql.FieldGT(FieldActorAccountID, v))
-}
-
-// ActorAccountIDGTE applies the GTE predicate on the "actor_account_id" field.
-func ActorAccountIDGTE(v uuid.UUID) predicate.CustomerMasterAudit {
-	return predicate.CustomerMasterAudit(sql.FieldGTE(FieldActorAccountID, v))
-}
-
-// ActorAccountIDLT applies the LT predicate on the "actor_account_id" field.
-func ActorAccountIDLT(v uuid.UUID) predicate.CustomerMasterAudit {
-	return predicate.CustomerMasterAudit(sql.FieldLT(FieldActorAccountID, v))
-}
-
-// ActorAccountIDLTE applies the LTE predicate on the "actor_account_id" field.
-func ActorAccountIDLTE(v uuid.UUID) predicate.CustomerMasterAudit {
-	return predicate.CustomerMasterAudit(sql.FieldLTE(FieldActorAccountID, v))
-}
-
 // ActorAccountIDIsNil applies the IsNil predicate on the "actor_account_id" field.
 func ActorAccountIDIsNil() predicate.CustomerMasterAudit {
 	return predicate.CustomerMasterAudit(sql.FieldIsNull(FieldActorAccountID))
@@ -405,6 +385,29 @@ func OccurredAtLT(v time.Time) predicate.CustomerMasterAudit {
 // OccurredAtLTE applies the LTE predicate on the "occurred_at" field.
 func OccurredAtLTE(v time.Time) predicate.CustomerMasterAudit {
 	return predicate.CustomerMasterAudit(sql.FieldLTE(FieldOccurredAt, v))
+}
+
+// HasActorAccount applies the HasEdge predicate on the "actor_account" edge.
+func HasActorAccount() predicate.CustomerMasterAudit {
+	return predicate.CustomerMasterAudit(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, ActorAccountTable, ActorAccountColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasActorAccountWith applies the HasEdge predicate on the "actor_account" edge with a given conditions (other predicates).
+func HasActorAccountWith(preds ...predicate.Account) predicate.CustomerMasterAudit {
+	return predicate.CustomerMasterAudit(func(s *sql.Selector) {
+		step := newActorAccountStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
 }
 
 // HasCustomer applies the HasEdge predicate on the "customer" edge.

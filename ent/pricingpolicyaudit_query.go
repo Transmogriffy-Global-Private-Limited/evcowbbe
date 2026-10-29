@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/predicate"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicy"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicyaudit"
@@ -24,6 +25,7 @@ type PricingPolicyAuditQuery struct {
 	order      []pricingpolicyaudit.OrderOption
 	inters     []Interceptor
 	predicates []predicate.PricingPolicyAudit
+	withActor  *AccountQuery
 	withPolicy *PricingPolicyQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -59,6 +61,28 @@ func (_q *PricingPolicyAuditQuery) Unique(unique bool) *PricingPolicyAuditQuery 
 func (_q *PricingPolicyAuditQuery) Order(o ...pricingpolicyaudit.OrderOption) *PricingPolicyAuditQuery {
 	_q.order = append(_q.order, o...)
 	return _q
+}
+
+// QueryActor chains the current query on the "actor" edge.
+func (_q *PricingPolicyAuditQuery) QueryActor() *AccountQuery {
+	query := (&AccountClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(pricingpolicyaudit.Table, pricingpolicyaudit.FieldID, selector),
+			sqlgraph.To(account.Table, account.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, pricingpolicyaudit.ActorTable, pricingpolicyaudit.ActorColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
 }
 
 // QueryPolicy chains the current query on the "policy" edge.
@@ -275,11 +299,23 @@ func (_q *PricingPolicyAuditQuery) Clone() *PricingPolicyAuditQuery {
 		order:      append([]pricingpolicyaudit.OrderOption{}, _q.order...),
 		inters:     append([]Interceptor{}, _q.inters...),
 		predicates: append([]predicate.PricingPolicyAudit{}, _q.predicates...),
+		withActor:  _q.withActor.Clone(),
 		withPolicy: _q.withPolicy.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
 	}
+}
+
+// WithActor tells the query-builder to eager-load the nodes that are connected to
+// the "actor" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *PricingPolicyAuditQuery) WithActor(opts ...func(*AccountQuery)) *PricingPolicyAuditQuery {
+	query := (&AccountClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withActor = query
+	return _q
 }
 
 // WithPolicy tells the query-builder to eager-load the nodes that are connected to
@@ -371,7 +407,8 @@ func (_q *PricingPolicyAuditQuery) sqlAll(ctx context.Context, hooks ...queryHoo
 	var (
 		nodes       = []*PricingPolicyAudit{}
 		_spec       = _q.querySpec()
-		loadedTypes = [1]bool{
+		loadedTypes = [2]bool{
+			_q.withActor != nil,
 			_q.withPolicy != nil,
 		}
 	)
@@ -393,6 +430,12 @@ func (_q *PricingPolicyAuditQuery) sqlAll(ctx context.Context, hooks ...queryHoo
 	if len(nodes) == 0 {
 		return nodes, nil
 	}
+	if query := _q.withActor; query != nil {
+		if err := _q.loadActor(ctx, query, nodes, nil,
+			func(n *PricingPolicyAudit, e *Account) { n.Edges.Actor = e }); err != nil {
+			return nil, err
+		}
+	}
 	if query := _q.withPolicy; query != nil {
 		if err := _q.loadPolicy(ctx, query, nodes, nil,
 			func(n *PricingPolicyAudit, e *PricingPolicy) { n.Edges.Policy = e }); err != nil {
@@ -402,6 +445,38 @@ func (_q *PricingPolicyAuditQuery) sqlAll(ctx context.Context, hooks ...queryHoo
 	return nodes, nil
 }
 
+func (_q *PricingPolicyAuditQuery) loadActor(ctx context.Context, query *AccountQuery, nodes []*PricingPolicyAudit, init func(*PricingPolicyAudit), assign func(*PricingPolicyAudit, *Account)) error {
+	ids := make([]uuid.UUID, 0, len(nodes))
+	nodeids := make(map[uuid.UUID][]*PricingPolicyAudit)
+	for i := range nodes {
+		if nodes[i].ActorID == nil {
+			continue
+		}
+		fk := *nodes[i].ActorID
+		if _, ok := nodeids[fk]; !ok {
+			ids = append(ids, fk)
+		}
+		nodeids[fk] = append(nodeids[fk], nodes[i])
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	query.Where(account.IDIn(ids...))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		nodes, ok := nodeids[n.ID]
+		if !ok {
+			return fmt.Errorf(`unexpected foreign-key "actor_id" returned %v`, n.ID)
+		}
+		for i := range nodes {
+			assign(nodes[i], n)
+		}
+	}
+	return nil
+}
 func (_q *PricingPolicyAuditQuery) loadPolicy(ctx context.Context, query *PricingPolicyQuery, nodes []*PricingPolicyAudit, init func(*PricingPolicyAudit), assign func(*PricingPolicyAudit, *PricingPolicy)) error {
 	ids := make([]uuid.UUID, 0, len(nodes))
 	nodeids := make(map[uuid.UUID][]*PricingPolicyAudit)
@@ -456,6 +531,9 @@ func (_q *PricingPolicyAuditQuery) querySpec() *sqlgraph.QuerySpec {
 			if fields[i] != pricingpolicyaudit.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
+		}
+		if _q.withActor != nil {
+			_spec.Node.AddColumnOnce(pricingpolicyaudit.FieldActorID)
 		}
 		if _q.withPolicy != nil {
 			_spec.Node.AddColumnOnce(pricingpolicyaudit.FieldPolicyID)

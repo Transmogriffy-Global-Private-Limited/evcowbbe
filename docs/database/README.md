@@ -1,27 +1,29 @@
-# Charger on Wheels database model: authoritative SQL + typed Ent access
+# Charger on Wheels database model: Ent + Atlas convergence
 
-Status: **local source integration candidate** (2026-10-28). This is not a VPS
-schema change or deployment. The currently deployed PostgreSQL 18 database has
-applied 001-003; local branches have prospective 004 customer and 005 Admin
-pricing. The existing migration checksums are immutable.
+Status: **Atlas convergence candidate** (2026-10-28), not a VPS schema change
+or deployment. VPS2 already has immutable migrations 001–005 and runs commit
+`1e966a2ce29bc2d1ef3e25500ee474c1ab380853`. Proposed migration 006 and
+Atlas adoption have **not** run on VPS2. Start with
+**[SINGLE_PARADIGM.md](SINGLE_PARADIGM.md)** for the one-authority developer
+workflow and the mandatory PostgreSQL cutover gates.
 
 ## What is canonical (and what is not)
 
 | Layer | Source | Purpose |
 | --- | --- | --- |
-| Applied schema | `migrations/001_*.sql` to `003_*.sql` | Immutable historical PostgreSQL changes |
-| Next executable deltas | `migrations/004_customer_foundation.sql`, then `005_admin_pricing_rules.sql` | Reviewed, ordered, additive SQL; both copied byte-identically into `internal/database/migrations/` |
-| Go entity model | `ent/schema/` | Prisma-like model definitions and relationships for 004 + 005 |
-| Generated Go client | `ent/` (`go generate ./ent`) | Typed reads, writes, predicates, and traversal for those six tables |
+| Applied schema | `migrations/001_*.sql` through `005_*.sql` | Historical, immutable PostgreSQL changes already on VPS2 |
+| Transitional key migration | `migrations/006_ent_identity_bridge.sql` and byte-identical embedded copy | Proposed bridge for Ent-compatible primary keys; **not deployed** |
+| Go entity model | `ent/schema/` | Prisma-like definitions for all **25 current application tables**, including historical constraints/relations |
+| Generated Go client | `ent/` (`go generate ./ent`) | Typed operations across those 25 models |
+| Single forward migration path **after cutover** | `atlas.hcl`, `ent/migrate/migrations/`, `atlas.sum` | Versioned Atlas SQL from the Ent target; baseline generated from immutable 001–006 |
 | Connection adapter | `internal/database/ent.go` | Uses existing `pgxpool.Pool`, no second connection pool and **no DDL** |
 | Future CMS and HAL contracts | `docs/database/reference/sql/` | 82 further CMS candidate tables and 14 separate HAL tables; **not migrations** |
 
-**There is not yet a single full-app Ent model for every future table.** Models
-for deployed Auth, RBAC and Fleet remain SQL-first and use existing pgx services.
-The six new Ent entities are the fully generated **current customer/pricing
-slice**, with explicit SQL column/type parity tests. Planned 82 CMS tables and
-14 HAL tables are kept as an inspectable relational target, not dishonestly
-presented as live tables or released migrations. The HAL has its own database.
+Current application tables are represented in Ent, but existing Auth, RBAC and
+Fleet services still execute proven pgx business logic. Future 82 CMS and 14
+HAL reference tables are **not** implemented/live Ent models. The HAL has its
+own database. Do not equate "all current table models" with "all runtime
+services converted" or "Atlas cutover finished".
 
 ## Junior backend: Prisma to Ent translation
 
@@ -33,7 +35,8 @@ presented as live tables or released migrations. The HAL has its own database.
 | `include: { vehicles: true }` | `.WithVehicles()` on `CustomerProfile.Query()` |
 | `prisma.customerVehicle.create(...)` | `client.CustomerVehicle.Create().SetCustomerID(id).SetMake(...).SetModel(...).Save(ctx)` |
 | Transaction | `tx, err := client.Tx(ctx)` then `tx.Customer...`, `tx.Commit()` or `tx.Rollback()` |
-| `prisma migrate` | **Not enabled**. Continue explicitly reviewed numeric SQL files through `cmd/migrate up` |
+| `prisma migrate dev` | After cutover: `atlas migrate diff` against disposable PostgreSQL, with human-reviewed versioned SQL |
+| `prisma migrate deploy` | After protected cutover only: separately authorized Atlas apply |
 
 Use a normal Go dependency on `github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent`.
 Share the existing pool without needing a new `DATABASE_URL`:
@@ -53,7 +56,7 @@ Required imports for that example are `internal/database` and
 
 ### Important model rules
 
-1. `accounts` = authentication identity. `principals` = `(account_id, plane)`;
+1. `accounts` = authentication identity. `principals` has natural key `(account_id, plane)`;
    `customer_profiles.id` is a **different** UUID. The PostgreSQL composite FK
    enforces that a customer belongs to an `app` principal, not to `driver` or
    `admin`. The Ent model deliberately does not fake a simple FK to `accounts`.
@@ -71,13 +74,14 @@ Required imports for that example are `internal/database` and
    accepted quotes, jobs or driver dispatch must use **one transaction**.
    A `pgx.Tx` and an `ent.Tx` cannot silently share a transaction; keep such
    workflows in existing pgx services or deliberately adapt one transaction.
-6. PostgreSQL CHECKs, FK delete restrictions, composite FK, partial/expression
-   indexes, event history and legal/commercial gates remain in the reviewed
-   SQL DDL and service logic. Ent is a typed client, **not a substitute for
-   those guarantees**. In particular, do not call `models.Schema.Create(ctx)`.
-7. Do not edit migrations that have been applied anywhere. Each subsequent
-   change needs a new reviewed `006_...sql`, `007_...sql`, etc., a byte-identical
-   embedded mirror, new Ent schema definitions, regenerated client and tests.
+6. The Ent model now includes the historical CHECKs, FK delete restrictions,
+   partial/descending indexes and named indexes that fit its model. Four
+   composite principal FKs remain enforced in PostgreSQL and independently
+   tested. Ent code generation does **not** grant authorization or prove
+   complete PostgreSQL equivalence. Never call `models.Schema.Create(ctx)`.
+7. Existing SQL 001–006 (006 is proposed) is historical and never edited.
+   Once Atlas cutover is accepted, future changes must be new versioned Atlas
+   migrations and source Ent edits, **not** new legacy `007_*.sql` mirrors.
 
 ## Local verification, no running services required
 
@@ -89,19 +93,20 @@ go build ./cmd/server
 git diff --check
 ```
 
-`ent/migrate/contract_test.go` compares all six generated Ent models to the
-existing SQL 004/005 column names and PostgreSQL types. `ent/customer_contract_test.go`
-checks generated typed queries and PostgreSQL array/decimal scanning. These
-are compilation/driver-mock tests, **not** a substitute for PostgreSQL 18
+`ent/migrate/contract_test.go` compares all 25 generated Ent tables to the
+immutable schema 001–006. Additional tests verify the historical CHECK,
+index, foreign-key and Atlas-baseline contracts. `ent/customer_contract_test.go`
+checks generated queries and PostgreSQL array/decimal scanning. These are
+compilation/driver-mock tests, **not** a substitute for PostgreSQL 18
 integration, transactional-concurrency, or negative-authorization tests.
 
 For an externally provisioned **disposable** database, run the repository's
 supported migration command with the target DB confirmed manually, verify
 `schema_migrations` versions and checksums, then run integration tests with
 `TEST_DATABASE_URL`. Never point a disposable test at VPS2's application DB.
-The migration runner intentionally never starts PostgreSQL, opens a Docker
-daemon, or applies changes at server startup. No `atlas migrate apply`, Ent
-automatic schema migration or database reset is part of this package.
+The project never starts PostgreSQL or Docker or applies DDL at server startup.
+Atlas is configured only for explicitly provisioned databases until formal
+cutover; no production apply or database reset is part of this patch.
 
 ## The full target schema and delta sequence
 

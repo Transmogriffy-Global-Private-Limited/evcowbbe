@@ -19,6 +19,12 @@ import (
 //go:embed migrations/*.sql
 var embedded embed.FS
 
+// This legacy checksum runner is frozen at the Ent identity bridge. There
+// must not be a second independent 007+ authoring path while Atlas is adopted.
+// The cutover must replace Migrate/VerifySchema with one Atlas revision ledger
+// after a separately verified and authorized database baseline migration.
+const legacyFinalMigrationVersion = 6
+
 func Open(ctx context.Context, uri string, maxConns int32) (*pgxpool.Pool, error) {
 	config, err := pgxpool.ParseConfig(uri)
 	if err != nil {
@@ -75,6 +81,9 @@ func Migrate(ctx context.Context, p *pgxpool.Pool, mode string) error {
 		version, err := strconv.Atoi(strings.SplitN(file, "_", 2)[0])
 		if err != nil || version < 1 {
 			return errors.New("invalid migration name")
+		}
+		if version > legacyFinalMigrationVersion {
+			return errors.New("legacy migration runner frozen at 006; use reviewed Atlas cutover")
 		}
 		raw, err := embedded.ReadFile("migrations/" + file)
 		if err != nil {
@@ -135,6 +144,9 @@ func VerifySchema(ctx context.Context, p *pgxpool.Pool) error {
 		version, err := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
 		if err != nil {
 			return errors.New("invalid embedded migration")
+		}
+		if version > legacyFinalMigrationVersion {
+			return errors.New("unexpected migration after frozen legacy 006 baseline")
 		}
 		raw, err := embedded.ReadFile("migrations/" + entry.Name())
 		if err != nil {

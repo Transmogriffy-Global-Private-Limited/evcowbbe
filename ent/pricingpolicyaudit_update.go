@@ -79,9 +79,6 @@ func (_u *PricingPolicyAuditUpdate) sqlSave(ctx context.Context) (_node int, err
 			}
 		}
 	}
-	if _u.mutation.ActorIDCleared() {
-		_spec.ClearField(pricingpolicyaudit.FieldActorID, field.TypeUUID)
-	}
 	if _u.mutation.BeforeValueCleared() {
 		_spec.ClearField(pricingpolicyaudit.FieldBeforeValue, field.TypeJSON)
 	}
@@ -186,9 +183,6 @@ func (_u *PricingPolicyAuditUpdateOne) sqlSave(ctx context.Context) (_node *Pric
 				ps[i](selector)
 			}
 		}
-	}
-	if _u.mutation.ActorIDCleared() {
-		_spec.ClearField(pricingpolicyaudit.FieldActorID, field.TypeUUID)
 	}
 	if _u.mutation.BeforeValueCleared() {
 		_spec.ClearField(pricingpolicyaudit.FieldBeforeValue, field.TypeJSON)

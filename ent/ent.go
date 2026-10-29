@@ -12,12 +12,31 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/admincapabilityoverride"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/adminrbacaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/adminroleassignment"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/assetmaintenanceperiod"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authactiontoken"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authchallenge"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authmailoutbox"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authratelimit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/authsession"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/charger"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/chargerconnector"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/consumedrefreshtoken"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customeraddress"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customermasteraudit"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customerprofile"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customervehicle"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/fleetassetaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/mutationidempotencyreceipt"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicy"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/pricingpolicyaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/principal"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/securityaudit"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/servicevehicle"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/vehiclechargerpairing"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -78,12 +97,31 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			customeraddress.Table:     customeraddress.ValidColumn,
-			customermasteraudit.Table: customermasteraudit.ValidColumn,
-			customerprofile.Table:     customerprofile.ValidColumn,
-			customervehicle.Table:     customervehicle.ValidColumn,
-			pricingpolicy.Table:       pricingpolicy.ValidColumn,
-			pricingpolicyaudit.Table:  pricingpolicyaudit.ValidColumn,
+			account.Table:                    account.ValidColumn,
+			admincapabilityoverride.Table:    admincapabilityoverride.ValidColumn,
+			adminrbacaudit.Table:             adminrbacaudit.ValidColumn,
+			adminroleassignment.Table:        adminroleassignment.ValidColumn,
+			assetmaintenanceperiod.Table:     assetmaintenanceperiod.ValidColumn,
+			authactiontoken.Table:            authactiontoken.ValidColumn,
+			authchallenge.Table:              authchallenge.ValidColumn,
+			authmailoutbox.Table:             authmailoutbox.ValidColumn,
+			authratelimit.Table:              authratelimit.ValidColumn,
+			authsession.Table:                authsession.ValidColumn,
+			charger.Table:                    charger.ValidColumn,
+			chargerconnector.Table:           chargerconnector.ValidColumn,
+			consumedrefreshtoken.Table:       consumedrefreshtoken.ValidColumn,
+			customeraddress.Table:            customeraddress.ValidColumn,
+			customermasteraudit.Table:        customermasteraudit.ValidColumn,
+			customerprofile.Table:            customerprofile.ValidColumn,
+			customervehicle.Table:            customervehicle.ValidColumn,
+			fleetassetaudit.Table:            fleetassetaudit.ValidColumn,
+			mutationidempotencyreceipt.Table: mutationidempotencyreceipt.ValidColumn,
+			pricingpolicy.Table:              pricingpolicy.ValidColumn,
+			pricingpolicyaudit.Table:         pricingpolicyaudit.ValidColumn,
+			principal.Table:                  principal.ValidColumn,
+			securityaudit.Table:              securityaudit.ValidColumn,
+			servicevehicle.Table:             servicevehicle.ValidColumn,
+			vehiclechargerpairing.Table:      vehiclechargerpairing.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

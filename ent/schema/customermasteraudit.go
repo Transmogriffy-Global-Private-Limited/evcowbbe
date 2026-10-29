@@ -17,6 +17,10 @@ import (
 // transaction; business rules must never be delegated to Ent lifecycle hooks.
 type CustomerMasterAudit struct{ ent.Schema }
 
+func (CustomerMasterAudit) Mixin() []ent.Mixin {
+	return []ent.Mixin{sqlIntegrity("customer_master_audit")}
+}
+
 func (CustomerMasterAudit) Annotations() []schema.Annotation {
 	return []schema.Annotation{entsql.Annotation{Table: "customer_master_audit"}}
 }

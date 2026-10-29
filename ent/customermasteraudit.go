@@ -9,6 +9,7 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/account"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customermasteraudit"
 	"github.com/Transmogriffy-Global-Private-Limited/evcowbbe/ent/customerprofile"
 	"github.com/google/uuid"
@@ -44,11 +45,24 @@ type CustomerMasterAudit struct {
 
 // CustomerMasterAuditEdges holds the relations/edges for other nodes in the graph.
 type CustomerMasterAuditEdges struct {
+	// ActorAccount holds the value of the actor_account edge.
+	ActorAccount *Account `json:"actor_account,omitempty"`
 	// Customer holds the value of the customer edge.
 	Customer *CustomerProfile `json:"customer,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [1]bool
+	loadedTypes [2]bool
+}
+
+// ActorAccountOrErr returns the ActorAccount value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e CustomerMasterAuditEdges) ActorAccountOrErr() (*Account, error) {
+	if e.ActorAccount != nil {
+		return e.ActorAccount, nil
+	} else if e.loadedTypes[0] {
+		return nil, &NotFoundError{label: account.Label}
+	}
+	return nil, &NotLoadedError{edge: "actor_account"}
 }
 
 // CustomerOrErr returns the Customer value or an error if the edge
@@ -56,7 +70,7 @@ type CustomerMasterAuditEdges struct {
 func (e CustomerMasterAuditEdges) CustomerOrErr() (*CustomerProfile, error) {
 	if e.Customer != nil {
 		return e.Customer, nil
-	} else if e.loadedTypes[0] {
+	} else if e.loadedTypes[1] {
 		return nil, &NotFoundError{label: customerprofile.Label}
 	}
 	return nil, &NotLoadedError{edge: "customer"}
@@ -160,6 +174,11 @@ func (_m *CustomerMasterAudit) assignValues(columns []string, values []any) erro
 // This includes values selected through modifiers, order, etc.
 func (_m *CustomerMasterAudit) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
+}
+
+// QueryActorAccount queries the "actor_account" edge of the CustomerMasterAudit entity.
+func (_m *CustomerMasterAudit) QueryActorAccount() *AccountQuery {
+	return NewCustomerMasterAuditClient(_m.config).QueryActorAccount(_m)
 }
 
 // QueryCustomer queries the "customer" edge of the CustomerMasterAudit entity.
