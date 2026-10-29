@@ -4,9 +4,6 @@ from django.db import models
 from django.db.models import Q, F
 
 
-def uid():
-    return uuid.uuid4()
-
 class Timestamped(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -14,7 +11,7 @@ class Timestamped(models.Model):
         abstract = True
 
 class Account(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(max_length=254, unique=True)
     password_hash = models.CharField(max_length=256)
     email_verified = models.BooleanField(default=False)
@@ -23,7 +20,7 @@ class Account(Timestamped):
         constraints = [models.CheckConstraint(condition=Q(email__regex=r'^[^A-Z]+$'), name="cow_email_lower")]
 
 class Principal(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="principals")
     plane = models.CharField(max_length=12, choices=[(x,x) for x in ("app","driver","admin")])
     status = models.CharField(max_length=12, choices=[(x,x) for x in ("ACTIVE","PENDING","SUSPENDED")])
@@ -31,7 +28,7 @@ class Principal(Timestamped):
         constraints = [models.UniqueConstraint(fields=["account", "plane"], name="cow_principal_per_plane")]
 
 class AuthSession(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     principal = models.ForeignKey(Principal, on_delete=models.CASCADE)
     access_digest = models.CharField(max_length=64, unique=True)
     refresh_digest = models.CharField(max_length=64, unique=True)
@@ -53,7 +50,7 @@ class ConsumedRefreshToken(models.Model):
     consumed_at = models.DateTimeField(auto_now_add=True)
 
 class AuthChallenge(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(Account, on_delete=models.CASCADE)
     plane = models.CharField(max_length=12)
     purpose = models.CharField(max_length=20)
@@ -71,14 +68,14 @@ class AuthActionToken(Timestamped):
     consumed_at = models.DateTimeField(null=True)
 
 class AdminRole(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     principal = models.ForeignKey(Principal, on_delete=models.CASCADE)
     role = models.CharField(max_length=32)
     class Meta:
         constraints = [models.UniqueConstraint(fields=["principal","role"], name="cow_one_role_assignment")]
 
 class AdminOverride(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     principal = models.ForeignKey(Principal, on_delete=models.CASCADE)
     capability = models.CharField(max_length=100)
     decision = models.CharField(max_length=5, choices=[("ALLOW","ALLOW"),("DENY","DENY")])
@@ -86,7 +83,7 @@ class AdminOverride(Timestamped):
         constraints = [models.UniqueConstraint(fields=["principal","capability"], name="cow_one_capability_override")]
 
 class AuditEvent(models.Model):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     actor = models.ForeignKey(Principal, null=True, on_delete=models.SET_NULL)
     target_type = models.CharField(max_length=60)
     target_id = models.UUIDField(null=True)
@@ -95,7 +92,7 @@ class AuditEvent(models.Model):
     occurred_at = models.DateTimeField(auto_now_add=True)
 
 class Outbox(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     kind = models.CharField(max_length=50)
     destination = models.CharField(max_length=120)
     event_key = models.CharField(max_length=160, unique=True)
@@ -107,7 +104,7 @@ class Outbox(Timestamped):
     delivered_at = models.DateTimeField(null=True)
 
 class IdempotencyReceipt(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     actor = models.ForeignKey(Principal, on_delete=models.PROTECT)
     scope = models.CharField(max_length=90)
     key = models.CharField(max_length=128)
@@ -119,7 +116,7 @@ class IdempotencyReceipt(Timestamped):
         constraints = [models.UniqueConstraint(fields=["actor", "scope", "key"], name="cow_mutation_once")]
 
 class CustomerVehicle(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(Principal, on_delete=models.PROTECT)
     label = models.CharField(max_length=100, blank=True)
     make = models.CharField(max_length=120)
@@ -135,7 +132,7 @@ class CustomerVehicle(Timestamped):
     version = models.PositiveIntegerField(default=1)
 
 class CustomerAddress(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(Principal, on_delete=models.PROTECT)
     label = models.CharField(max_length=80, blank=True)
     address = models.CharField(max_length=700)
@@ -150,7 +147,7 @@ class CustomerAddress(Timestamped):
         constraints = [models.UniqueConstraint(fields=["owner"], condition=Q(active=True,is_default=True), name="cow_one_active_default_address")]
 
 class ServiceVehicle(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     asset_tag = models.CharField(max_length=64, unique=True)
     registration_number = models.CharField(max_length=32, blank=True)
     make = models.CharField(max_length=120)
@@ -161,7 +158,7 @@ class ServiceVehicle(Timestamped):
     version = models.PositiveIntegerField(default=1)
 
 class Charger(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     asset_tag = models.CharField(max_length=64, unique=True)
     hal_identity = models.CharField(max_length=128, unique=True)
     manufacturer = models.CharField(max_length=120)
@@ -172,7 +169,7 @@ class Charger(Timestamped):
     version = models.PositiveIntegerField(default=1)
 
 class ChargerConnector(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
     connector_number = models.PositiveSmallIntegerField()
     connector_type = models.CharField(max_length=40)
@@ -182,7 +179,7 @@ class ChargerConnector(Timestamped):
         constraints = [models.UniqueConstraint(fields=["charger", "connector_number"], name="cow_connector_number_unique")]
 
 class VehicleChargerPairing(models.Model):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     vehicle = models.ForeignKey(ServiceVehicle, on_delete=models.PROTECT)
     charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
     effective_from = models.DateTimeField()
@@ -194,13 +191,13 @@ class VehicleChargerPairing(models.Model):
         ]
 
 class DriverProfile(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     principal = models.OneToOneField(Principal, on_delete=models.PROTECT)
     eligibility = models.CharField(max_length=24, default="PENDING")
     licence_valid_until = models.DateField(null=True)
 
 class DutySession(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     driver = models.ForeignKey(DriverProfile, on_delete=models.PROTECT)
     vehicle = models.ForeignKey(ServiceVehicle, on_delete=models.PROTECT)
     charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
@@ -216,7 +213,7 @@ class DutySession(Timestamped):
         ]
 
 class PricingPolicy(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=120)
     revision = models.PositiveIntegerField()
     status = models.CharField(max_length=16, default="DRAFT")
@@ -232,7 +229,7 @@ class PricingPolicy(Timestamped):
         ]
 
 class ServiceRequest(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey(Principal, on_delete=models.PROTECT)
     vehicle_snapshot = models.JSONField()
     address_snapshot = models.JSONField()
@@ -240,7 +237,7 @@ class ServiceRequest(Timestamped):
     state = models.CharField(max_length=24, default="REQUESTED")
 
 class Quote(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     request = models.ForeignKey(ServiceRequest, on_delete=models.PROTECT)
     pricing_policy = models.ForeignKey(PricingPolicy, on_delete=models.PROTECT)
     pricing_snapshot = models.JSONField()
@@ -252,7 +249,7 @@ class Quote(Timestamped):
         constraints = [models.UniqueConstraint(fields=["request"], condition=Q(accepted_at__isnull=False), name="cow_one_accepted_quote_per_request")]
 
 class ServiceJob(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     request = models.OneToOneField(ServiceRequest, on_delete=models.PROTECT)
     accepted_quote = models.OneToOneField(Quote, on_delete=models.PROTECT)
     state = models.CharField(max_length=26, default="DISPATCHING")
@@ -261,7 +258,7 @@ class ServiceJob(Timestamped):
     finalized_at = models.DateTimeField(null=True)
 
 class JobEvent(models.Model):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(ServiceJob, on_delete=models.PROTECT)
     action = models.CharField(max_length=55)
     from_state = models.CharField(max_length=26)
@@ -270,7 +267,7 @@ class JobEvent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class ChargingSession(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(ServiceJob, on_delete=models.PROTECT)
     charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
     connector_number = models.PositiveSmallIntegerField()
@@ -288,7 +285,7 @@ class ChargingSession(Timestamped):
         ]
 
 class HALCommand(Timestamped):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(ServiceJob, on_delete=models.PROTECT)
     charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
     action = models.CharField(max_length=40)
@@ -298,7 +295,7 @@ class HALCommand(Timestamped):
     outcome_at = models.DateTimeField(null=True)
 
 class HALFact(models.Model):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event_id = models.UUIDField(unique=True)
     kind = models.CharField(max_length=45)
     contract_version = models.CharField(max_length=16)
@@ -311,7 +308,7 @@ class HALFact(models.Model):
     ingested_at = models.DateTimeField(auto_now_add=True)
 
 class MeterObservation(models.Model):
-    id = models.UUIDField(primary_key=True, default=uid, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.ForeignKey(ChargingSession, on_delete=models.PROTECT)
     fact = models.OneToOneField(HALFact, on_delete=models.PROTECT)
     energy_wh = models.BigIntegerField()

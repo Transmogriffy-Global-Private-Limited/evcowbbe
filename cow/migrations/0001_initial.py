@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('email', models.EmailField(max_length=254, unique=True)),
                 ('password_hash', models.CharField(max_length=256)),
                 ('email_verified', models.BooleanField(default=False)),
@@ -25,7 +25,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('account', models.ForeignKey('cow.account', on_delete=models.PROTECT, related_name='principals')),
                 ('plane', models.CharField(max_length=12, choices=[(x, x) for x in ('app', 'driver', 'admin')])),
                 ('status', models.CharField(max_length=12, choices=[(x, x) for x in ('ACTIVE', 'PENDING', 'SUSPENDED')])),
@@ -37,7 +37,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('principal', models.ForeignKey('cow.principal', on_delete=models.CASCADE)),
                 ('access_digest', models.CharField(max_length=64, unique=True)),
                 ('refresh_digest', models.CharField(max_length=64, unique=True)),
@@ -51,7 +51,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='AuthRateBucket',
             fields=[
-                ('key_digest', models.CharField(max_length=64, primary_key=True)),
+                ('key_digest', models.CharField(max_length=64, primary_key=True, serialize=False)),
                 ('hits', models.PositiveIntegerField(default=0)),
                 ('window_ends_at', models.DateTimeField()),
             ],
@@ -59,7 +59,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='ConsumedRefreshToken',
             fields=[
-                ('digest', models.CharField(max_length=64, primary_key=True)),
+                ('digest', models.CharField(max_length=64, primary_key=True, serialize=False)),
                 ('session', models.ForeignKey('cow.authsession', on_delete=models.CASCADE)),
                 ('consumed_at', models.DateTimeField(auto_now_add=True)),
             ],
@@ -69,7 +69,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('account', models.ForeignKey('cow.account', on_delete=models.CASCADE)),
                 ('plane', models.CharField(max_length=12)),
                 ('purpose', models.CharField(max_length=20)),
@@ -85,7 +85,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('digest', models.CharField(max_length=64, primary_key=True)),
+                ('digest', models.CharField(max_length=64, primary_key=True, serialize=False)),
                 ('account', models.ForeignKey('cow.account', on_delete=models.CASCADE)),
                 ('kind', models.CharField(max_length=20)),
                 ('expires_at', models.DateTimeField()),
@@ -97,7 +97,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('principal', models.ForeignKey('cow.principal', on_delete=models.CASCADE)),
                 ('role', models.CharField(max_length=32)),
             ],
@@ -108,7 +108,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('principal', models.ForeignKey('cow.principal', on_delete=models.CASCADE)),
                 ('capability', models.CharField(max_length=100)),
                 ('decision', models.CharField(max_length=5, choices=[('ALLOW', 'ALLOW'), ('DENY', 'DENY')])),
@@ -118,7 +118,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='AuditEvent',
             fields=[
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('actor', models.ForeignKey('cow.principal', null=True, on_delete=models.SET_NULL)),
                 ('target_type', models.CharField(max_length=60)),
                 ('target_id', models.UUIDField(null=True)),
@@ -132,7 +132,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('kind', models.CharField(max_length=50)),
                 ('destination', models.CharField(max_length=120)),
                 ('event_key', models.CharField(max_length=160, unique=True)),
@@ -149,7 +149,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('actor', models.ForeignKey('cow.principal', on_delete=models.PROTECT)),
                 ('scope', models.CharField(max_length=90)),
                 ('key', models.CharField(max_length=128)),
@@ -165,7 +165,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('owner', models.ForeignKey('cow.principal', on_delete=models.PROTECT)),
                 ('label', models.CharField(max_length=100, blank=True)),
                 ('make', models.CharField(max_length=120)),
@@ -186,7 +186,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('owner', models.ForeignKey('cow.principal', on_delete=models.PROTECT)),
                 ('label', models.CharField(max_length=80, blank=True)),
                 ('address', models.CharField(max_length=700)),
@@ -205,7 +205,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('asset_tag', models.CharField(max_length=64, unique=True)),
                 ('registration_number', models.CharField(max_length=32, blank=True)),
                 ('make', models.CharField(max_length=120)),
@@ -221,7 +221,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('asset_tag', models.CharField(max_length=64, unique=True)),
                 ('hal_identity', models.CharField(max_length=128, unique=True)),
                 ('manufacturer', models.CharField(max_length=120)),
@@ -237,7 +237,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('charger', models.ForeignKey('cow.charger', on_delete=models.PROTECT)),
                 ('connector_number', models.PositiveSmallIntegerField()),
                 ('connector_type', models.CharField(max_length=40)),
@@ -249,7 +249,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='VehicleChargerPairing',
             fields=[
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('vehicle', models.ForeignKey('cow.servicevehicle', on_delete=models.PROTECT)),
                 ('charger', models.ForeignKey('cow.charger', on_delete=models.PROTECT)),
                 ('effective_from', models.DateTimeField()),
@@ -263,7 +263,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('principal', models.OneToOneField('cow.principal', on_delete=models.PROTECT)),
                 ('eligibility', models.CharField(max_length=24, default='PENDING')),
                 ('licence_valid_until', models.DateField(null=True)),
@@ -274,7 +274,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('driver', models.ForeignKey('cow.driverprofile', on_delete=models.PROTECT)),
                 ('vehicle', models.ForeignKey('cow.servicevehicle', on_delete=models.PROTECT)),
                 ('charger', models.ForeignKey('cow.charger', on_delete=models.PROTECT)),
@@ -290,7 +290,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('name', models.CharField(max_length=120)),
                 ('revision', models.PositiveIntegerField()),
                 ('status', models.CharField(max_length=16, default='DRAFT')),
@@ -307,7 +307,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('customer', models.ForeignKey('cow.principal', on_delete=models.PROTECT)),
                 ('vehicle_snapshot', models.JSONField()),
                 ('address_snapshot', models.JSONField()),
@@ -320,7 +320,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('request', models.ForeignKey('cow.servicerequest', on_delete=models.PROTECT)),
                 ('pricing_policy', models.ForeignKey('cow.pricingpolicy', on_delete=models.PROTECT)),
                 ('pricing_snapshot', models.JSONField()),
@@ -336,7 +336,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('request', models.OneToOneField('cow.servicerequest', on_delete=models.PROTECT)),
                 ('accepted_quote', models.OneToOneField('cow.quote', on_delete=models.PROTECT)),
                 ('state', models.CharField(max_length=26, default='DISPATCHING')),
@@ -348,7 +348,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='JobEvent',
             fields=[
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('job', models.ForeignKey('cow.servicejob', on_delete=models.PROTECT)),
                 ('action', models.CharField(max_length=55)),
                 ('from_state', models.CharField(max_length=26)),
@@ -362,7 +362,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('job', models.ForeignKey('cow.servicejob', on_delete=models.PROTECT)),
                 ('charger', models.ForeignKey('cow.charger', on_delete=models.PROTECT)),
                 ('connector_number', models.PositiveSmallIntegerField()),
@@ -381,7 +381,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('job', models.ForeignKey('cow.servicejob', on_delete=models.PROTECT)),
                 ('charger', models.ForeignKey('cow.charger', on_delete=models.PROTECT)),
                 ('action', models.CharField(max_length=40)),
@@ -394,7 +394,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='HALFact',
             fields=[
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('event_id', models.UUIDField(unique=True)),
                 ('kind', models.CharField(max_length=45)),
                 ('contract_version', models.CharField(max_length=16)),
@@ -410,7 +410,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='MeterObservation',
             fields=[
-                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
+                ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
                 ('session', models.ForeignKey('cow.chargingsession', on_delete=models.PROTECT)),
                 ('fact', models.OneToOneField('cow.halfact', on_delete=models.PROTECT)),
                 ('energy_wh', models.BigIntegerField()),
