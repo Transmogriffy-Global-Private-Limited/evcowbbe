@@ -11,11 +11,13 @@
 | Static Django-model to 0001 migration field coverage | PASS | AST comparison test |
 | 0002 SQL table reference consistency | PASS | static inspection, NOT PostgreSQL execution |
 | Initial migration determinism | PASS | generator reports `Verified unchanged` |
-| All independently executable source/static tests | PASS | **15 tests passed**; output in `2026-10-29_static_tests.log` |
-| Django import / `manage.py check` | BLOCKED | Django not installed in isolated build container; outbound pip DNS unavailable |
-| Native `makemigrations --check` | BLOCKED | Django package unavailable |
-| PostgreSQL 18 migrations and DB catalog checks | NOT RUN | no designated isolated PostgreSQL or driver in build container |
-| Real auth and permission DB integration | NOT RUN | integration tests authored under `tests/integration`, not executed |
+| PostgreSQL harness URL/identity/role/retry rejection | PASS | pure `tests/test_pg_test_database.py`; no database contacted |
+| All independently executable source/static tests | PASS | **28 tests and 62 subtests passed** with isolated Python dependencies; PostgreSQL integration tests intentionally excluded |
+| Django import / `manage.py check` | PASS | executed with process-local test-only configuration; no issues |
+| Offline migration-state consistency | PASS | static migration-parity test passed; no database contacted |
+| Native `makemigrations --check --dry-run` | PASS WITH WARNING | Django reported `No changes detected`; its non-mutating history probe to the process-local dummy loopback URL was rejected before authentication, so this is not PostgreSQL acceptance evidence |
+| PostgreSQL 18 migrations, replay, catalog, trigger, constraint, index and sequence checks | NOT RUN | requires a newly provisioned marker-verified disposable `_test` database and least-privilege role |
+| Real auth and permission DB integration | NOT RUN | `scripts/run_pg_tests.py` is now the only supported marker-verified entry point; no target is available |
 | Real outbox SMTP delivery | NOT RUN | no real SMTP configured; don't infer send acceptance |
 | Go HAL network conformance | NOT RUN | Go HAL not implemented/connected for this project |
 | Physical charger | NOT RUN | no hardware environment / approval |
