@@ -1,0 +1,20 @@
+test_versioned_wire_fixtures (test_json_contract_fixtures.ContractFixtures.test_versioned_wire_fixtures) ... ok
+test_initial_migration_model_and_field_coverage (test_migration_parity.MigrationParity.test_initial_migration_model_and_field_coverage) ... ok
+test_sql_guard_tables_exist (test_migration_parity.MigrationParity.test_sql_guard_tables_exist) ... ok
+test_missing_and_mutated_contract_is_blocking (test_openapi_gate.OpenAPIGate.test_missing_and_mutated_contract_is_blocking) ... ok
+test_command_accepted_not_physical_start (test_pure_contracts.PureContractTests.test_command_accepted_not_physical_start) ... ok
+test_duplicate_retry_exactly_once (test_pure_contracts.PureContractTests.test_duplicate_retry_exactly_once) ... ok
+test_hal_same_command_id_cannot_change_arguments (test_pure_contracts.PureContractTests.test_hal_same_command_id_cannot_change_arguments) ... ok
+test_hmac_freshness_and_tamper (test_pure_contracts.PureContractTests.test_hmac_freshness_and_tamper) ... ok
+test_invalid_fact_contract_never_accepted (test_pure_contracts.PureContractTests.test_invalid_fact_contract_never_accepted) ... ok
+test_meter_is_not_energy_delta (test_pure_contracts.PureContractTests.test_meter_is_not_energy_delta) ... ok
+test_out_of_order_meter_before_start_is_caught_up (test_pure_contracts.PureContractTests.test_out_of_order_meter_before_start_is_caught_up) ... ok
+test_same_event_id_conflicting_payload_is_rejected (test_pure_contracts.PureContractTests.test_same_event_id_conflicting_payload_is_rejected) ... ok
+test_all_python_sources_parse (test_static_integrity.SourceIntegrity.test_all_python_sources_parse) ... ok
+test_migration_source_is_not_runtime_auto_create (test_static_integrity.SourceIntegrity.test_migration_source_is_not_runtime_auto_create) ... ok
+test_schema_has_single_django_migration_lineage (test_static_integrity.SourceIntegrity.test_schema_has_single_django_migration_lineage) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.825s
+
+OK
