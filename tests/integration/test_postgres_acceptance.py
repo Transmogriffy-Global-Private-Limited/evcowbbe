@@ -22,6 +22,8 @@ EXPECTED_CONSTRAINTS = {
     "cow_one_active_vehicle_claim",
     "cow_one_active_charger_claim",
     "cow_pricing_revision_unique",
+    "cow_admin_pricing_revision_unique",
+    "cow_admin_pricing_window",
     "cow_one_active_pricing_policy",
     "cow_one_accepted_quote_per_request",
     "cow_exact_hal_transaction_unique",
@@ -50,6 +52,7 @@ EXPECTED_TRIGGERS = {
     "cow_charger_maintenance_no_overlap",
     "cow_charger_maintenance_immutable",
     "cow_pairing_lifecycle_guard",
+    "cow_admin_pricing_revision_guard",
 }
 EXPECTED_FUNCTIONS = {
     "cow_guard_principal_plane",
@@ -62,6 +65,7 @@ EXPECTED_FUNCTIONS = {
     "cow_charger_maintenance_guard",
     "cow_charger_maintenance_append_only",
     "cow_pairing_closed_immutable",
+    "cow_admin_pricing_guard",
 }
 EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_default_address",
@@ -73,6 +77,7 @@ EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_accepted_quote_per_request",
     "cow_one_active_session_per_connector",
     "cow_one_active_pairing_per_charger",
+    "cow_admin_pricing_revision_unique",
 }
 EXPECTED_PG_CONSTRAINTS = EXPECTED_CONSTRAINTS - EXPECTED_PARTIAL_UNIQUE_INDEXES
 EXPECTED_INDEXES = (
@@ -86,6 +91,7 @@ EXPECTED_INDEXES = (
         "cow_pairing_time_range",
         "cow_pairing_lifecycle",
         "cow_charger_maintenance_range",
+        "cow_admin_pricing_window",
     }
     | EXPECTED_PARTIAL_UNIQUE_INDEXES
     | {"cow_vehicle_maint_window", "cow_charger_maint_window"}
@@ -210,5 +216,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0002_business_invariants",
         "0003_admin_fleet_vehicle_parity",
         "0004_admin_charger_connector_pairing_parity",
+        "0005_admin_rbac_pricing_parity",
     )
     assert after == before
