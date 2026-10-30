@@ -28,6 +28,11 @@ EXPECTED_CONSTRAINTS = {
     "cow_one_active_session_per_connector",
     "cow_vehicle_retired_inactive",
     "cow_vehicle_maintenance_range",
+    "cow_charger_retired_inactive",
+    "cow_connector_has_current",
+    "cow_pairing_time_range",
+    "cow_pairing_lifecycle",
+    "cow_charger_maintenance_range",
 }
 EXPECTED_TRIGGERS = {
     "cow_app_vehicle_plane",
@@ -42,6 +47,9 @@ EXPECTED_TRIGGERS = {
     "cow_pricing_terms_immutable",
     "cow_vehicle_maintenance_no_overlap",
     "cow_vehicle_maintenance_immutable",
+    "cow_charger_maintenance_no_overlap",
+    "cow_charger_maintenance_immutable",
+    "cow_pairing_lifecycle_guard",
 }
 EXPECTED_FUNCTIONS = {
     "cow_guard_principal_plane",
@@ -51,6 +59,9 @@ EXPECTED_FUNCTIONS = {
     "cow_protect_published_pricing",
     "cow_vehicle_maintenance_guard",
     "cow_vehicle_maintenance_append_only",
+    "cow_charger_maintenance_guard",
+    "cow_charger_maintenance_append_only",
+    "cow_pairing_closed_immutable",
 }
 EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_default_address",
@@ -61,6 +72,7 @@ EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_pricing_policy",
     "cow_one_accepted_quote_per_request",
     "cow_one_active_session_per_connector",
+    "cow_one_active_pairing_per_charger",
 }
 EXPECTED_PG_CONSTRAINTS = EXPECTED_CONSTRAINTS - EXPECTED_PARTIAL_UNIQUE_INDEXES
 EXPECTED_INDEXES = (
@@ -69,9 +81,14 @@ EXPECTED_INDEXES = (
         "cow_email_lower",
         "cow_vehicle_retired_inactive",
         "cow_vehicle_maintenance_range",
+        "cow_charger_retired_inactive",
+        "cow_connector_has_current",
+        "cow_pairing_time_range",
+        "cow_pairing_lifecycle",
+        "cow_charger_maintenance_range",
     }
     | EXPECTED_PARTIAL_UNIQUE_INDEXES
-    | {"cow_vehicle_maint_window"}
+    | {"cow_vehicle_maint_window", "cow_charger_maint_window"}
 )
 
 
@@ -188,5 +205,10 @@ def test_cow_migration_history_and_replay_are_stable():
     with connection.cursor() as cursor:
         cursor.execute("SELECT name FROM django_migrations WHERE app = 'cow' ORDER BY name")
         after = tuple(row[0] for row in cursor.fetchall())
-    assert before == ("0001_initial", "0002_business_invariants", "0003_admin_fleet_vehicle_parity")
+    assert before == (
+        "0001_initial",
+        "0002_business_invariants",
+        "0003_admin_fleet_vehicle_parity",
+        "0004_admin_charger_connector_pairing_parity",
+    )
     assert after == before

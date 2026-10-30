@@ -105,6 +105,7 @@ def assert_migration_history(connection) -> None:
         "0001_initial",
         "0002_business_invariants",
         "0003_admin_fleet_vehicle_parity",
+        "0004_admin_charger_connector_pairing_parity",
     ):
         raise TestDatabaseError("Django migration history is not exactly the reviewed Cow ledger")
 

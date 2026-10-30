@@ -31,6 +31,7 @@ class SourceIntegrity(unittest.TestCase):
                 "0001_initial.py",
                 "0002_business_invariants.py",
                 "0003_admin_fleet_vehicle_parity.py",
+                "0004_admin_charger_connector_pairing_parity.py",
             ],
         )
         for p in migrations:

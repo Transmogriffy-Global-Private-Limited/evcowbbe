@@ -199,34 +199,119 @@ class VehicleMaintenancePeriod(models.Model):
 class Charger(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     asset_tag = models.CharField(max_length=64, unique=True)
-    hal_identity = models.CharField(max_length=128, unique=True)
+    serial_number = models.CharField(max_length=120, unique=True, null=True, blank=True)
+    hal_identity = models.CharField(max_length=150, unique=True, null=True, blank=True)
     manufacturer = models.CharField(max_length=120)
     model = models.CharField(max_length=120)
-    rated_power_w = models.PositiveIntegerField()
+    rated_power_w = models.PositiveIntegerField(null=True, blank=True)
+    protocol_family = models.CharField(max_length=80, null=True, blank=True)
+    protocol_version = models.CharField(max_length=80, null=True, blank=True)
     active = models.BooleanField(default=True)
     operational_status = models.CharField(max_length=24, default="AVAILABLE")
+    maintenance_status = models.CharField(max_length=24, default="UNKNOWN")
+    notes = models.CharField(max_length=4000, null=True, blank=True)
     version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(operational_status="RETIRED") | Q(active=False),
+                name="cow_charger_retired_inactive",
+            )
+        ]
 
 class ChargerConnector(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
-    connector_number = models.PositiveSmallIntegerField()
-    connector_type = models.CharField(max_length=40)
+    connector_number = models.PositiveIntegerField()
+    connector_type = models.CharField(max_length=64)
     max_power_w = models.PositiveIntegerField()
+    supports_ac = models.BooleanField(default=True)
     supports_dc = models.BooleanField(default=True)
+    active = models.BooleanField(default=True)
+    version = models.PositiveIntegerField(default=1)
+
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["charger", "connector_number"], name="cow_connector_number_unique")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["charger", "connector_number"], name="cow_connector_number_unique"
+            ),
+            models.CheckConstraint(
+                condition=Q(supports_ac=True) | Q(supports_dc=True),
+                name="cow_connector_has_current",
+            ),
+        ]
 
 class VehicleChargerPairing(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     vehicle = models.ForeignKey(ServiceVehicle, on_delete=models.PROTECT)
     charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
     effective_from = models.DateTimeField()
-    effective_to = models.DateTimeField(null=True)
+    effective_to = models.DateTimeField(null=True, blank=True)
     expected = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=16,
+        default="ACTIVE",
+        choices=[(value, value) for value in ("ACTIVE", "ENDED", "INVALIDATED")],
+    )
+    source = models.CharField(
+        max_length=16,
+        default="ADMIN",
+        choices=[(value, value) for value in ("ADMIN", "RECONCILIATION")],
+    )
+    created_by = models.ForeignKey(
+        Principal, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_pairings"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    reason = models.CharField(max_length=500, default="Legacy pairing record")
+    end_reason = models.CharField(max_length=500, null=True, blank=True)
+    ended_by = models.ForeignKey(
+        Principal, null=True, blank=True, on_delete=models.SET_NULL, related_name="ended_pairings"
+    )
+
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["charger"], condition=Q(effective_to__isnull=True), name="cow_one_current_vehicle_per_charger"),
+            models.UniqueConstraint(
+                fields=["charger"],
+                condition=Q(effective_to__isnull=True),
+                name="cow_one_current_vehicle_per_charger",
+            ),
+            models.CheckConstraint(
+                condition=Q(effective_to__isnull=True) | Q(effective_to__gt=F("effective_from")),
+                name="cow_pairing_time_range",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(status="ACTIVE", effective_to__isnull=True)
+                    | (~Q(status="ACTIVE") & Q(effective_to__isnull=False))
+                ),
+                name="cow_pairing_lifecycle",
+            ),
+        ]
+
+
+class ChargerMaintenancePeriod(models.Model):
+    """Append-only planned charger maintenance; PostgreSQL serializes overlap checks."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    reason = models.CharField(max_length=500)
+    created_by = models.ForeignKey(Principal, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ends_at__gt=F("starts_at")),
+                name="cow_charger_maintenance_range",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["charger", "starts_at", "ends_at"], name="cow_charger_maint_window"
+            )
         ]
 
 class DriverProfile(Timestamped):

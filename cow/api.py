@@ -267,11 +267,6 @@ def set_override(request,account_id:UUID,capability:str,payload:OverridePayload)
              action="SET_OVERRIDE",details={"capability":capability,"decision":payload.decision,"reason":payload.reason})
     return {"data":{"capability":capability,"decision":payload.decision}}
 
-@admin.get("/chargers")
-def admin_chargers(request):
-    rbac.require(request.auth,"fleet.read")
-    return {"data":[{"id":str(v.id),"asset_tag":v.asset_tag,"hal_identity":v.hal_identity,"active":v.active} for v in Charger.objects.order_by("asset_tag")[:100]]}
-
 @admin.get("/pricing/policies")
 def pricing_policies(request):
     rbac.require(request.auth,"pricing.read")

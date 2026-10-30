@@ -57,7 +57,8 @@ It does not create a database and replaces pytest-django's normal
 - the runner role is not superuser, `CREATEDB`, `CREATEROLE`, or `BYPASSRLS`;
 - normal acceptance starts with no application tables in `public`;
 - only migrations `cow.0001_initial`, `cow.0002_business_invariants`, and the
-  additive `cow.0003_admin_fleet_vehicle_parity` are applied, then replayed
+  additive `cow.0003_admin_fleet_vehicle_parity` plus
+  `cow.0004_admin_charger_connector_pairing_parity` are applied, then replayed
   without ledger change.
 
 An authorized PostgreSQL operator must provision a new database, marker schema,
