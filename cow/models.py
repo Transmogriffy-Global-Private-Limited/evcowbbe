@@ -149,13 +149,52 @@ class CustomerAddress(Timestamped):
 class ServiceVehicle(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     asset_tag = models.CharField(max_length=64, unique=True)
-    registration_number = models.CharField(max_length=32, blank=True)
+    registration_number = models.CharField(max_length=32, unique=True, null=True, blank=True)
     make = models.CharField(max_length=120)
     model = models.CharField(max_length=120)
+    variant = models.CharField(max_length=120, null=True, blank=True)
+    vehicle_type = models.CharField(max_length=80, null=True, blank=True)
+    ownership_type = models.CharField(max_length=80, null=True, blank=True)
+    registration_valid_until = models.DateField(null=True, blank=True)
+    insurance_valid_until = models.DateField(null=True, blank=True)
+    inspection_status = models.CharField(
+        max_length=16,
+        default="UNKNOWN",
+        choices=[(value, value) for value in ("UNKNOWN", "VALID", "FAILED", "EXPIRED")],
+    )
     operational_status = models.CharField(max_length=24, default="AVAILABLE")
     maintenance_status = models.CharField(max_length=24, default="CLEAR")
     active = models.BooleanField(default=True)
+    notes = models.CharField(max_length=4000, null=True, blank=True)
     version = models.PositiveIntegerField(default=1)
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(operational_status="RETIRED") | Q(active=False),
+                name="cow_vehicle_retired_inactive",
+            )
+        ]
+
+
+class VehicleMaintenancePeriod(models.Model):
+    """Append-only planned maintenance; PostgreSQL serializes overlap checks."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vehicle = models.ForeignKey(ServiceVehicle, on_delete=models.PROTECT)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    reason = models.CharField(max_length=500)
+    created_by = models.ForeignKey(Principal, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ends_at__gt=F("starts_at")),
+                name="cow_vehicle_maintenance_range",
+            )
+        ]
+        indexes = [models.Index(fields=["vehicle", "starts_at", "ends_at"], name="cow_vehicle_maint_window")]
 
 class Charger(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

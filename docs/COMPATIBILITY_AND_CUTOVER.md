@@ -20,7 +20,7 @@ error or side-effect compatibility.
 | App/Driver/Admin register/login/refresh/logout/me | source | contract shape needs comparison |
 | 2FA, verify, reset, resend | source | real SMTP/DB not verified |
 | RBAC | partial source | catalog and assignment behavior not equivalent to all Go routes |
-| Fleet | partial source | maintenance/pairing/endpoints not yet ported |
+| Fleet | vehicle source parity partially implemented | all nine vehicle operations plus maintenance/history are source-tested; PostgreSQL acceptance and pairing/charger endpoint parity remain outstanding |
 | Pricing | partial source | full exact tariff engine/time rules not ported |
 | Customer master data | new source | old Go contract not implemented on those paths |
 | Service request/quote/job | partial source | staging-only design |

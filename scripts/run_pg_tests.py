@@ -2,7 +2,7 @@
 """Run acceptance tests against one pre-provisioned disposable PostgreSQL DB.
 
 This command never creates a database. Normal mode accepts only an empty
-application schema, migrates 0001 and 0002, proves replay, then runs pytest
+application schema, migrates the reviewed Django ledger, proves replay, then runs pytest
 with pytest-django database creation disabled. ``--reset`` is an explicit
 recovery action for the same positively identified test database.
 """
@@ -101,8 +101,12 @@ def cow_migration_names(connection) -> tuple[str, ...]:
 
 
 def assert_migration_history(connection) -> None:
-    if cow_migration_names(connection) != ("0001_initial", "0002_business_invariants"):
-        raise TestDatabaseError("Django migration history is not exactly cow 0001 and 0002")
+    if cow_migration_names(connection) != (
+        "0001_initial",
+        "0002_business_invariants",
+        "0003_admin_fleet_vehicle_parity",
+    ):
+        raise TestDatabaseError("Django migration history is not exactly the reviewed Cow ledger")
 
 
 def main() -> int:

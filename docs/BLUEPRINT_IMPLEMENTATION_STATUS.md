@@ -9,7 +9,7 @@ the entire blueprint. The table is the gating backlog, not a wish list.
 | Identity + opaque sessions | yes | no | email/OTP/provider, rate-limit/refresh DB acceptance, FE parity |
 | Admin RBAC | partial | no | full Go catalog/role grant/revoke/audit and last-admin protection |
 | Customer profiles/EVs/addresses | partial | no | temporary promotion/update/history/pagination/ownership parity |
-| Fleet assets + pairings | model + partial routes | no | full inventory changes, maintenance, history, observed mismatch |
+| Fleet assets + pairings | vehicle parity source implemented; pairings remain partial | no | nine vehicle operations, maintenance/history/audit and inventory-only availability are source-tested; marker-verified PostgreSQL acceptance is still required and pairing endpoints remain incomplete |
 | Driver recruitment/KYC | principal/profile model | no | entire approval workflow, documents, suspension, audits |
 | Scheduling/duty/geofence | duty claim model | no | full eligibility, geolocation, working schedules, live availability |
 | Dispatch/assignment/reassignment | state model only | no | eligibility engine, offers, race acceptance, reassignment, ETA |

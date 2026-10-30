@@ -26,6 +26,8 @@ EXPECTED_CONSTRAINTS = {
     "cow_one_accepted_quote_per_request",
     "cow_exact_hal_transaction_unique",
     "cow_one_active_session_per_connector",
+    "cow_vehicle_retired_inactive",
+    "cow_vehicle_maintenance_range",
 }
 EXPECTED_TRIGGERS = {
     "cow_app_vehicle_plane",
@@ -38,6 +40,8 @@ EXPECTED_TRIGGERS = {
     "cow_quote_immutable",
     "cow_request_snapshot_immutable",
     "cow_pricing_terms_immutable",
+    "cow_vehicle_maintenance_no_overlap",
+    "cow_vehicle_maintenance_immutable",
 }
 EXPECTED_FUNCTIONS = {
     "cow_guard_principal_plane",
@@ -45,6 +49,8 @@ EXPECTED_FUNCTIONS = {
     "cow_protect_quote_truth",
     "cow_protect_request_snapshot",
     "cow_protect_published_pricing",
+    "cow_vehicle_maintenance_guard",
+    "cow_vehicle_maintenance_append_only",
 }
 EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_default_address",
@@ -56,10 +62,8 @@ EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_accepted_quote_per_request",
     "cow_one_active_session_per_connector",
 }
-EXPECTED_PG_CONSTRAINTS = (
-    EXPECTED_CONSTRAINTS - EXPECTED_PARTIAL_UNIQUE_INDEXES
-)
-EXPECTED_INDEXES = EXPECTED_CONSTRAINTS - {"cow_email_lower"}
+EXPECTED_PG_CONSTRAINTS = EXPECTED_CONSTRAINTS - EXPECTED_PARTIAL_UNIQUE_INDEXES
+EXPECTED_INDEXES = EXPECTED_CONSTRAINTS - {"cow_email_lower"} | {"cow_vehicle_maint_window"}
 
 
 def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
@@ -77,9 +81,7 @@ def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
         )
         for model in models
         for field in model._meta.local_fields
-        if field.is_relation
-        and (field.many_to_one or field.one_to_one)
-        and field.db_constraint
+        if field.is_relation and (field.many_to_one or field.one_to_one) and field.db_constraint
     }
     with connection.cursor() as cursor:
         cursor.execute(
@@ -113,8 +115,7 @@ def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
             [sorted(EXPECTED_PARTIAL_UNIQUE_INDEXES)],
         )
         partial_unique_indexes = {
-            name for name, unique, partial in cursor.fetchall()
-            if unique and partial
+            name for name, unique, partial in cursor.fetchall() if unique and partial
         }
         cursor.execute(
             """SELECT tgname FROM pg_trigger AS t
@@ -178,5 +179,5 @@ def test_cow_migration_history_and_replay_are_stable():
     with connection.cursor() as cursor:
         cursor.execute("SELECT name FROM django_migrations WHERE app = 'cow' ORDER BY name")
         after = tuple(row[0] for row in cursor.fetchall())
-    assert before == ("0001_initial", "0002_business_invariants")
+    assert before == ("0001_initial", "0002_business_invariants", "0003_admin_fleet_vehicle_parity")
     assert after == before

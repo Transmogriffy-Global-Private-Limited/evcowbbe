@@ -16,6 +16,7 @@ from cow.models import (Account, Principal, AuthSession, CustomerVehicle, Custom
                         AdminRole, AdminOverride, AuditEvent)
 from cow.services import auth, jobs, idempotency, rbac
 from cow.hal.ingress import accept_signed_fact
+from cow.fleet_api import fleet_router
 
 class StrictSchema(Schema):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -266,19 +267,6 @@ def set_override(request,account_id:UUID,capability:str,payload:OverridePayload)
              action="SET_OVERRIDE",details={"capability":capability,"decision":payload.decision,"reason":payload.reason})
     return {"data":{"capability":capability,"decision":payload.decision}}
 
-@admin.get("/vehicles")
-def admin_vehicles(request):
-    rbac.require(request.auth,"fleet.read")
-    return {"data":[{"id":str(v.id),"asset_tag":v.asset_tag,"make":v.make,"model":v.model,"active":v.active,"version":v.version} for v in ServiceVehicle.objects.order_by("asset_tag")[:100]]}
-
-@admin.post("/vehicles",response={201:dict})
-def admin_create_vehicle(request,payload:FleetVehiclePayload):
-    rbac.require(request.auth,"fleet.manage")
-    with transaction.atomic():
-        v=ServiceVehicle.objects.create(**payload.model_dump())
-        AuditEvent.objects.create(actor=request.auth,target_type="ServiceVehicle",target_id=v.id,action="CREATE")
-    return 201,{"data":{"id":str(v.id),"asset_tag":v.asset_tag,"version":v.version}}
-
 @admin.get("/chargers")
 def admin_chargers(request):
     rbac.require(request.auth,"fleet.read")
@@ -351,6 +339,7 @@ def hal_fact(request):
 api.add_router("/v1/app",app)
 api.add_router("/v1/driver",driver)
 api.add_router("/v1/admin",admin)
+api.add_router("/v1/admin",fleet_router)
 
 # Second-stage auth contract: these operations intentionally require real mail transport.
 class EmailPayload(StrictSchema):
