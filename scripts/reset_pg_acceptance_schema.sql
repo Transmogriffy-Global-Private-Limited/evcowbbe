@@ -8,41 +8,41 @@
 \if :{?expected_database}
 \else
 \echo 'REFUSED: expected_database is required'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 \if :{?expected_marker_identity}
 \else
 \echo 'REFUSED: expected_marker_identity is required'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 \if :{?expected_owner}
 \else
 \echo 'REFUSED: expected_owner is required'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 \if :{?test_role}
 \else
 \echo 'REFUSED: test_role is required'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 \if :{?operator_reset_authorization}
 \else
 \echo 'REFUSED: operator_reset_authorization is required'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 
 SELECT current_database() = :'expected_database' AS database_matches \gset
 \if :database_matches
 \else
 \echo 'REFUSED: connected database does not match expected_database'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT :'operator_reset_authorization' = 'RESET_COW_POSTGRES_ACCEPTANCE_SCHEMA_ONLY'
     AS reset_authorized \gset
 \if :reset_authorized
 \else
 \echo 'REFUSED: operator reset authorization did not match'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT count(*) = 1 AND bool_and(singleton) AND min(identity) = :'expected_marker_identity'
     AS marker_matches
@@ -50,7 +50,7 @@ FROM cow_test_harness.database_identity \gset
 \if :marker_matches
 \else
 \echo 'REFUSED: protected marker is missing or does not match'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT NOT EXISTS (
     SELECT 1 FROM pg_namespace
@@ -60,20 +60,20 @@ SELECT NOT EXISTS (
 \if :schemas_allowed
 \else
 \echo 'REFUSED: unexpected non-system schema exists'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'test_role') AS runner_exists \gset
 \if :runner_exists
 \else
 \echo 'REFUSED: expected test role does not exist'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT pg_get_userbyid((SELECT nspowner FROM pg_namespace WHERE nspname = 'cow_test_harness'))
        = :'expected_owner' AS marker_owner_matches \gset
 \if :marker_owner_matches
 \else
 \echo 'REFUSED: protected marker schema owner differs from expected_owner'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT NOT EXISTS (
     SELECT 1
@@ -89,18 +89,28 @@ SELECT NOT EXISTS (
 \if :dependencies_allowed
 \else
 \echo 'REFUSED: public schema has cross-schema dependencies'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
-SELECT COALESCE(array_agg(name ORDER BY name), ARRAY[]::text[]) <@
-       ARRAY['0001_initial', '0002_business_invariants',
-             '0003_admin_fleet_vehicle_parity',
-             '0004_admin_charger_connector_pairing_parity']
-       AND count(*) IN (3, 4) AS cow_ledger_allowed
-FROM django_migrations WHERE app = 'cow' \gset
+WITH ledger AS (
+    SELECT COALESCE(array_agg(name::text ORDER BY name), ARRAY[]::text[]) AS names
+    FROM django_migrations WHERE app = 'cow'
+)
+SELECT (
+    names = ARRAY[
+        '0001_initial', '0002_business_invariants',
+        '0003_admin_fleet_vehicle_parity'
+    ]::text[]
+    OR names = ARRAY[
+        '0001_initial', '0002_business_invariants',
+        '0003_admin_fleet_vehicle_parity',
+        '0004_admin_charger_connector_pairing_parity'
+    ]::text[]
+) AS cow_ledger_allowed
+FROM ledger \gset
 \if :cow_ledger_allowed
 \else
 \echo 'REFUSED: Cow migration history is neither the reviewed 0003 nor 0004 ledger'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT NOT EXISTS (
     SELECT 1
@@ -117,14 +127,25 @@ SELECT NOT EXISTS (
           'cow_customeraddress', 'cow_servicevehicle', 'cow_charger',
           'cow_chargerconnector', 'cow_vehiclechargerpairing', 'cow_driverprofile',
           'cow_dutysession', 'cow_pricingpolicy', 'cow_servicerequest', 'cow_quote',
-          'cow_servicejob', 'cow_stateevent', 'cow_chargingsession', 'cow_halcommand',
-          'cow_halreceipt', 'cow_vehiclemaintenanceperiod', 'cow_chargermaintenanceperiod'
+          'cow_servicejob', 'cow_jobevent', 'cow_chargingsession', 'cow_halcommand',
+          'cow_halfact', 'cow_meterobservation', 'cow_vehiclemaintenanceperiod', 'cow_chargermaintenanceperiod'
       )
 ) AS public_objects_allowed \gset
 \if :public_objects_allowed
 \else
 \echo 'REFUSED: unexpected public application table exists'
-\quit
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
+\endif
+
+SELECT NOT EXISTS (
+    SELECT 1 FROM pg_extension AS e
+    JOIN pg_namespace AS n ON n.oid = e.extnamespace
+    WHERE n.nspname = 'public'
+) AS public_extensions_absent \gset
+\if :public_extensions_absent
+\else
+\echo 'REFUSED: public schema contains a PostgreSQL extension'
+DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 
 BEGIN;

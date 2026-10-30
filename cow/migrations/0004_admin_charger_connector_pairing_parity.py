@@ -36,6 +36,7 @@ def reconcile_legacy_pairings(apps, schema_editor):
         )
     pairing.objects.filter(effective_to__isnull=False).update(status="ENDED")
 
+
 FORWARD = r"""
 CREATE FUNCTION cow_charger_maintenance_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -183,7 +184,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="vehiclechargerpairing",
             name="created_at",
-            field=models.DateTimeField(auto_now_add=True, blank=True, null=True),
+            field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
             model_name="vehiclechargerpairing",
@@ -242,6 +243,11 @@ class Migration(migrations.Migration):
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.RunPython(reconcile_legacy_pairings, migrations.RunPython.noop),
+        migrations.AlterField(
+            model_name="vehiclechargerpairing",
+            name="created_at",
+            field=models.DateTimeField(auto_now_add=True, blank=True, null=True),
+        ),
         migrations.AddConstraint(
             model_name="vehiclechargerpairing",
             constraint=models.CheckConstraint(
