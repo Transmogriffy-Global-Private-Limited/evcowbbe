@@ -103,6 +103,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="require the reviewed 0003 fixture and rehearse only its upgrade to 0004",
     )
+    modes.add_argument(
+        "--existing",
+        action="store_true",
+        help="accept an already-migrated 0004 test schema without migration or reset",
+    )
     # Keep a dangerous historical invocation fail-closed rather than silently
     # accepting it. It deliberately has no implementation path.
     modes.add_argument("--reset", action="store_true", help=argparse.SUPPRESS)
@@ -112,7 +117,7 @@ def parse_args() -> argparse.Namespace:
             "--reset is intentionally disabled: Django flush is never a schema reset; "
             "use the documented operator-only public-schema reset, then --fresh"
         )
-    if not (args.prepare_upgrade_fixture or args.upgrade_0003_to_0004):
+    if not (args.prepare_upgrade_fixture or args.upgrade_0003_to_0004 or args.existing):
         args.fresh = True
     return args
 
@@ -322,20 +327,34 @@ def prepare_upgrade_fixture(connection) -> None:
         asset_tag="upgrade-closed-vehicle", make="Test", model="Closed"
     )
     active_charger = charger.objects.create(
-        asset_tag="upgrade-active-charger", hal_identity="upgrade-active-hal",
-        manufacturer="Test", model="Active", rated_power_w=7000,
+        asset_tag="upgrade-active-charger",
+        hal_identity="upgrade-active-hal",
+        manufacturer="Test",
+        model="Active",
+        rated_power_w=7000,
     )
     closed_charger = charger.objects.create(
-        asset_tag="upgrade-closed-charger", hal_identity="upgrade-closed-hal",
-        manufacturer="Test", model="Closed", rated_power_w=7000,
+        asset_tag="upgrade-closed-charger",
+        hal_identity="upgrade-closed-hal",
+        manufacturer="Test",
+        model="Closed",
+        rated_power_w=7000,
     )
     pairing.objects.create(
-        id=UPGRADE_ACTIVE_PAIRING_ID, vehicle_id=active_vehicle.id, charger_id=active_charger.id,
-        effective_from=UPGRADE_ACTIVE_FROM, effective_to=None, expected=True,
+        id=UPGRADE_ACTIVE_PAIRING_ID,
+        vehicle_id=active_vehicle.id,
+        charger_id=active_charger.id,
+        effective_from=UPGRADE_ACTIVE_FROM,
+        effective_to=None,
+        expected=True,
     )
     pairing.objects.create(
-        id=UPGRADE_CLOSED_PAIRING_ID, vehicle_id=closed_vehicle.id, charger_id=closed_charger.id,
-        effective_from=UPGRADE_CLOSED_FROM, effective_to=UPGRADE_CLOSED_TO, expected=False,
+        id=UPGRADE_CLOSED_PAIRING_ID,
+        vehicle_id=closed_vehicle.id,
+        charger_id=closed_charger.id,
+        effective_from=UPGRADE_CLOSED_FROM,
+        effective_to=UPGRADE_CLOSED_TO,
+        expected=False,
     )
 
 
@@ -351,14 +370,18 @@ def assert_upgrade_fixture(connection) -> None:
         raise TestDatabaseError("the reviewed 0003 upgrade fixture is missing")
     active, closed = rows
     if (
-        active[0] != UPGRADE_ACTIVE_PAIRING_ID or active[1] != UPGRADE_ACTIVE_FROM
-        or active[2] is not None or active[3] is not True
+        active[0] != UPGRADE_ACTIVE_PAIRING_ID
+        or active[1] != UPGRADE_ACTIVE_FROM
+        or active[2] is not None
+        or active[3] is not True
         or active[4:] != ("ACTIVE", None, None, None)
     ):
         raise TestDatabaseError("0004 did not preserve the active pairing identity and truth")
     if (
-        closed[0] != UPGRADE_CLOSED_PAIRING_ID or closed[1] != UPGRADE_CLOSED_FROM
-        or closed[2] != UPGRADE_CLOSED_TO or closed[3] is not False
+        closed[0] != UPGRADE_CLOSED_PAIRING_ID
+        or closed[1] != UPGRADE_CLOSED_FROM
+        or closed[2] != UPGRADE_CLOSED_TO
+        or closed[3] is not False
         or closed[4:] != ("ENDED", None, None, None)
     ):
         raise TestDatabaseError("0004 did not preserve the closed pairing identity and truth")
@@ -387,6 +410,11 @@ def main() -> int:
     try:
         verify_observed_database(target, identity, role, observe_database(connection))
         assert_allowed_schemas(connection)
+        if args.existing:
+            assert_cow_migration_history(connection, MIGRATIONS_0004)
+            assert_expected_schema(connection, "0004_admin_charger_connector_pairing_parity")
+            assert_cow_tables_empty(connection)
+            return run_pytest("tests/integration")
         if args.prepare_upgrade_fixture:
             assert_application_schema_empty(connection)
             migrate_to_cow_0003(connection)

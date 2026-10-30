@@ -183,8 +183,9 @@ def test_deactivation_rejects_current_pairing_and_active_duty_claim():
             principal, vehicle.id, vehicle.version, "Pairing is current", False
         )
     assert paired.value.status_code == 409
-    pairing.effective_to = now
-    pairing.save(update_fields=["effective_to"])
+    ended = fleet_service.end_pairing(principal, pairing.id, "Pairing concluded before duty test")
+    assert ended.status == "ENDED"
+    assert ended.effective_to > ended.effective_from
 
     driver_account = Account.objects.create(
         email="fleet-driver@example.test", password_hash="x", email_verified=True

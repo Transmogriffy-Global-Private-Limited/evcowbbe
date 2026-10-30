@@ -149,6 +149,23 @@ class FleetContractTests(unittest.TestCase):
         )
         self.assertEqual(FleetVehiclePatch().model_dump(exclude_unset=True), {})
 
+    def test_idempotency_scope_does_not_alias_long_resource_paths(self):
+        from cow.services.idempotency import bounded_scope
+
+        short = "POST /api/v1/admin/chargers"
+        self.assertEqual(bounded_scope(short), short)
+        a = "a" * 36
+        b = "b" * 36
+        long = f"PATCH /api/v1/admin/chargers/{a}/connectors/{b} 1"
+        self.assertGreater(len(long), 90)
+        stored = bounded_scope(long)
+        self.assertEqual(stored, bounded_scope(long))
+        self.assertEqual(len(stored), 71)
+        self.assertTrue(stored.startswith("sha256:"))
+        self.assertNotEqual(stored, bounded_scope(long[:-1] + "2"))
+        self.assertNotEqual(stored, bounded_scope(long.replace(b, "c" * 36)))
+        self.assertLessEqual(len(stored), 90)
+
     def test_new_migration_is_additive_and_has_overlap_and_immutability_guards(self):
         text = (
             Path(__file__).parents[1] / "cow/migrations/0003_admin_fleet_vehicle_parity.py"

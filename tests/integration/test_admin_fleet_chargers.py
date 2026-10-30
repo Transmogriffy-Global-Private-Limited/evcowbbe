@@ -174,6 +174,17 @@ def test_charger_and_connector_round_trip_idempotency_etag_and_lifecycle():
         **headers(principal, key="p" * 16, etag=1),
     )
     assert patched_connector.status_code == 200 and patched_connector["ETag"] == '"2"'
+    # An identical long-route retry must replay the stored receipt, not
+    # execute the mutation again and trip the stale resource ETag.
+    connector_replay = client.patch(
+        f"/api/v1/admin/chargers/{charger['id']}/connectors/{connector_id}",
+        json.dumps({"max_power_w": 18000}),
+        content_type="application/json",
+        **headers(principal, key="p" * 16, etag=1),
+    )
+    assert connector_replay.status_code == 200
+    assert connector_replay.json() == patched_connector.json()
+    assert connector_replay["ETag"] == '"2"'
 
     lifecycle = client.post(
         f"/api/v1/admin/chargers/{charger['id']}/deactivate",

@@ -61,6 +61,15 @@ class PostgreSQLAcceptanceHarnessTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_args()
 
+    def test_existing_mode_does_not_imply_fresh_or_reset(self):
+        with patch("sys.argv", ["run_pg_tests.py", "--existing"]):
+            args = parse_args()
+        self.assertTrue(args.existing)
+        self.assertFalse(args.fresh)
+        with patch("sys.argv", ["run_pg_tests.py", "--existing", "--fresh"]):
+            with self.assertRaises(SystemExit):
+                parse_args()
+
     def test_rejects_live_database_target_even_with_different_url_text(self):
         env = environment()
         env["TEST_DATABASE_URL"] = "postgresql://other:password@localhost:5432/evcowbbe"
