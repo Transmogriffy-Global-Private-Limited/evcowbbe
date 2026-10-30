@@ -63,7 +63,16 @@ EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_session_per_connector",
 }
 EXPECTED_PG_CONSTRAINTS = EXPECTED_CONSTRAINTS - EXPECTED_PARTIAL_UNIQUE_INDEXES
-EXPECTED_INDEXES = EXPECTED_CONSTRAINTS - {"cow_email_lower"} | {"cow_vehicle_maint_window"}
+EXPECTED_INDEXES = (
+    EXPECTED_PG_CONSTRAINTS
+    - {
+        "cow_email_lower",
+        "cow_vehicle_retired_inactive",
+        "cow_vehicle_maintenance_range",
+    }
+    | EXPECTED_PARTIAL_UNIQUE_INDEXES
+    | {"cow_vehicle_maint_window"}
+)
 
 
 def test_postgresql_catalog_shape_is_complete_and_has_no_cow_sequences():
