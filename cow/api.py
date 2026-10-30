@@ -1,22 +1,24 @@
 """HTTP layer: stable FE envelopes, no implicit principal selection or ORM writes."""
-from uuid import UUID
 from typing import Literal
-from django.conf import settings
+from uuid import UUID
+
 from django.db import transaction
-from django.db.models import F
-from django.utils import timezone
-from django.core.exceptions import ValidationError
 from ninja import NinjaAPI, Router, Schema
-from ninja.errors import ValidationError as NinjaValidationError, AuthenticationError
+from ninja.errors import AuthenticationError
+from ninja.errors import ValidationError as NinjaValidationError
 from ninja.security import HttpBearer
 from pydantic import ConfigDict, Field
+
 from cow.errors import DomainError, reject
-from cow.models import (Account, Principal, AuthSession, CustomerVehicle, CustomerAddress,
-                        ServiceJob, ServiceRequest, Quote, PricingPolicy, ServiceVehicle, Charger, HALCommand,
-                        AdminRole, AdminOverride, AuditEvent)
-from cow.services import auth, jobs, idempotency, rbac
-from cow.hal.ingress import accept_signed_fact
 from cow.fleet_api import fleet_router
+from cow.hal.ingress import accept_signed_fact
+from cow.models import (
+    Charger,
+    HALCommand,
+    ServiceJob,
+)
+from cow.services import auth, idempotency, jobs, rbac
+
 
 class StrictSchema(Schema):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -34,26 +36,6 @@ class RefreshPayload(StrictSchema):
 class PasswordChange(StrictSchema):
     current_password: str
     new_password: str
-
-class VehiclePayload(StrictSchema):
-    make: str = Field(min_length=1,max_length=120)
-    model: str = Field(min_length=1,max_length=120)
-    registration_number: str = Field(default="",max_length=32)
-    label: str = Field(default="",max_length=100)
-    connector_types: list[str] = Field(default_factory=list,max_length=16)
-    supports_ac: bool = True
-    supports_dc: bool = False
-    max_ac_power_w: int | None = Field(default=None,gt=0)
-    max_dc_power_w: int | None = Field(default=None,gt=0)
-    saved: bool = True
-
-class AddressPayload(StrictSchema):
-    address: str = Field(min_length=5,max_length=700)
-    latitude: float = Field(ge=-90,le=90)
-    longitude: float = Field(ge=-180,le=180)
-    label: str = Field(default="",max_length=80)
-    instructions: str = Field(default="",max_length=1000)
-    saved: bool = True
 
 class ServiceRequestPayload(StrictSchema):
     vehicle_id: UUID
@@ -127,13 +109,23 @@ def mount_identity(router, plane):
             reject(403 if error=="PRINCIPAL_PLANE_MISMATCH" else 401,error,"Refresh refused")
         return {"data":response}
 
-    @router.get("/me",operation_id=f"{plane}_me")
+    @router.get("/me", operation_id=f"{plane}_me")
     def me(request):
         principal = request.auth
-        account=principal.account
-        return {"data":{"account_id":str(account.id),"principal_id":str(principal.id),
-            "plane":plane,"status":principal.status,"email":account.email,
-            "email_verified":account.email_verified,"two_factor_enabled":account.two_factor_enabled}}
+        account = principal.account
+        data = {
+            "account_id": str(account.id),
+            "principal_id": str(principal.id),
+            "plane": plane,
+            "status": principal.status,
+            "email": account.email,
+            "email_verified": account.email_verified,
+            "two_factor_enabled": account.two_factor_enabled,
+        }
+        if plane == "app":
+            from cow.customer_api import profile_json
+            data["profile"] = profile_json(principal)
+        return {"data": data}
 
     @router.post("/auth/logout",operation_id=f"{plane}_logout")
     def logout(request):
@@ -159,48 +151,6 @@ for route,plane in [(app,"app"),(driver,"driver"),(admin,"admin")]:
 def verify_email(request,payload:TokenPayload):
     return {"data":auth.verify_email(payload.token)}
 
-
-def vehicle_json(v):
-    return {"id":str(v.id),"make":v.make,"model":v.model,"label":v.label,
-      "registration_number":v.registration_number,"connector_types":v.connector_types,
-      "supports_ac":v.supports_ac,"supports_dc":v.supports_dc,
-      "max_ac_power_w":v.max_ac_power_w,"max_dc_power_w":v.max_dc_power_w,
-      "saved":v.saved,"active":v.active,"version":v.version}
-
-@app.get("/vehicles")
-def list_vehicles(request):
-    return {"data":[vehicle_json(v) for v in CustomerVehicle.objects.filter(owner=request.auth,active=True).order_by("created_at","id")[:100]]}
-
-@app.post("/vehicles",response={201:dict})
-def create_vehicle(request,payload:VehiclePayload):
-    p=payload.model_dump()
-    if not p["supports_ac"] and not p["supports_dc"]:
-        reject(422,"VEHICLE_INVALID","At least one charging mode is required")
-    with transaction.atomic():
-        v=CustomerVehicle.objects.create(owner=request.auth,**p)
-        AuditEvent.objects.create(actor=request.auth,target_type="CustomerVehicle",target_id=v.id,action="CREATE")
-    return 201,{"data":vehicle_json(v)}
-
-
-def address_json(a):
-    return {"id":str(a.id),"address":a.address,"latitude":str(a.latitude),"longitude":str(a.longitude),
-            "label":a.label,"instructions":a.instructions,"saved":a.saved,"active":a.active,"version":a.version}
-
-@app.get("/addresses")
-def list_addresses(request):
-    return {"data":[address_json(a) for a in CustomerAddress.objects.filter(owner=request.auth,active=True).order_by("created_at","id")[:100]]}
-
-@app.post("/addresses",response={201:dict})
-def create_address(request,payload:AddressPayload):
-    from decimal import Decimal
-    p=payload.model_dump()
-    # Convert validated JSON numeric to exact decimal before durable persistence.
-    p["latitude"] = Decimal(str(p["latitude"]))
-    p["longitude"] = Decimal(str(p["longitude"]))
-    with transaction.atomic():
-        a=CustomerAddress.objects.create(owner=request.auth,**p)
-        AuditEvent.objects.create(actor=request.auth,target_type="CustomerAddress",target_id=a.id,action="CREATE")
-    return 201,{"data":address_json(a)}
 
 @app.post("/service-requests",response={201:dict})
 def request_service(request,payload:ServiceRequestPayload):
@@ -271,7 +221,12 @@ def hal_fact(request):
                                            request.headers.get("X-HAL-Signature",""))}
 
 from cow.admin_controls import register as register_admin_controls
+
 register_admin_controls(admin)
+
+from cow.customer_api import register_customer_routes
+
+register_customer_routes(app)
 
 api.add_router("/v1/app",app)
 api.add_router("/v1/driver",driver)

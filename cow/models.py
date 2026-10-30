@@ -34,6 +34,16 @@ class Principal(Timestamped):
             models.UniqueConstraint(fields=["account", "plane"], name="cow_principal_per_plane")
         ]
 
+class CustomerProfile(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    principal = models.OneToOneField(
+        Principal, on_delete=models.PROTECT, related_name="customer_profile"
+    )
+    full_name = models.CharField(max_length=160, blank=True)
+    phone = models.CharField(max_length=24, null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+
 class AuthSession(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     principal = models.ForeignKey(Principal, on_delete=models.CASCADE)
@@ -136,7 +146,9 @@ class CustomerVehicle(Timestamped):
     label = models.CharField(max_length=100, blank=True)
     make = models.CharField(max_length=120)
     model = models.CharField(max_length=120)
+    variant = models.CharField(max_length=120, blank=True)
     registration_number = models.CharField(max_length=32, blank=True)
+    battery_capacity_wh = models.PositiveBigIntegerField(null=True, blank=True)
     connector_types = models.JSONField(default=list)
     supports_ac = models.BooleanField(default=True)
     supports_dc = models.BooleanField(default=False)
@@ -151,6 +163,18 @@ class CustomerAddress(Timestamped):
     owner = models.ForeignKey(Principal, on_delete=models.PROTECT)
     label = models.CharField(max_length=80, blank=True)
     address = models.CharField(max_length=700)
+    line1 = models.CharField(max_length=250, blank=True)
+    line2 = models.CharField(max_length=250, blank=True)
+    locality = models.CharField(max_length=150, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    state = models.CharField(max_length=120, blank=True)
+    postal_code = models.CharField(max_length=24, blank=True)
+    country_code = models.CharField(max_length=2, default="IN")
+    landmark = models.CharField(max_length=160, blank=True)
+    floor = models.CharField(max_length=60, blank=True)
+    contact_instructions = models.CharField(max_length=500, blank=True)
+    geocode_provider = models.CharField(max_length=80, blank=True)
+    geocode_provider_place_id = models.CharField(max_length=200, blank=True)
     latitude = models.DecimalField(max_digits=10, decimal_places=7)
     longitude = models.DecimalField(max_digits=10, decimal_places=7)
     instructions = models.CharField(max_length=1000, blank=True)

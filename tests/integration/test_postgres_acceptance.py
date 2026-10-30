@@ -53,6 +53,9 @@ EXPECTED_TRIGGERS = {
     "cow_charger_maintenance_immutable",
     "cow_pairing_lifecycle_guard",
     "cow_admin_pricing_revision_guard",
+    "cow_customer_vehicle_guard",
+    "cow_customer_address_guard",
+    "cow_customer_profile_guard",
 }
 EXPECTED_FUNCTIONS = {
     "cow_guard_principal_plane",
@@ -66,6 +69,8 @@ EXPECTED_FUNCTIONS = {
     "cow_charger_maintenance_append_only",
     "cow_pairing_closed_immutable",
     "cow_admin_pricing_guard",
+    "cow_customer_master_guard",
+    "cow_customer_profile_guard",
 }
 EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_default_address",
@@ -217,5 +222,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0003_admin_fleet_vehicle_parity",
         "0004_admin_charger_connector_pairing_parity",
         "0005_admin_rbac_pricing_parity",
+        "0006_customer_master_parity",
     )
     assert after == before

@@ -36,6 +36,7 @@ MIGRATIONS_0003 = (
 )
 MIGRATIONS_0004 = MIGRATIONS_0003 + ("0004_admin_charger_connector_pairing_parity",)
 MIGRATIONS_0005 = MIGRATIONS_0004 + ("0005_admin_rbac_pricing_parity",)
+MIGRATIONS_0006 = MIGRATIONS_0005 + ("0006_customer_master_parity",)
 FRAMEWORK_TABLES = {
     "auth_group",
     "auth_group_permissions",
@@ -81,6 +82,10 @@ FUNCTIONS_0004 = FUNCTIONS_0003 | {
 }
 TRIGGERS_0005 = TRIGGERS_0004 | {"cow_admin_pricing_revision_guard"}
 FUNCTIONS_0005 = FUNCTIONS_0004 | {"cow_admin_pricing_guard"}
+TRIGGERS_0006 = TRIGGERS_0005 | {
+    "cow_customer_vehicle_guard", "cow_customer_address_guard", "cow_customer_profile_guard",
+}
+FUNCTIONS_0006 = FUNCTIONS_0005 | {"cow_customer_master_guard", "cow_customer_profile_guard"}
 UPGRADE_ACTIVE_PAIRING_ID = uuid.UUID("a1136314-7d21-4a21-8001-000000000001")
 UPGRADE_CLOSED_PAIRING_ID = uuid.UUID("a1136314-7d21-4a21-8001-000000000002")
 UPGRADE_ACTIVE_FROM = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
@@ -94,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     modes.add_argument(
         "--fresh",
         action="store_true",
-        help="require an empty public schema, then accept fresh 0001 through 0005",
+        help="require an empty public schema, then accept fresh 0001 through 0006",
     )
     modes.add_argument(
         "--prepare-upgrade-fixture",
@@ -109,12 +114,17 @@ def parse_args() -> argparse.Namespace:
     modes.add_argument(
         "--existing",
         action="store_true",
-        help="accept an already-migrated 0005 test schema without migration or reset",
+        help="accept an already-migrated 0006 test schema without migration or reset",
     )
     modes.add_argument(
         "--upgrade-0004-to-0005",
         action="store_true",
         help="guarded additive 0004 to 0005 rehearsal",
+    )
+    modes.add_argument(
+        "--upgrade-0005-to-0006",
+        action="store_true",
+        help="guarded additive 0005 to 0006 rehearsal",
     )
     # Keep a dangerous historical invocation fail-closed rather than silently
     # accepting it. It deliberately has no implementation path.
@@ -130,6 +140,7 @@ def parse_args() -> argparse.Namespace:
         or args.upgrade_0003_to_0004
         or args.existing
         or args.upgrade_0004_to_0005
+        or args.upgrade_0005_to_0006
     ):
         args.fresh = True
     return args
@@ -284,6 +295,8 @@ def assert_expected_schema(connection, migration: str) -> None:
         expected_triggers, expected_functions = TRIGGERS_0004, FUNCTIONS_0004
     elif migration == "0005_admin_rbac_pricing_parity":
         expected_triggers, expected_functions = TRIGGERS_0005, FUNCTIONS_0005
+    elif migration == "0006_customer_master_parity":
+        expected_triggers, expected_functions = TRIGGERS_0006, FUNCTIONS_0006
     else:
         raise TestDatabaseError("unsupported Cow schema assertion target")
     with connection.cursor() as cursor:
@@ -426,9 +439,17 @@ def main() -> int:
         verify_observed_database(target, identity, role, observe_database(connection))
         assert_allowed_schemas(connection)
         if args.existing:
+            assert_cow_migration_history(connection, MIGRATIONS_0006)
+            assert_expected_schema(connection, "0006_customer_master_parity")
+            assert_cow_tables_empty(connection)
+            return run_pytest("tests/integration")
+        if args.upgrade_0005_to_0006:
             assert_cow_migration_history(connection, MIGRATIONS_0005)
             assert_expected_schema(connection, "0005_admin_rbac_pricing_parity")
             assert_cow_tables_empty(connection)
+            call_command("migrate", "cow", "0006_customer_master_parity", interactive=False, verbosity=1)
+            assert_cow_migration_history(connection, MIGRATIONS_0006)
+            assert_expected_schema(connection, "0006_customer_master_parity")
             return run_pytest("tests/integration")
         if args.upgrade_0004_to_0005:
             assert_cow_migration_history(connection, MIGRATIONS_0004)
@@ -439,7 +460,7 @@ def main() -> int:
             )
             assert_cow_migration_history(connection, MIGRATIONS_0005)
             assert_expected_schema(connection, "0005_admin_rbac_pricing_parity")
-            return run_pytest("tests/integration")
+            return run_pytest("tests/integration/test_admin_rbac_pricing.py")
         if args.prepare_upgrade_fixture:
             assert_application_schema_empty(connection)
             migrate_to_cow_0003(connection)
@@ -465,8 +486,8 @@ def main() -> int:
             return run_pytest("tests/integration/test_pairing_upgrade.py")
         assert_application_schema_empty(connection)
         call_command("migrate", interactive=False, verbosity=1)
-        assert_cow_migration_history(connection, MIGRATIONS_0005)
-        assert_expected_schema(connection, "0005_admin_rbac_pricing_parity")
+        assert_cow_migration_history(connection, MIGRATIONS_0006)
+        assert_expected_schema(connection, "0006_customer_master_parity")
         before = cow_migration_names(connection)
         call_command("migrate", interactive=False, verbosity=1)
         if cow_migration_names(connection) != before:

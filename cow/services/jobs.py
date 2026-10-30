@@ -1,10 +1,20 @@
 """ServiceJob owns commercial/operational lifecycle, not physical HAL identity."""
 from datetime import timedelta
+
 from django.db import transaction
 from django.utils import timezone
+
 from cow.errors import reject
-from cow.models import (CustomerVehicle, CustomerAddress, ServiceRequest, Quote,
-                        PricingPolicy, ServiceJob, JobEvent, AuditEvent)
+from cow.models import (
+    AuditEvent,
+    CustomerAddress,
+    CustomerVehicle,
+    JobEvent,
+    PricingPolicy,
+    Quote,
+    ServiceJob,
+    ServiceRequest,
+)
 from cow.services.pricing import quote_amount
 
 STATES = {
@@ -37,14 +47,29 @@ def transition_locked(job, new, action, evidence):
 
 
 def snapshot_vehicle(v):
-    return {"make":v.make,"model":v.model,"registration_number":v.registration_number,
-            "connector_types":v.connector_types,"supports_ac":v.supports_ac,"supports_dc":v.supports_dc,
-            "max_ac_power_w":v.max_ac_power_w,"max_dc_power_w":v.max_dc_power_w}
+    # Frozen, self-reported customer facts. Never infer hardware compatibility.
+    return {
+        "make": v.make, "model": v.model, "variant": v.variant,
+        "registration_number": v.registration_number,
+        "battery_capacity_wh": v.battery_capacity_wh,
+        "connector_types": v.connector_types, "supports_ac": v.supports_ac,
+        "supports_dc": v.supports_dc, "max_ac_power_w": v.max_ac_power_w,
+        "max_dc_power_w": v.max_dc_power_w,
+        "capability_evidence": "UNVERIFIED_CUSTOMER_DATA",
+    }
 
 
 def snapshot_address(a):
-    return {"address":a.address,"latitude":str(a.latitude),"longitude":str(a.longitude),
-            "instructions":a.instructions}
+    return {
+        "address": a.address, "latitude": str(a.latitude), "longitude": str(a.longitude),
+        "instructions": a.instructions,
+        "line1": a.line1, "line2": a.line2, "locality": a.locality,
+        "city": a.city, "state": a.state, "postal_code": a.postal_code,
+        "country_code": a.country_code, "landmark": a.landmark, "floor": a.floor,
+        "contact_instructions": a.contact_instructions,
+        "geocode_provider": a.geocode_provider,
+        "geocode_provider_place_id": a.geocode_provider_place_id,
+    }
 
 
 def create_request(principal, vehicle_id, address_id, energy_wh):

@@ -108,6 +108,7 @@ class MigrationParity(unittest.TestCase):
             "0001_initial.py",
             "0003_admin_fleet_vehicle_parity.py",
             "0004_admin_charger_connector_pairing_parity.py",
+            "0006_customer_master_parity.py",
         ):
             migration = ast.parse((ROOT / "cow/migrations" / name).read_text())
             for node in ast.walk(migration):

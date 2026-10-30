@@ -8,7 +8,7 @@ the entire blueprint. The table is the gating backlog, not a wish list.
 | --- | --- | --- | --- |
 | Identity + opaque sessions | yes | no | email/OTP/provider, rate-limit/refresh DB acceptance, FE parity |
 | Admin RBAC | WP3.1C source candidate | PostgreSQL pending | Annex 44 grant/revoke, override, audit and final-admin protection; integration pending |
-| Customer profiles/EVs/addresses | partial | no | temporary promotion/update/history/pagination/ownership parity |
+| Customer profiles/EVs/addresses | WP3.1D source candidate | PostgreSQL pending | profile editing, 12 customer endpoints, immutable request snapshots and ownership/version/default DB guards; integration pending |
 | Fleet assets + pairings | vehicle, charger, connector and pairing source parity implemented | WP3.1A PostgreSQL accepted; WP3.1B PostgreSQL accepted 2026-10-30 | Nine vehicle operations passed 15/15 isolated PostgreSQL tests on VPS2 (2026-10-30). Fifteen charger/connector/pairing operations and corrected additive 0004 are source-tested; The reusable isolated database passed 0003-to-0004 historical and 0001-to-0004 fresh acceptance, followed by 18 passing integration tests. |
 | Driver recruitment/KYC | principal/profile model | no | entire approval workflow, documents, suspension, audits |
 | Scheduling/duty/geofence | duty claim model | no | full eligibility, geolocation, working schedules, live availability |
