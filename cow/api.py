@@ -232,70 +232,9 @@ def get_job(request,job_id:UUID):
            "vehicle_snapshot":job.request.vehicle_snapshot,"address_snapshot":job.request.address_snapshot,
            "quoted_total_paise":job.accepted_quote.total_paise}}
 
-@admin.get("/rbac/me")
-def my_permissions(request):
-    roles=set(AdminRole.objects.filter(principal=request.auth).values_list("role",flat=True))
-    overrides=dict(AdminOverride.objects.filter(principal=request.auth).values_list("capability","decision"))
-    return {"data":{"roles":sorted(roles),"effective_capabilities":sorted(c for c in rbac.CAPABILITIES if rbac.permitted(roles,overrides,c))}}
+# Annex 44 RBAC routes registered below.
 
-@admin.get("/rbac/catalog")
-def catalog(request):
-    rbac.require(request.auth,"system.settings.read")
-    return {"data":{"capabilities":list(rbac.CAPABILITIES),"roles":{k:sorted(v) for k,v in rbac.ROLE_DEFAULTS.items()}}}
-
-@admin.post("/rbac/accounts/{account_id}/roles",response={201:dict})
-def assign_role(request,account_id:UUID,payload:RolePayload):
-    rbac.require(request.auth,"system.settings.manage")
-    if payload.role not in rbac.ROLE_DEFAULTS:reject(400,"ROLE_UNKNOWN","Invalid role")
-    with transaction.atomic():
-        p=Principal.objects.filter(account_id=account_id,plane="admin").first()
-        if not p:reject(404,"NOT_FOUND","Admin account not found")
-        role,created=AdminRole.objects.get_or_create(principal=p,role=payload.role)
-        AuditEvent.objects.create(actor=request.auth,target_type="AdminRole",target_id=role.id,
-          action="ASSIGN_ROLE",details={"role":payload.role,"reason":payload.reason})
-    return 201,{"data":{"role":payload.role,"created":created}}
-
-@admin.put("/rbac/accounts/{account_id}/overrides/{capability}")
-def set_override(request,account_id:UUID,capability:str,payload:OverridePayload):
-    rbac.require(request.auth,"system.settings.manage")
-    if capability not in rbac.CAPABILITIES:reject(400,"CAPABILITY_UNKNOWN","Invalid capability")
-    with transaction.atomic():
-        p=Principal.objects.filter(account_id=account_id,plane="admin").first()
-        if not p:reject(404,"NOT_FOUND","Admin account not found")
-        obj,_=AdminOverride.objects.update_or_create(principal=p,capability=capability,defaults={"decision":payload.decision})
-        AuditEvent.objects.create(actor=request.auth,target_type="AdminOverride",target_id=obj.id,
-             action="SET_OVERRIDE",details={"capability":capability,"decision":payload.decision,"reason":payload.reason})
-    return {"data":{"capability":capability,"decision":payload.decision}}
-
-@admin.get("/pricing/policies")
-def pricing_policies(request):
-    rbac.require(request.auth,"pricing.read")
-    return {"data":[{"id":str(p.id),"name":p.name,"revision":p.revision,"status":p.status,"base_service_paise":p.base_service_paise,"per_kwh_paise":p.per_kwh_paise} for p in PricingPolicy.objects.order_by("name","-revision")[:100]]}
-
-@admin.post("/pricing/policies",response={201:dict})
-def pricing_create(request,payload:PricingPayload):
-    rbac.require(request.auth,"pricing.manage")
-    with transaction.atomic():
-        latest=PricingPolicy.objects.filter(name=payload.name).order_by("-revision").first()
-        p=PricingPolicy.objects.create(**payload.model_dump(),revision=(latest.revision+1 if latest else 1))
-        AuditEvent.objects.create(actor=request.auth,target_type="PricingPolicy",target_id=p.id,action="CREATE")
-    return 201,{"data":{"id":str(p.id),"revision":p.revision,"status":p.status}}
-
-@admin.post("/pricing/policies/{policy_id}/publish")
-def pricing_publish(request,policy_id:UUID):
-    rbac.require(request.auth,"pricing.manage")
-    with transaction.atomic():
-        p=PricingPolicy.objects.select_for_update().filter(id=policy_id).first()
-        if not p:reject(404,"NOT_FOUND","Policy not found")
-        if p.status!="DRAFT":reject(409,"POLICY_STATE_CONFLICT","Policy cannot publish")
-        # Freeze active policy, prevent post-publication edit through API.
-        previous=PricingPolicy.objects.select_for_update().filter(status="ACTIVE")
-        now=timezone.now()
-        previous.update(status="RETIRED",effective_to=now)
-        p.status="ACTIVE";p.effective_from=now
-        p.save(update_fields=["status","effective_from","updated_at"])
-        AuditEvent.objects.create(actor=request.auth,target_type="PricingPolicy",target_id=p.id,action="PUBLISH")
-    return {"data":{"id":str(p.id),"status":p.status}}
+# Versioned tariff routes registered below.
 
 @admin.get("/jobs")
 def admin_jobs(request):
@@ -311,7 +250,7 @@ def admin_get_job(request,job_id:UUID):
 
 @admin.post("/jobs/{job_id}/charging/start",response={202:dict})
 def start_charging(request,job_id:UUID,payload:HALCommandPayload):
-    rbac.require(request.auth,"charging.manage")
+    rbac.require(request.auth,"charging.command")
     def op():
         with transaction.atomic():
             job=ServiceJob.objects.select_for_update().filter(id=job_id).first()
@@ -330,6 +269,9 @@ def start_charging(request,job_id:UUID,payload:HALCommandPayload):
 def hal_fact(request):
     return 202,{"data":accept_signed_fact(request.body,request.headers.get("X-HAL-Timestamp",""),
                                            request.headers.get("X-HAL-Signature",""))}
+
+from cow.admin_controls import register as register_admin_controls
+register_admin_controls(admin)
 
 api.add_router("/v1/app",app)
 api.add_router("/v1/driver",driver)

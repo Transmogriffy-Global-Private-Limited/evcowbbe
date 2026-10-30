@@ -28,6 +28,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
 
 [tool.setuptools.packages.find]
 include = ["config*", "cow*"]

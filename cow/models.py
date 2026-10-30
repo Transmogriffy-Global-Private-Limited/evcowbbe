@@ -386,12 +386,34 @@ class PricingPolicy(Timestamped):
     currency = models.CharField(max_length=3, default="INR")
     base_service_paise = models.PositiveBigIntegerField(default=0)
     per_kwh_paise = models.PositiveBigIntegerField(default=0)
+    # Additive Admin policy ledger. The legacy ACTIVE quotation path is not
+    # automatically enabled by the new PUBLISHED status.
+    policy_key = models.CharField(max_length=64, null=True, blank=True)
+    policy_version = models.PositiveBigIntegerField(null=True, blank=True)
+    scope = models.JSONField(default=dict)
+    rules = models.JSONField(default=list)
+    state_version = models.PositiveIntegerField(default=1)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        Principal, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="authored_pricing_revisions",
+    )
     effective_from = models.DateTimeField(null=True)
     effective_to = models.DateTimeField(null=True)
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["name","revision"], name="cow_pricing_revision_unique"),
             models.UniqueConstraint(fields=["status"],condition=Q(status="ACTIVE"),name="cow_one_active_pricing_policy"),
+            models.UniqueConstraint(
+                fields=["policy_key", "policy_version"], condition=Q(policy_key__isnull=False),
+                name="cow_admin_pricing_revision_unique",
+            ),
+            models.CheckConstraint(
+                condition=Q(ends_at__isnull=True)
+                | (Q(starts_at__isnull=False) & Q(ends_at__gt=F("starts_at"))),
+                name="cow_admin_pricing_window",
+            ),
         ]
 
 class ServiceRequest(Timestamped):

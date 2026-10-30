@@ -105,11 +105,17 @@ SELECT (
         '0003_admin_fleet_vehicle_parity',
         '0004_admin_charger_connector_pairing_parity'
     ]::text[]
+    OR names = ARRAY[
+        '0001_initial', '0002_business_invariants',
+        '0003_admin_fleet_vehicle_parity',
+        '0004_admin_charger_connector_pairing_parity',
+        '0005_admin_rbac_pricing_parity'
+    ]::text[]
 ) AS cow_ledger_allowed
 FROM ledger \gset
 \if :cow_ledger_allowed
 \else
-\echo 'REFUSED: Cow migration history is neither the reviewed 0003 nor 0004 ledger'
+\echo 'REFUSED: Cow migration history is neither the reviewed 0003, 0004 nor 0005 ledger'
 DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT NOT EXISTS (
