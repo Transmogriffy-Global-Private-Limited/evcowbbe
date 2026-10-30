@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 
 TEST_AUTHORIZATION = "RUN_COW_POSTGRES_ACCEPTANCE_ONLY"
-RESET_AUTHORIZATION = "RESET_COW_POSTGRES_ACCEPTANCE_TEST_ONLY"
+OPERATOR_RESET_AUTHORIZATION = "RESET_COW_POSTGRES_ACCEPTANCE_SCHEMA_ONLY"
+APPROVED_TEST_DATABASE = "cow_wp31a_20261030_test"
 HARNESS_SCHEMA = "cow_test_harness"
 HARNESS_TABLE = "database_identity"
 
@@ -42,6 +43,16 @@ class ObservedDatabase:
     role_can_createdb: bool
     role_can_createrole: bool
     role_can_bypassrls: bool
+    marker_rows: int
+    marker_only_singleton: bool
+    runner_owns_database: bool
+    runner_owns_marker_schema: bool
+    runner_owns_public_schema: bool
+    can_connect: bool
+    can_use_public: bool
+    can_create_public: bool
+    can_use_marker: bool
+    can_select_marker: bool
 
 
 def parse_postgres_url(raw: str | None, variable: str) -> DatabaseTarget:
@@ -84,14 +95,15 @@ def same_database_target(left: DatabaseTarget, right: DatabaseTarget) -> bool:
     )
 
 
-def preflight_environment(
-    env: dict[str, str], *, reset: bool = False
-) -> tuple[DatabaseTarget, str, str]:
+def preflight_environment(env: dict[str, str]) -> tuple[DatabaseTarget, str, str]:
     """Validate non-secret operator inputs before Django imports or DB access."""
     test = parse_postgres_url(env.get("TEST_DATABASE_URL"), "TEST_DATABASE_URL")
     application = parse_postgres_url(env.get("DATABASE_URL"), "DATABASE_URL")
-    if not test.database.casefold().endswith("_test"):
-        raise TestDatabaseError("TEST_DATABASE_URL database must use the approved _test suffix")
+    if test.database != APPROVED_TEST_DATABASE:
+        raise TestDatabaseError(
+            "TEST_DATABASE_URL must target the operator-provisioned "
+            "cow_wp31a_20261030_test database exactly"
+        )
     if same_database_target(test, application):
         raise TestDatabaseError("TEST_DATABASE_URL resolves to the application database target")
     if env.get("COW_PG_TEST_AUTHORIZATION") != TEST_AUTHORIZATION:
@@ -108,8 +120,6 @@ def preflight_environment(
         )
     if test.user != role:
         raise TestDatabaseError("TEST_DATABASE_URL user must match COW_PG_TEST_ROLE")
-    if reset and env.get("COW_PG_TEST_RESET_AUTHORIZATION") != RESET_AUTHORIZATION:
-        raise TestDatabaseError("--reset requires explicit COW_PG_TEST_RESET_AUTHORIZATION")
     return test, identity, role
 
 
@@ -137,3 +147,23 @@ def verify_observed_database(
         )
     ):
         raise TestDatabaseError("test role has forbidden PostgreSQL administrative capability")
+    if observed.marker_rows != 1 or not observed.marker_only_singleton:
+        raise TestDatabaseError("operator-owned PostgreSQL marker is not exactly one singleton row")
+    if any(
+        (
+            observed.runner_owns_database,
+            observed.runner_owns_marker_schema,
+            observed.runner_owns_public_schema,
+        )
+    ):
+        raise TestDatabaseError("test role must not own the database or protected schemas")
+    if not all(
+        (
+            observed.can_connect,
+            observed.can_use_public,
+            observed.can_create_public,
+            observed.can_use_marker,
+            observed.can_select_marker,
+        )
+    ):
+        raise TestDatabaseError("test role lacks the reviewed least-privilege acceptance grants")

@@ -1,7 +1,8 @@
 """One authoritative Django ORM schema. Never edit historical migrations."""
 import uuid
+
 from django.db import models
-from django.db.models import Q, F
+from django.db.models import F, Q
 
 
 class Timestamped(models.Model):
@@ -17,15 +18,21 @@ class Account(Timestamped):
     email_verified = models.BooleanField(default=False)
     two_factor_enabled = models.BooleanField(default=False)
     class Meta:
-        constraints = [models.CheckConstraint(condition=Q(email__regex=r'^[^A-Z]+$'), name="cow_email_lower")]
+        constraints = [
+            models.CheckConstraint(condition=Q(email__regex=r"^[^A-Z]+$"), name="cow_email_lower")
+        ]
 
 class Principal(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="principals")
     plane = models.CharField(max_length=12, choices=[(x,x) for x in ("app","driver","admin")])
-    status = models.CharField(max_length=12, choices=[(x,x) for x in ("ACTIVE","PENDING","SUSPENDED")])
+    status = models.CharField(
+        max_length=12, choices=[(x, x) for x in ("ACTIVE", "PENDING", "SUSPENDED")]
+    )
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["account", "plane"], name="cow_principal_per_plane")]
+        constraints = [
+            models.UniqueConstraint(fields=["account", "plane"], name="cow_principal_per_plane")
+        ]
 
 class AuthSession(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -72,7 +79,9 @@ class AdminRole(Timestamped):
     principal = models.ForeignKey(Principal, on_delete=models.CASCADE)
     role = models.CharField(max_length=32)
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["principal","role"], name="cow_one_role_assignment")]
+        constraints = [
+            models.UniqueConstraint(fields=["principal", "role"], name="cow_one_role_assignment")
+        ]
 
 class AdminOverride(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -80,7 +89,11 @@ class AdminOverride(Timestamped):
     capability = models.CharField(max_length=100)
     decision = models.CharField(max_length=5, choices=[("ALLOW","ALLOW"),("DENY","DENY")])
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["principal","capability"], name="cow_one_capability_override")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["principal", "capability"], name="cow_one_capability_override"
+            )
+        ]
 
 class AuditEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -113,7 +126,9 @@ class IdempotencyReceipt(Timestamped):
     response = models.JSONField(default=dict)
     expires_at = models.DateTimeField()
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["actor", "scope", "key"], name="cow_mutation_once")]
+        constraints = [
+            models.UniqueConstraint(fields=["actor", "scope", "key"], name="cow_mutation_once")
+        ]
 
 class CustomerVehicle(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -144,7 +159,13 @@ class CustomerAddress(Timestamped):
     is_default = models.BooleanField(default=False)
     version = models.PositiveIntegerField(default=1)
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["owner"], condition=Q(active=True,is_default=True), name="cow_one_active_default_address")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner"],
+                condition=Q(active=True, is_default=True),
+                name="cow_one_active_default_address",
+            )
+        ]
 
 class ServiceVehicle(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -194,7 +215,11 @@ class VehicleMaintenancePeriod(models.Model):
                 name="cow_vehicle_maintenance_range",
             )
         ]
-        indexes = [models.Index(fields=["vehicle", "starts_at", "ends_at"], name="cow_vehicle_maint_window")]
+        indexes = [
+            models.Index(
+                fields=["vehicle", "starts_at", "ends_at"], name="cow_vehicle_maint_window"
+            )
+        ]
 
 class Charger(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -256,14 +281,19 @@ class VehicleChargerPairing(models.Model):
     )
     source = models.CharField(
         max_length=16,
-        default="ADMIN",
+        null=True,
+        blank=True,
         choices=[(value, value) for value in ("ADMIN", "RECONCILIATION")],
     )
     created_by = models.ForeignKey(
         Principal, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_pairings"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    reason = models.CharField(max_length=500, default="Legacy pairing record")
+    # 0001-0003 did not record pairing creation provenance.  Keep those
+    # historical fields NULL rather than manufacturing a migration timestamp,
+    # reason, or source.  New service-created rows still receive auto_now_add
+    # and explicit source/reason values.
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    reason = models.CharField(max_length=500, null=True, blank=True)
     end_reason = models.CharField(max_length=500, null=True, blank=True)
     ended_by = models.ForeignKey(
         Principal, null=True, blank=True, on_delete=models.SET_NULL, related_name="ended_pairings"
@@ -331,9 +361,21 @@ class DutySession(Timestamped):
     observed_pairing = models.JSONField(default=dict)
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["driver"], condition=Q(ended_at__isnull=True), name="cow_one_active_driver_duty"),
-            models.UniqueConstraint(fields=["vehicle"], condition=Q(ended_at__isnull=True), name="cow_one_active_vehicle_claim"),
-            models.UniqueConstraint(fields=["charger"], condition=Q(ended_at__isnull=True), name="cow_one_active_charger_claim"),
+            models.UniqueConstraint(
+                fields=["driver"],
+                condition=Q(ended_at__isnull=True),
+                name="cow_one_active_driver_duty",
+            ),
+            models.UniqueConstraint(
+                fields=["vehicle"],
+                condition=Q(ended_at__isnull=True),
+                name="cow_one_active_vehicle_claim",
+            ),
+            models.UniqueConstraint(
+                fields=["charger"],
+                condition=Q(ended_at__isnull=True),
+                name="cow_one_active_charger_claim",
+            ),
         ]
 
 class PricingPolicy(Timestamped):
@@ -370,7 +412,13 @@ class Quote(Timestamped):
     expires_at = models.DateTimeField()
     accepted_at = models.DateTimeField(null=True)
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["request"], condition=Q(accepted_at__isnull=False), name="cow_one_accepted_quote_per_request")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["request"],
+                condition=Q(accepted_at__isnull=False),
+                name="cow_one_accepted_quote_per_request",
+            )
+        ]
 
 class ServiceJob(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -404,8 +452,14 @@ class ChargingSession(Timestamped):
     last_meter_wh = models.BigIntegerField(null=True)
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["charger", "hal_transaction_id"], name="cow_exact_hal_transaction_unique"),
-            models.UniqueConstraint(fields=["charger", "connector_number"], condition=Q(state="ACTIVE"), name="cow_one_active_session_per_connector"),
+            models.UniqueConstraint(
+                fields=["charger", "hal_transaction_id"], name="cow_exact_hal_transaction_unique"
+            ),
+            models.UniqueConstraint(
+                fields=["charger", "connector_number"],
+                condition=Q(state="ACTIVE"),
+                name="cow_one_active_session_per_connector",
+            ),
         ]
 
 class HALCommand(Timestamped):

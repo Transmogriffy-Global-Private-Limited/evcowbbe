@@ -310,7 +310,7 @@ def pairing_data(pairing: VehicleChargerPairing) -> dict[str, Any]:
         "status": pairing.status,
         "source": pairing.source,
         "created_by": str(pairing.created_by_id) if pairing.created_by_id else None,
-        "created_at": pairing.created_at.isoformat(),
+        "created_at": pairing.created_at.isoformat() if pairing.created_at else None,
         "reason": pairing.reason,
         "end_reason": pairing.end_reason,
         "ended_by": str(pairing.ended_by_id) if pairing.ended_by_id else None,

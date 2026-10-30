@@ -59,6 +59,22 @@ class MigrationParity(unittest.TestCase):
         references = set(re.findall(r"\b(?:ON|FROM)\s+(cow_\w+)", s))
         self.assertFalse(references - generated_tables, references - generated_tables)
 
+    def test_0004_reconciles_legacy_pairings_before_lifecycle_constraints(self):
+        path = ROOT / "cow/migrations/0004_admin_charger_connector_pairing_parity.py"
+        migration = path.read_text()
+        self.assertIn(
+            'effective_to__isnull=False, effective_to__lte=F("effective_from")', migration
+        )
+        self.assertIn('update(status="ENDED")', migration)
+        self.assertIn(
+            'field=models.DateTimeField(auto_now_add=True, blank=True, null=True)', migration
+        )
+        self.assertIn('field=models.CharField(blank=True, max_length=500, null=True)', migration)
+        self.assertLess(
+            migration.index("migrations.RunPython(reconcile_legacy_pairings"),
+            migration.index('name="cow_pairing_lifecycle"'),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

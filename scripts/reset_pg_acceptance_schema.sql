@@ -1,0 +1,137 @@
+\set ON_ERROR_STOP on
+
+-- Operator-only recovery for the single disposable acceptance database.
+-- Required psql variables: expected_database, expected_marker_identity,
+-- expected_owner, test_role, operator_reset_authorization.
+-- This file never creates a database and never touches cow_test_harness.
+
+\if :{?expected_database}
+\else
+\echo 'REFUSED: expected_database is required'
+\quit
+\endif
+\if :{?expected_marker_identity}
+\else
+\echo 'REFUSED: expected_marker_identity is required'
+\quit
+\endif
+\if :{?expected_owner}
+\else
+\echo 'REFUSED: expected_owner is required'
+\quit
+\endif
+\if :{?test_role}
+\else
+\echo 'REFUSED: test_role is required'
+\quit
+\endif
+\if :{?operator_reset_authorization}
+\else
+\echo 'REFUSED: operator_reset_authorization is required'
+\quit
+\endif
+
+SELECT current_database() = :'expected_database' AS database_matches \gset
+\if :database_matches
+\else
+\echo 'REFUSED: connected database does not match expected_database'
+\quit
+\endif
+SELECT :'operator_reset_authorization' = 'RESET_COW_POSTGRES_ACCEPTANCE_SCHEMA_ONLY'
+    AS reset_authorized \gset
+\if :reset_authorized
+\else
+\echo 'REFUSED: operator reset authorization did not match'
+\quit
+\endif
+SELECT count(*) = 1 AND bool_and(singleton) AND min(identity) = :'expected_marker_identity'
+    AS marker_matches
+FROM cow_test_harness.database_identity \gset
+\if :marker_matches
+\else
+\echo 'REFUSED: protected marker is missing or does not match'
+\quit
+\endif
+SELECT NOT EXISTS (
+    SELECT 1 FROM pg_namespace
+    WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+      AND nspname NOT IN ('public', 'cow_test_harness')
+) AS schemas_allowed \gset
+\if :schemas_allowed
+\else
+\echo 'REFUSED: unexpected non-system schema exists'
+\quit
+\endif
+SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'test_role') AS runner_exists \gset
+\if :runner_exists
+\else
+\echo 'REFUSED: expected test role does not exist'
+\quit
+\endif
+SELECT pg_get_userbyid((SELECT nspowner FROM pg_namespace WHERE nspname = 'cow_test_harness'))
+       = :'expected_owner' AS marker_owner_matches \gset
+\if :marker_owner_matches
+\else
+\echo 'REFUSED: protected marker schema owner differs from expected_owner'
+\quit
+\endif
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM pg_depend AS dependency
+    JOIN pg_class AS dependent ON dependent.oid = dependency.objid
+    JOIN pg_namespace AS dependent_ns ON dependent_ns.oid = dependent.relnamespace
+    JOIN pg_class AS referenced ON referenced.oid = dependency.refobjid
+    JOIN pg_namespace AS referenced_ns ON referenced_ns.oid = referenced.relnamespace
+    WHERE dependent_ns.nspname = 'public'
+      AND referenced_ns.nspname NOT IN ('public', 'pg_catalog')
+      AND referenced_ns.nspname !~ '^pg_'
+) AS dependencies_allowed \gset
+\if :dependencies_allowed
+\else
+\echo 'REFUSED: public schema has cross-schema dependencies'
+\quit
+\endif
+SELECT COALESCE(array_agg(name ORDER BY name), ARRAY[]::text[]) <@
+       ARRAY['0001_initial', '0002_business_invariants',
+             '0003_admin_fleet_vehicle_parity',
+             '0004_admin_charger_connector_pairing_parity']
+       AND count(*) IN (3, 4) AS cow_ledger_allowed
+FROM django_migrations WHERE app = 'cow' \gset
+\if :cow_ledger_allowed
+\else
+\echo 'REFUSED: Cow migration history is neither the reviewed 0003 nor 0004 ledger'
+\quit
+\endif
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM pg_class AS c
+    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+      AND c.relname NOT IN (
+          'auth_group', 'auth_group_permissions', 'auth_permission', 'auth_user',
+          'auth_user_groups', 'auth_user_user_permissions', 'django_content_type',
+          'django_migrations', 'cow_account', 'cow_principal', 'cow_authsession',
+          'cow_authratebucket', 'cow_consumedrefreshtoken', 'cow_authchallenge',
+          'cow_authactiontoken', 'cow_adminrole', 'cow_adminoverride', 'cow_auditevent',
+          'cow_outbox', 'cow_idempotencyreceipt', 'cow_customervehicle',
+          'cow_customeraddress', 'cow_servicevehicle', 'cow_charger',
+          'cow_chargerconnector', 'cow_vehiclechargerpairing', 'cow_driverprofile',
+          'cow_dutysession', 'cow_pricingpolicy', 'cow_servicerequest', 'cow_quote',
+          'cow_servicejob', 'cow_stateevent', 'cow_chargingsession', 'cow_halcommand',
+          'cow_halreceipt', 'cow_vehiclemaintenanceperiod', 'cow_chargermaintenanceperiod'
+      )
+) AS public_objects_allowed \gset
+\if :public_objects_allowed
+\else
+\echo 'REFUSED: unexpected public application table exists'
+\quit
+\endif
+
+BEGIN;
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public AUTHORIZATION :"expected_owner";
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA public TO :"test_role";
+COMMIT;
+
+-- The marker schema/table, its single identity row, and its ownership remain intact.

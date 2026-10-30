@@ -45,95 +45,88 @@ Use only an independently provisioned disposable `_test` PostgreSQL database for
 
 ## PostgreSQL acceptance (pre-provisioned test database only)
 
-`scripts/run_pg_tests.py` is the sole supported integration-test entry point.
-It does not create a database and replaces pytest-django's normal
-`test_<database>` setup with a no-op. It first verifies all of the following:
+The reusable target is only the already operator-provisioned
+`cow_wp31a_20261030_test` database. `scripts/run_pg_tests.py` never creates a
+database and replaces pytest-django's normal `test_<database>` setup with a
+no-op. It refuses any other database name, production `evcowbbe`, equivalent
+application/test targets, unexpected schemas or public tables, cross-schema
+dependencies, an unexpected Cow ledger, marker shape/identity mismatch, an
+incorrect role, ownership by that role, missing least-privilege grants, or
+administrative PostgreSQL capabilities.
 
-- `TEST_DATABASE_URL` and `DATABASE_URL` resolve to different host/port/database
-  targets, not merely different URL strings;
-- the actual connected database and role match the supplied target contract;
-- the URL user exactly matches the declared least-privilege test role;
-- an operator-owned `cow_test_harness.database_identity` marker matches;
-- the runner role is not superuser, `CREATEDB`, `CREATEROLE`, or `BYPASSRLS`;
-- normal acceptance starts with no application tables in `public`;
-- only migrations `cow.0001_initial`, `cow.0002_business_invariants`, and the
-  additive `cow.0003_admin_fleet_vehicle_parity` plus
-  `cow.0004_admin_charger_connector_pairing_parity` are applied, then replayed
-  without ledger change.
+The protected `cow_test_harness.database_identity` schema remains owned by the
+operator. The runner requires only `CONNECT` on the test database; `USAGE,
+CREATE` on `public`; and `USAGE, SELECT` on the marker. It must not own the
+database, `public`, or the marker schema. Neither this harness nor Django uses
+`flush`, drops a database, creates a database, or changes the marker.
 
-An authorized PostgreSQL operator must provision a new database, marker schema,
-and least-privilege role first. The runner needs `CONNECT` on the test database,
-`USAGE, CREATE` on `public`, and `USAGE, SELECT` on the marker schema. It must
-not own the database or marker schema and must not have PostgreSQL administrative
-capabilities. The protected live `evcowbbe` database, its role, and its backups
-are never test targets.
-
-The operator performs this once through an approved privileged PostgreSQL
-session, never through the application role or this repository script. Replace
-only the three reviewed identifiers and supply the marker through psql's secure
-variable mechanism; do not put a password or marker value in source control,
-shell history, or evidence output.
-
-```sql
-CREATE ROLE cow_pg_acceptance_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
-CREATE ROLE cow_pg_acceptance_runner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
-CREATE DATABASE cow_acceptance_20261029_test OWNER cow_pg_acceptance_owner TEMPLATE template0;
-
-\connect cow_acceptance_20261029_test
-REVOKE ALL ON DATABASE cow_acceptance_20261029_test FROM PUBLIC;
-GRANT CONNECT, TEMPORARY ON DATABASE cow_acceptance_20261029_test TO cow_pg_acceptance_runner;
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
-GRANT USAGE, CREATE ON SCHEMA public TO cow_pg_acceptance_runner;
-CREATE SCHEMA cow_test_harness AUTHORIZATION cow_pg_acceptance_owner;
-CREATE TABLE cow_test_harness.database_identity (
-    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-    identity text NOT NULL CHECK (length(identity) >= 32)
-);
-INSERT INTO cow_test_harness.database_identity (singleton, identity) VALUES (true, :'identity');
-REVOKE ALL ON SCHEMA cow_test_harness FROM PUBLIC;
-REVOKE ALL ON cow_test_harness.database_identity FROM PUBLIC;
-GRANT USAGE ON SCHEMA cow_test_harness TO cow_pg_acceptance_runner;
-GRANT SELECT ON cow_test_harness.database_identity TO cow_pg_acceptance_runner;
-```
-
-The operator must separately set a strong login password for
-`cow_pg_acceptance_runner`, retain the marker only in the approved secret
-store, and confirm the runner cannot alter `cow_test_harness`. A failed or
-interrupted acceptance run is evidence to preserve. Provision a new marked DB
-for a fresh migration acceptance; use `--reset` only for the explicit
-marker-verified retry described below.
-
-From PowerShell 7, after an approved secret loader has placed the real
-application URL in the current process environment, load the test URL without
-echoing it and run the fresh acceptance once:
+Before any run, an approved secret loader must set the real `DATABASE_URL` only
+for target comparison. Use PowerShell 7 to load the disposable target without
+printing credentials:
 
 ```powershell
 Set-Location C:\path\to\evcowbbe
-if ([string]::IsNullOrWhiteSpace($env:DATABASE_URL)) { throw 'DATABASE_URL must be present only for target comparison' }
-$testUrl = Read-Host -AsSecureString 'Disposable PostgreSQL TEST_DATABASE_URL'
+if ([string]::IsNullOrWhiteSpace($env:DATABASE_URL)) { throw 'DATABASE_URL is required only for target comparison' }
+$testUrl = Read-Host -AsSecureString 'TEST_DATABASE_URL for cow_wp31a_20261030_test'
 $env:TEST_DATABASE_URL = [System.Net.NetworkCredential]::new('', $testUrl).Password
 Remove-Variable testUrl
-$env:COW_PG_TEST_DATABASE_IDENTITY = Read-Host 'Operator-provisioned non-secret marker identity'
-$env:COW_PG_TEST_ROLE = Read-Host 'Least-privilege PostgreSQL test role'
+$env:COW_PG_TEST_DATABASE_IDENTITY = Read-Host 'Existing operator-owned marker identity'
+$env:COW_PG_TEST_ROLE = Read-Host 'Existing least-privilege test role'
 $env:COW_PG_TEST_AUTHORIZATION = 'RUN_COW_POSTGRES_ACCEPTANCE_ONLY'
-py -3 scripts/run_pg_tests.py
+```
+
+The 0003-to-0004 rehearsal is deliberately distinct from fresh-schema
+acceptance. After an operator-only clean reset (below), create a 0003 database
+with an ACTIVE pairing and a historically closed pairing, then upgrade it
+without flush. The harness confirms the ACTIVE row remains ACTIVE, the closed
+row becomes ENDED, and IDs, vehicle/charger ownership, effective dates,
+`expected`, and unknown provenance remain exact. It will fail rather than
+invent a historical creation timestamp, reason, source, actor, or end actor.
+
+```powershell
+py -3 scripts/run_pg_tests.py --prepare-upgrade-fixture
+py -3 scripts/run_pg_tests.py --upgrade-0003-to-0004
+```
+
+Preserve those logs and the database state as upgrade evidence. To perform the
+separate fresh 0001-to-0004 acceptance, first obtain a new operator
+authorization to reset only the disposable `public` schema, then run:
+
+```powershell
+py -3 scripts/run_pg_tests.py --fresh
 Remove-Item Env:TEST_DATABASE_URL, Env:COW_PG_TEST_DATABASE_IDENTITY, Env:COW_PG_TEST_ROLE, Env:COW_PG_TEST_AUTHORIZATION
 ```
 
-Do not run the command again against a partially used database in normal mode.
-After an interrupted test run, inspect and preserve evidence first. Only for the
-same marker-verified disposable database, an operator may explicitly authorize a
-flush and safe migration replay:
+`--reset` is intentionally rejected. Django `flush` is not a schema reset.
+Only the database operator may run the guarded reset below, using their
+separately authorized connection to `cow_wp31a_20261030_test`; it keeps
+`cow_test_harness` and its marker unchanged and refuses unexpected schemas,
+dependencies, objects, identities, owners, roles, or Cow migration states.
 
 ```powershell
-$env:COW_PG_TEST_RESET_AUTHORIZATION = 'RESET_COW_POSTGRES_ACCEPTANCE_TEST_ONLY'
-py -3 scripts/run_pg_tests.py --reset
-Remove-Item Env:COW_PG_TEST_RESET_AUTHORIZATION
+$operatorUrl = Read-Host -AsSecureString 'Operator PostgreSQL URL for cow_wp31a_20261030_test'
+$marker = Read-Host 'Existing marker identity'
+$owner = Read-Host 'Existing database and marker schema owner role'
+$testRole = Read-Host 'Existing least-privilege test role'
+$resetToken = Read-Host 'Operator reset authorization'
+$plainOperatorUrl = [System.Net.NetworkCredential]::new('', $operatorUrl).Password
+try {
+    psql --dbname=$plainOperatorUrl --set=ON_ERROR_STOP=1 `
+        --set=expected_database=cow_wp31a_20261030_test `
+        --set=expected_marker_identity=$marker --set=expected_owner=$owner `
+        --set=test_role=$testRole --set=operator_reset_authorization=$resetToken `
+        --file=scripts/reset_pg_acceptance_schema.sql
+} finally {
+    Remove-Variable plainOperatorUrl, operatorUrl, marker, owner, testRole, resetToken -ErrorAction SilentlyContinue
+}
 ```
 
-The `--reset` flag never creates, drops, or changes database identity; it only
-flushes Django application data after all target checks pass. It must never be
-used with production, a protected restore, or an unverified target.
+The reset command cannot establish authorization by itself. The operator must
+first verify their connection and authority, preserve failed-run logs, and use
+only the exact disposable database. Retain the marker schema and its identity
+for the life of this reusable acceptance database. Cleanup means an
+operator-reviewed public-schema reset after evidence retention, never deletion
+of the marker, production `evcowbbe`, protected restores, or backups.
 
 ## Deployment acceptance gate
 

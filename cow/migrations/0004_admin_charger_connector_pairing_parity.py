@@ -3,8 +3,38 @@
 import uuid
 
 from django.db import migrations, models
-from django.db.models import F, Q
-from django.utils import timezone
+from django.db.models import Count, F, Q
+
+
+def reconcile_legacy_pairings(apps, schema_editor):
+    """Map the only pre-0004 lifecycle fact without inventing provenance.
+
+    Before 0004, a pairing was current precisely when ``effective_to`` was
+    NULL.  A non-NULL value is therefore an ended historical record, not an
+    invalidation.  The old schema had no creation actor, source, reason, or
+    creation timestamp, so those newly nullable fields deliberately remain
+    NULL for legacy records.
+    """
+    pairing = apps.get_model("cow", "VehicleChargerPairing")
+    invalid_ranges = pairing.objects.filter(
+        effective_to__isnull=False, effective_to__lte=F("effective_from")
+    ).count()
+    if invalid_ranges:
+        raise RuntimeError(
+            "0004 refuses historical pairing rows whose effective_to is not after effective_from"
+        )
+    active_collisions = list(
+        pairing.objects.filter(effective_to__isnull=True)
+        .values("charger_id")
+        .annotate(pairing_count=Count("id"))
+        .filter(pairing_count__gt=1)
+        .values_list("charger_id", flat=True)[:2]
+    )
+    if active_collisions:
+        raise RuntimeError(
+            "0004 refuses historical data with multiple current pairings for one charger"
+        )
+    pairing.objects.filter(effective_to__isnull=False).update(status="ENDED")
 
 FORWARD = r"""
 CREATE FUNCTION cow_charger_maintenance_guard() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -153,8 +183,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="vehiclechargerpairing",
             name="created_at",
-            field=models.DateTimeField(auto_now_add=True, default=timezone.now),
-            preserve_default=False,
+            field=models.DateTimeField(auto_now_add=True, blank=True, null=True),
         ),
         migrations.AddField(
             model_name="vehiclechargerpairing",
@@ -186,15 +215,16 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="vehiclechargerpairing",
             name="reason",
-            field=models.CharField(default="Legacy pairing record", max_length=500),
+            field=models.CharField(blank=True, max_length=500, null=True),
         ),
         migrations.AddField(
             model_name="vehiclechargerpairing",
             name="source",
             field=models.CharField(
+                blank=True,
                 choices=[("ADMIN", "ADMIN"), ("RECONCILIATION", "RECONCILIATION")],
-                default="ADMIN",
                 max_length=16,
+                null=True,
             ),
         ),
         migrations.AddField(
@@ -211,6 +241,7 @@ class Migration(migrations.Migration):
             name="effective_to",
             field=models.DateTimeField(blank=True, null=True),
         ),
+        migrations.RunPython(reconcile_legacy_pairings, migrations.RunPython.noop),
         migrations.AddConstraint(
             model_name="vehiclechargerpairing",
             constraint=models.CheckConstraint(
