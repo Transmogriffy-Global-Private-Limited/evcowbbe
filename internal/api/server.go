@@ -330,6 +330,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.handlePricing(w, r, id, principal, action)
 		return
 	}
+	if plane == "app" && isCustomerRoute(action) {
+		s.handleCustomer(w, r, id, principal, action)
+		return
+	}
 	switch action {
 	case "me":
 		if r.Method != "GET" {

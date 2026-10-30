@@ -85,8 +85,26 @@ func TestAuthOpenAPICoversImplementedOperations(t *testing.T) {
 	} {
 		expected[op] = false
 	}
-	if len(expected) != 82 {
-		t.Fatalf("expected route fixture count %d, want 82", len(expected))
+	for _, op := range []string{
+		"GET /api/v1/app/customer/profile",
+		"POST /api/v1/app/customer/profile",
+		"PATCH /api/v1/app/customer/profile",
+		"GET /api/v1/app/customer/vehicles",
+		"POST /api/v1/app/customer/vehicles",
+		"GET /api/v1/app/customer/vehicles/{vehicle_id}",
+		"PATCH /api/v1/app/customer/vehicles/{vehicle_id}",
+		"DELETE /api/v1/app/customer/vehicles/{vehicle_id}",
+		"GET /api/v1/app/customer/addresses",
+		"POST /api/v1/app/customer/addresses",
+		"GET /api/v1/app/customer/addresses/{address_id}",
+		"PATCH /api/v1/app/customer/addresses/{address_id}",
+		"DELETE /api/v1/app/customer/addresses/{address_id}",
+		"POST /api/v1/app/customer/addresses/{address_id}/default",
+	} {
+		expected[op] = false
+	}
+	if len(expected) != 96 {
+		t.Fatalf("expected route fixture count %d, want 96", len(expected))
 	}
 
 	// Embedded bytes preserve checkout line endings (CRLF on some Windows

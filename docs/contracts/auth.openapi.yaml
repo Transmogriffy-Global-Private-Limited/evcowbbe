@@ -39,6 +39,87 @@ paths:
         tokens are rejected. No bearer authentication is required. This does **not** log the account in.
       security: []
       responses:
+    CustomerProfileResult:
+      description: Customer profile for the authenticated app principal.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CustomerProfileEnvelope'
+    CustomerVehicleResult:
+      description: Customer vehicle record.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CustomerVehicleEnvelope'
+    CustomerVehicleListResult:
+      description: List of registered vehicles.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CustomerVehicleListEnvelope'
+    CustomerAddressResult:
+      description: Saved customer service address.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CustomerAddressEnvelope'
+    CustomerAddressListResult:
+      description: List of saved customer addresses.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CustomerAddressListEnvelope'
+    CustomerNotFound:
+      description: 404 Customer resource does not exist.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    CustomerConflict:
+      description: 409 Conflict with existing customer resource state.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    CustomerVersionMismatch:
+      description: 412 Resource version mismatch.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    CustomerValidation:
+      description: 422 Invalid customer resource payload.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
         '200':
           $ref: '#/components/responses/Ack'
         '400':
@@ -648,6 +729,489 @@ paths:
             example:
               challenge_id: 00000000-0000-4000-8000-000000000000
               code: '012345'
+  /api/v1/app/customer/profile:
+    get:
+      tags:
+      - Customer App
+      operationId: app_customer_get_profile
+      summary: Read customer profile
+      description: Retrieve the customer profile for the authenticated app principal.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerProfileResult'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    post:
+      tags:
+      - Customer App
+      operationId: app_customer_create_profile
+      summary: Register customer profile
+      description: Create a new customer profile for the authenticated app account.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerProfileRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/CustomerProfileResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/CustomerConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/CustomerValidation'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    patch:
+      tags:
+      - Customer App
+      operationId: app_customer_patch_profile
+      summary: Update customer profile
+      description: Partially update mutable customer profile attributes.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerProfileRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerProfileResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/CustomerValidation'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/app/customer/vehicles:
+    get:
+      tags:
+      - Customer App
+      operationId: app_customer_list_vehicles
+      summary: List registered vehicles
+      description: Retrieve all registered vehicles belonging to the authenticated customer.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerVehicleListResult'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    post:
+      tags:
+      - Customer App
+      operationId: app_customer_create_vehicle
+      summary: Register customer vehicle
+      description: Register a new vehicle for mobile charging service.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerVehicleRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/CustomerVehicleResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/CustomerConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/CustomerValidation'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/app/customer/vehicles/{vehicle_id}:
+    parameters:
+    - name: vehicle_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    get:
+      tags:
+      - Customer App
+      operationId: app_customer_get_vehicle
+      summary: Read customer vehicle
+      description: Retrieve a single vehicle registered by the authenticated customer.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerVehicleResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    patch:
+      tags:
+      - Customer App
+      operationId: app_customer_patch_vehicle
+      summary: Update customer vehicle
+      description: Update attributes of a registered vehicle.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerVehicleRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerVehicleResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '409':
+          $ref: '#/components/responses/CustomerConflict'
+        '412':
+          $ref: '#/components/responses/CustomerVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/CustomerValidation'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    delete:
+      tags:
+      - Customer App
+      operationId: app_customer_delete_vehicle
+      summary: Deactivate customer vehicle
+      description: Soft delete (deactivate) a registered vehicle.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/app/customer/addresses:
+    get:
+      tags:
+      - Customer App
+      operationId: app_customer_list_addresses
+      summary: List customer addresses
+      description: Retrieve all saved addresses for the authenticated customer.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerAddressListResult'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    post:
+      tags:
+      - Customer App
+      operationId: app_customer_create_address
+      summary: Create customer address
+      description: Save a new service address location for the authenticated customer.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerAddressRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/CustomerAddressResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '409':
+          $ref: '#/components/responses/CustomerConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/CustomerValidation'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/app/customer/addresses/{address_id}:
+    parameters:
+    - name: address_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    get:
+      tags:
+      - Customer App
+      operationId: app_customer_get_address
+      summary: Read customer address
+      description: Retrieve a single saved address by ID.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerAddressResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    patch:
+      tags:
+      - Customer App
+      operationId: app_customer_patch_address
+      summary: Update customer address
+      description: Partially update saved address attributes.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerAddressRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerAddressResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '409':
+          $ref: '#/components/responses/CustomerConflict'
+        '412':
+          $ref: '#/components/responses/CustomerVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/CustomerValidation'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+    delete:
+      tags:
+      - Customer App
+      operationId: app_customer_delete_address
+      summary: Deactivate customer address
+      description: Soft delete (deactivate) a saved customer address.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
+  /api/v1/app/customer/addresses/{address_id}/default:
+    parameters:
+    - name: address_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    post:
+      tags:
+      - Customer App
+      operationId: app_customer_set_default_address
+      summary: Set default customer address
+      description: Set this address as the single active default for the customer.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          $ref: '#/components/responses/Ack'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '409':
+          $ref: '#/components/responses/CustomerConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '405':
+          $ref: '#/components/responses/WrongMethod'
   /api/v1/driver/auth/register:
     post:
       tags:
@@ -3374,6 +3938,330 @@ components:
         minLength: 16
         maxLength: 128
   schemas:
+    CustomerProfile:
+      type: object
+      required:
+      - id
+      - account_id
+      - plane
+      - status
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        plane:
+          type: string
+          enum: [app]
+        full_name:
+          type: string
+        primary_phone:
+          type: string
+        status:
+          type: string
+          enum: [INCOMPLETE, ACTIVE, SUSPENDED, CLOSED]
+        version:
+          type: integer
+    CustomerProfileEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          $ref: '#/components/schemas/CustomerProfile'
+    CreateCustomerProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        primary_phone:
+          type: string
+    UpdateCustomerProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        primary_phone:
+          type: string
+    CustomerVehicle:
+      type: object
+      required:
+      - id
+      - customer_id
+      - make
+      - model
+      - is_active
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        make:
+          type: string
+        model:
+          type: string
+        variant:
+          type: string
+        registration_number:
+          type: string
+        battery_capacity_wh:
+          type: integer
+        supports_ac:
+          type: boolean
+        supports_dc:
+          type: boolean
+        max_ac_power_w:
+          type: integer
+        max_dc_power_w:
+          type: integer
+        connector_types:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        version:
+          type: integer
+    CustomerVehicleEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          $ref: '#/components/schemas/CustomerVehicle'
+    CustomerVehicleListEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomerVehicle'
+    CreateCustomerVehicleRequest:
+      type: object
+      required:
+      - make
+      - model
+      properties:
+        label:
+          type: string
+        make:
+          type: string
+        model:
+          type: string
+        variant:
+          type: string
+        registration_number:
+          type: string
+        battery_capacity_wh:
+          type: integer
+        supports_ac:
+          type: boolean
+        supports_dc:
+          type: boolean
+        max_ac_power_w:
+          type: integer
+        max_dc_power_w:
+          type: integer
+        connector_types:
+          type: array
+          items:
+            type: string
+    UpdateCustomerVehicleRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        make:
+          type: string
+        model:
+          type: string
+        variant:
+          type: string
+        registration_number:
+          type: string
+        battery_capacity_wh:
+          type: integer
+        supports_ac:
+          type: boolean
+        supports_dc:
+          type: boolean
+        max_ac_power_w:
+          type: integer
+        max_dc_power_w:
+          type: integer
+        connector_types:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        expected_version:
+          type: integer
+    CustomerAddress:
+      type: object
+      required:
+      - id
+      - customer_id
+      - line1
+      - city
+      - state
+      - country_code
+      - is_default
+      - is_active
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        line1:
+          type: string
+        line2:
+          type: string
+        locality:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postal_code:
+          type: string
+        country_code:
+          type: string
+        latitude:
+          type: string
+        longitude:
+          type: string
+        landmark:
+          type: string
+        building_instructions:
+          type: string
+        floor:
+          type: string
+        contact_instructions:
+          type: string
+        geocode_provider:
+          type: string
+        geocode_external_ref:
+          type: string
+        is_default:
+          type: boolean
+        is_active:
+          type: boolean
+        version:
+          type: integer
+    CustomerAddressEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          $ref: '#/components/schemas/CustomerAddress'
+    CustomerAddressListEnvelope:
+      type: object
+      required:
+      - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomerAddress'
+    CreateCustomerAddressRequest:
+      type: object
+      required:
+      - line1
+      - city
+      - state
+      properties:
+        label:
+          type: string
+        line1:
+          type: string
+        line2:
+          type: string
+        locality:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postal_code:
+          type: string
+        country_code:
+          type: string
+        latitude:
+          type: string
+        longitude:
+          type: string
+        landmark:
+          type: string
+        building_instructions:
+          type: string
+        floor:
+          type: string
+        contact_instructions:
+          type: string
+        geocode_provider:
+          type: string
+        geocode_external_ref:
+          type: string
+        is_default:
+          type: boolean
+    UpdateCustomerAddressRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        line1:
+          type: string
+        line2:
+          type: string
+        locality:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postal_code:
+          type: string
+        country_code:
+          type: string
+        latitude:
+          type: string
+        longitude:
+          type: string
+        landmark:
+          type: string
+        building_instructions:
+          type: string
+        floor:
+          type: string
+        contact_instructions:
+          type: string
+        geocode_provider:
+          type: string
+        geocode_external_ref:
+          type: string
+        is_default:
+          type: boolean
+        is_active:
+          type: boolean
+        expected_version:
+          type: integer
     PricingScope:
       type: object
       additionalProperties: false
