@@ -99,6 +99,17 @@ def make_tokens(principal: Principal, session: AuthSession | None = None):
             "token_type": "Bearer", "expires_in": int(ACCESS_TTL.total_seconds())}
 
 
+def _auth_status_allowed(plane: str, status: str) -> bool:
+    """Authentication eligibility, not operational duty/dispatch eligibility.
+
+    Verified, non-suspended driver applicants may access onboarding while
+    app/admin accounts continue requiring ACTIVE.
+    """
+    return (plane == "driver" and status in ("PENDING", "ACTIVE")) or (
+        plane in ("app", "admin") and status == "ACTIVE"
+    )
+
+
 def login(plane: str, email: str, password: str):
     email = normalize_email(email)
     throttle.check("login",email,8,300)
@@ -108,8 +119,8 @@ def login(plane: str, email: str, password: str):
     correct = check_password(password, account.password_hash if account else dummy)
     if not account or not correct:
         reject(401, "INVALID_CREDENTIALS", "Invalid credentials")
-    principal = Principal.objects.filter(account=account, plane=plane, status="ACTIVE").first()
-    if not principal or not account.email_verified:
+    principal = Principal.objects.filter(account=account, plane=plane).first()
+    if not principal or not account.email_verified or not _auth_status_allowed(plane, principal.status):
         reject(403, "ACCOUNT_NOT_READY", "Account is not eligible to sign in")
     if account.two_factor_enabled:
         challenge = create_challenge(account, plane, "LOGIN_2FA")
@@ -123,12 +134,13 @@ def authenticate(token: str, expected_plane: str) -> Principal:
     if not token or len(token) > 256:
         reject(401, "UNAUTHORIZED", "Invalid authentication")
     session = AuthSession.objects.select_related("principal", "principal__account").filter(
-        access_digest=digest(token), revoked_at__isnull=True, access_expires_at__gt=timezone.now()).first()
+        access_digest=digest(token), revoked_at__isnull=True, access_expires_at__gt=timezone.now(),
+        absolute_expires_at__gt=timezone.now()).first()
     if not session:
         reject(401, "UNAUTHORIZED", "Invalid authentication")
     if session.principal.plane != expected_plane:
         reject(403, "PRINCIPAL_PLANE_MISMATCH", "This token belongs to another application plane")
-    if session.principal.status != "ACTIVE" or not session.principal.account.email_verified:
+    if not _auth_status_allowed(expected_plane, session.principal.status) or not session.principal.account.email_verified:
         reject(403, "ACCOUNT_NOT_READY", "Principal not active")
     return session.principal
 
@@ -148,7 +160,7 @@ def refresh(plane: str, token: str):
             return None, "UNAUTHORIZED"
         if session.principal.plane != plane:
             return None, "PRINCIPAL_PLANE_MISMATCH"
-        if session.principal.status != "ACTIVE" or not session.principal.account.email_verified:
+        if not _auth_status_allowed(plane, session.principal.status) or not session.principal.account.email_verified:
             return None, "ACCOUNT_NOT_READY"
         ConsumedRefreshToken.objects.create(digest=dig, session=session)
         return {"two_factor_required": False, "tokens": make_tokens(session.principal, session)}, None
@@ -219,8 +231,11 @@ def check_challenge(challenge_id,code,purpose,plane,account_id=None):
 def verify_login_otp(challenge_id,code,plane):
     ch=check_challenge(challenge_id,code,"LOGIN_2FA",plane)
     if ch is None:reject(400,"OTP_INVALID","Invalid or expired code")
-    principal=Principal.objects.filter(account_id=ch.account_id,plane=plane,status="ACTIVE").first()
-    if not principal:reject(403,"ACCOUNT_NOT_READY","Principal not active")
+    principal=Principal.objects.select_related("account").filter(account_id=ch.account_id,plane=plane).first()
+    if (not principal or not principal.account.email_verified
+        or not principal.account.two_factor_enabled
+        or not _auth_status_allowed(plane, principal.status)):
+        reject(403,"ACCOUNT_NOT_READY","Principal not active")
     with transaction.atomic():
         return {"two_factor_required":False,"tokens":make_tokens(principal)}
 
