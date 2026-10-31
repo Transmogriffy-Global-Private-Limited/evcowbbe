@@ -223,5 +223,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0004_admin_charger_connector_pairing_parity",
         "0005_admin_rbac_pricing_parity",
         "0006_customer_master_parity",
+        "0007_rbac_pricing_consequential_parity",
     )
     assert after == before

@@ -19,6 +19,13 @@ class Scope(Strict):
     kind: str = Field(min_length=1, max_length=64)
     key: str = Field(min_length=1, max_length=160)
 
+    @field_validator("key")
+    @classmethod
+    def valid_key(cls, value):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}",value):
+            raise ValueError("Invalid scope key")
+        return value
+
     @field_validator("kind")
     @classmethod
     def valid_kind(cls, value):
@@ -31,7 +38,7 @@ class Rule(Strict):
     id: str
     kind: Literal["BASE", "OVERRIDE_RATE", "MULTIPLIER", "DISCOUNT_PERCENT"]
     rate: str
-    priority: int = Field(ge=0, le=100_000, strict=True)
+    priority: int = Field(default=0, ge=0, le=100_000, strict=True)
     component: str | None = None
     basis: str | None = None
     target: str | None = None
@@ -104,15 +111,13 @@ class Draft(Strict):
         base = {r.id for r in self.rules if r.kind == "BASE"}
         if not base:
             raise ValueError("At least one BASE rule is required")
-        seen = set()
-        for r in self.rules:
-            if r.kind != "BASE":
-                if r.target not in base:
-                    raise ValueError("Modifier target must identify an existing BASE rule")
-                identity = (r.kind, r.target, r.priority)
-                if identity in seen:
-                    raise ValueError("Ambiguous modifier composition at same priority")
-                seen.add(identity)
+        from cow.services.pricing_engine import validate, PricingError
+        try:
+            validate({"policy_id": self.policy_key, "policy_version": self.policy_version,
+                      "currency": self.currency,
+                      "rules": [r.model_dump(exclude_none=True) for r in self.rules]})
+        except PricingError as exc:
+            raise ValueError(str(exc)) from exc
         return self
 
 

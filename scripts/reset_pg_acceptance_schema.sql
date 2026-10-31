@@ -118,6 +118,14 @@ SELECT (
         '0005_admin_rbac_pricing_parity',
         '0006_customer_master_parity'
     ]::text[]
+    OR names = ARRAY[
+        '0001_initial', '0002_business_invariants',
+        '0003_admin_fleet_vehicle_parity',
+        '0004_admin_charger_connector_pairing_parity',
+        '0005_admin_rbac_pricing_parity',
+        '0006_customer_master_parity',
+        '0007_rbac_pricing_consequential_parity'
+    ]::text[]
 ) AS cow_ledger_allowed
 FROM ledger \gset
 \if :cow_ledger_allowed

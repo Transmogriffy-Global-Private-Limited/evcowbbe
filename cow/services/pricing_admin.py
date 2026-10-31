@@ -8,7 +8,9 @@ from django.utils import timezone
 
 from cow.errors import reject
 from cow.models import AuditEvent, PricingPolicy
-from cow.pricing_contract import Draft, overlap
+from cow.pricing_contract import Draft
+from cow.services.pricing_topology import validate_topology, resolve as resolve_policies
+from cow.services.pricing_engine import PricingError, evaluate
 
 
 def encode(policy):
@@ -74,6 +76,46 @@ def _scope_lock(scope):
         )
 
 
+def _authorized_pricing_actor(actor):
+    # Share the global RBAC mutation lock: revocation and a pricing write
+    # cannot race between an outer HTTP permission check and durable commit.
+    from cow.services.admin_rbac import _lock_global, _require_locked_actor
+    _lock_global()
+    return _require_locked_actor(actor, "pricing.manage")
+
+
+def _reviewed_reason(reason):
+    from cow.services.admin_rbac import _reason
+    return _reason(reason)
+
+
+def _record(policy):
+    return {"scope": policy.scope, "starts_at": policy.starts_at,
+            "ends_at": policy.ends_at, "active": policy.status == "PUBLISHED",
+            "terms": {"policy_id": policy.policy_key,
+                      "policy_version": policy.policy_version,
+                      "currency": policy.currency, "rules": policy.rules}}
+
+
+def resolve_trusted(scopes, at):
+    """For server-authorized scope precedence only. Never take scopes from a client."""
+    from django.db.models import Q
+    query = Q(pk__in=[])
+    for scope in scopes:
+        query |= Q(scope=scope)
+    candidates = PricingPolicy.objects.filter(
+        query, status="PUBLISHED", policy_key__isnull=False
+    )
+    chosen = resolve_policies([_record(x) for x in candidates], scopes, at)
+    return chosen["terms"]
+
+
+def calculate_trusted(scopes, at, evidence, approved_tax, mode="PREVIEW"):
+    """Explicit trusted evidence/tax caller; never accepts client-supplied precedence."""
+    terms = resolve_trusted(scopes, at)
+    return evaluate(terms, evidence, approved_tax, mode)
+
+
 def _audit(actor, policy, action, reason):
     AuditEvent.objects.create(
         actor=actor,
@@ -92,6 +134,7 @@ def _audit(actor, policy, action, reason):
 def create(actor, draft: Draft):
     try:
         with transaction.atomic():
+            actor = _authorized_pricing_actor(actor)
             _scope_lock(draft.scope.model_dump())
             if PricingPolicy.objects.filter(
                 policy_key=draft.policy_key, policy_version=draft.policy_version
@@ -111,7 +154,7 @@ def create(actor, draft: Draft):
                 status="DRAFT",
                 state_version=1,
             )
-            _audit(actor, p, "CREATE_DRAFT", draft.reason)
+            _audit(actor, p, "CREATE_DRAFT", _reviewed_reason(draft.reason))
     except IntegrityError:
         reject(409, "PRICING_REVISION_EXISTS", "Policy revision conflicts with existing records")
     return p
@@ -126,6 +169,7 @@ def publish(actor, policy_id, version, reason):
     # Resource lock first to avoid reversed lock order. All publish operations
     # acquire the identical scope lock before a policy row lock.
     with transaction.atomic():
+        actor = _authorized_pricing_actor(actor)
         scope = (
             PricingPolicy.objects.filter(id=policy_id, policy_key__isnull=False)
             .values_list("scope", flat=True)
@@ -140,20 +184,23 @@ def publish(actor, policy_id, version, reason):
             reject(409, "POLICY_STATE_CONFLICT", "Only a draft can be published")
         if p.ends_at is not None and p.ends_at <= timezone.now():
             reject(409, "PRICING_WINDOW_EXPIRED", "Cannot publish an expired window")
-        for other in PricingPolicy.objects.filter(status="PUBLISHED", scope=p.scope).exclude(
-            id=p.id
-        ):
-            if overlap(p.starts_at, p.ends_at, other.starts_at, other.ends_at):
-                reject(409, "PRICING_SCOPE_CONFLICT", "Overlapping published tariff window")
+        others = list(PricingPolicy.objects.filter(status="PUBLISHED", scope=p.scope).exclude(id=p.id))
+        try:
+            validate_topology([_record(other) for other in others] + [
+                {**_record(p), "active": True}
+            ])
+        except PricingError:
+            reject(409, "PRICING_SCOPE_CONFLICT", "Published pricing windows are ambiguous")
         p.status = "PUBLISHED"
         p.state_version += 1
         p.save(update_fields=["status", "state_version", "updated_at"])
-        _audit(actor, p, "PUBLISH", reason)
+        _audit(actor, p, "PUBLISH", _reviewed_reason(reason))
     return p
 
 
 def withdraw(actor, policy_id, version, reason):
     with transaction.atomic():
+        actor = _authorized_pricing_actor(actor)
         scope = (
             PricingPolicy.objects.filter(id=policy_id, policy_key__isnull=False)
             .values_list("scope", flat=True)
@@ -169,5 +216,5 @@ def withdraw(actor, policy_id, version, reason):
         p.status = "WITHDRAWN"
         p.state_version += 1
         p.save(update_fields=["status", "state_version", "updated_at"])
-        _audit(actor, p, "WITHDRAW", reason)
+        _audit(actor, p, "WITHDRAW", _reviewed_reason(reason))
     return p

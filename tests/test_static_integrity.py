@@ -34,6 +34,7 @@ class SourceIntegrity(unittest.TestCase):
                 "0004_admin_charger_connector_pairing_parity.py",
                 "0005_admin_rbac_pricing_parity.py",
                 "0006_customer_master_parity.py",
+                "0007_rbac_pricing_consequential_parity.py",
             ],
         )
         for p in migrations:
