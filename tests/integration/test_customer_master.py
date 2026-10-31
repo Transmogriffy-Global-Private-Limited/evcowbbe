@@ -21,8 +21,12 @@ from cow.services import auth
 pytestmark = [pytest.mark.postgres, pytest.mark.django_db(transaction=True)]
 
 
-def principal(plane="app"):
-    account = Account.objects.create(email=f"customer-{uuid4().hex}@example.test", password_hash="x")
+def principal(plane="app", *, verified=True):
+    account = Account.objects.create(
+        email=f"customer-{uuid4().hex}@example.test",
+        password_hash="x",
+        email_verified=verified,
+    )
     return Principal.objects.create(account=account, plane=plane, status="ACTIVE")
 
 
@@ -40,6 +44,13 @@ def json_call(client, method, path, body, who, *, version=None, key=None):
         path, json.dumps(body), content_type="application/json",
         **auth_headers(who, version=version, key=key),
     )
+
+
+def test_unverified_account_is_denied_even_with_valid_session():
+    customer = principal(verified=False)
+    response = Client().get("/api/v1/app/me", **auth_headers(customer))
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "ACCOUNT_NOT_READY"
 
 
 def test_profile_is_owner_only_versioned_and_auth_fields_immutable():
