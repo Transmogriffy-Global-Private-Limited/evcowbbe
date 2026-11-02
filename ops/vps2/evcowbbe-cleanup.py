@@ -28,6 +28,23 @@ DBS = (
  'evcowbbe_restore_fleet3_20261028051446_6051_6371',
 )
 assert len(DBS)==28 and len(set(DBS))==28
+# Exact scratch database ownership verified against VPS2.
+# No arbitrary owners or non-project databases are permitted.
+EXPECTED_OWNERS = {
+    name: 'evcowbbe_atlas_wp3_20261029'
+    for name in DBS if name.startswith('evcowbbe_atlas_')
+}
+EXPECTED_OWNERS.update({
+    'cow_acceptance_20261029_test': 'cow_pg_acceptance_owner',
+    'cow_django_stage_20261102': 'cow_django_stage_owner',
+    'evcowbbe_f3_20261028083109_8c9982db_test': 'postgres',
+    'evcowbbe_restore_20261027092427_25093': 'postgres',
+    'evcowbbe_restore_f3_20261028082255_31c7b2e2': 'postgres',
+    'evcowbbe_restore_fleet3_20261028051446_6051_6371': 'postgres',
+})
+assert sum(name.startswith('evcowbbe_atlas_') for name in DBS) == 22
+assert set(EXPECTED_OWNERS) == set(DBS)
+
 # Reusable project-owned acceptance DB remains required by scripts/run_pg_tests.py.
 PROTECTED_TEST_DB='cow_wp31a_20261030_test'
 assert set(DBS).isdisjoint({'evcowbbe','evcowbbe_django_next',PROTECTED_TEST_DB})
@@ -65,6 +82,16 @@ class Blocked(Exception):pass
 
 def need(ok,msg):
     if not ok:raise Blocked(msg)
+
+def require_expected_owner(name, info):
+    expected = EXPECTED_OWNERS[name]
+    actual = info['owner']
+    need(
+        actual == expected,
+        'SCRATCH_DB_OWNER_MISMATCH=' + name +
+        ' actual=' + actual + ' expected=' + expected
+    )
+
 
 def call(args,*,out=None,inp=None,timeout=180,check=True):
     p=subprocess.run(args,stdout=out if out is not None else subprocess.PIPE,
@@ -165,6 +192,7 @@ def plan():
     for name in DBS:
         x=row(name)
         if x:
+            require_expected_owner(name, x)
             print('SCRATCH_DB='+x['name']+' OWNER='+x['owner']+' BYTES='+str(x['bytes'])+' SESSIONS='+str(x['sessions']))
         else:print('SCRATCH_DB_ALREADY_ABSENT='+name)
     for name in TEST_DIRS:
@@ -216,7 +244,7 @@ def perform():
                 rec['dropped']=True;saved(j)
                 print('RESUMED_PREVIOUS_DB_DROP='+name,flush=True)
             continue
-        need(x['owner'] in ('evcowbbe_app','postgres'),'UNRECOGNIZED_SCRATCH_DB_OWNER='+name+' '+x['owner'])
+        require_expected_owner(name, x)
         need(x['sessions']==0,'ACTIVE_DATABASE_SESSIONS='+name)
     for name in DBS:
         boundary()

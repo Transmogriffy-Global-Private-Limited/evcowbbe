@@ -38,6 +38,40 @@ class Operations(unittest.TestCase):
         self.assertTrue(all(n.startswith('evcowbbe_') or n.startswith('cow_') for n in names))
         self.assertFalse({'evcowbbe','evcowbbe_django_next','cow_wp31a_20261030_test'}&names)
 
+    def test_exact_scratch_database_owner_contract(self):
+        c = self.cleanup
+        self.assertEqual(len(c.DBS), 28)
+        self.assertEqual(set(c.EXPECTED_OWNERS), set(c.DBS))
+        self.assertEqual(
+            sum(owner == 'evcowbbe_atlas_wp3_20261029'
+                for owner in c.EXPECTED_OWNERS.values()), 22
+        )
+        self.assertEqual(
+            c.EXPECTED_OWNERS['cow_acceptance_20261029_test'],
+            'cow_pg_acceptance_owner'
+        )
+        self.assertEqual(
+            c.EXPECTED_OWNERS['cow_django_stage_20261102'],
+            'cow_django_stage_owner'
+        )
+        self.assertEqual(
+            sum(owner == 'postgres' for owner in c.EXPECTED_OWNERS.values()), 4
+        )
+
+    def test_plan_rejects_unexpected_scratch_owner(self):
+        c = self.cleanup
+        fake = {
+            'name': c.DBS[0],
+            'owner': 'unrelated_service',
+            'bytes': 1024,
+            'sessions': 0
+        }
+        with patch.object(c, 'boundary'):
+            with patch.object(c, 'load', return_value=None):
+                with patch.object(c, 'row', return_value=fake):
+                    with self.assertRaises(c.Blocked):
+                        c.plan()
+
     def test_unlisted_database_never_queried(self):
         with patch.object(self.cleanup,'psql',side_effect=AssertionError('unexpected DB query')):
             with self.assertRaises(self.cleanup.Blocked):
