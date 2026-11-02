@@ -2,6 +2,114 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
+from cow.api_contracts import GO_ERROR_ENVELOPE_SCHEMA
+from cow.go_wire import declared_header_parameters, match_operation
+
+REQUEST_ID_HEADER = {
+    "description": "Request correlation UUID returned by every response.",
+    "schema": {"type": "string", "format": "uuid"},
+}
+
+
+def _diagnostic_success(value: dict) -> dict:
+    return {
+        "description": "Go-compatible diagnostic response.",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "object",
+                            "properties": value,
+                            "required": sorted(value),
+                            "additionalProperties": False,
+                        }
+                    },
+                    "required": ["data"],
+                    "additionalProperties": False,
+                }
+            }
+        },
+    }
+
+RETRY_AFTER_HEADER = {
+    "description": "Seconds until a rate-limited request may be retried.",
+    "schema": {"type": "integer", "minimum": 0},
+}
+
+
+def add_go_error_contracts(schema: dict) -> dict:
+    """Declare the centralized error boundary for each frozen Go operation.
+
+    The published Go contract supplies each operation's *declared status set*;
+    the schema and response headers come from the source-verified Django
+    middleware/exception boundary. This is documentation of a shared runtime
+    capability, not a claim that every business error is reachable on every
+    request. Route-family tests remain responsible for reachability.
+    """
+    for path, path_item in schema.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if not isinstance(operation, dict):
+                continue
+            go_operation = match_operation(path, method)
+            if go_operation is None:
+                continue
+            responses = operation.setdefault("responses", {})
+            for status in go_operation.get("responses", {}):
+                status = str(status)
+                if not status.isdigit() or int(status) < 400:
+                    continue
+                headers = {"X-Request-ID": deepcopy(REQUEST_ID_HEADER)}
+                if status == "429":
+                    headers["Retry-After"] = deepcopy(RETRY_AFTER_HEADER)
+                responses[status] = {
+                    "description": "Go-compatible error response.",
+                    "content": {
+                        "application/json": {"schema": deepcopy(GO_ERROR_ENVELOPE_SCHEMA)}
+                    },
+                    "headers": headers,
+                }
+    return schema
+
+
+def add_go_mutation_header_contracts(schema: dict) -> dict:
+    """Expose source-verified manual mutation headers in generated OpenAPI."""
+    for path, path_item in schema.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if not isinstance(operation, dict) or match_operation(path, method) is None:
+                continue
+            parameters = operation.setdefault("parameters", [])
+            existing = {
+                (parameter.get("in"), parameter.get("name"))
+                for parameter in parameters
+                if isinstance(parameter, dict)
+            }
+            for parameter in declared_header_parameters(path, method):
+                key = (parameter["in"], parameter["name"])
+                if key not in existing:
+                    parameters.append(parameter)
+    return schema
+
+
+def add_standard_response_headers(schema: dict) -> dict:
+    """Document headers installed by RequestSecurityMiddleware.
+
+    This derives from the Django middleware contract, not from the frozen Go
+    YAML.  The public `/openapi.yaml` must describe the headers callers receive
+    on both success and error responses.
+    """
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            for response in operation.get("responses", {}).values():
+                if isinstance(response, dict):
+                    response.setdefault("headers", {})["X-Request-ID"] = deepcopy(REQUEST_ID_HEADER)
+    return schema
+
 
 def add_diagnostics(schema: dict) -> dict:
     """Add the three registered Django diagnostic operations to Ninja output."""
@@ -14,7 +122,9 @@ def add_diagnostics(schema: dict) -> dict:
                     "operationId": "health_live",
                     "summary": "Liveness probe",
                     "security": [],
-                    "responses": {"200": {"description": "Process is live"}},
+                    "responses": {
+                        "200": _diagnostic_success({"status": {"const": "live", "type": "string"}})
+                    },
                 }
             },
             "/health/ready": {
@@ -24,7 +134,7 @@ def add_diagnostics(schema: dict) -> dict:
                     "summary": "Database readiness probe",
                     "security": [],
                     "responses": {
-                        "200": {"description": "Database is ready"},
+                        "200": _diagnostic_success({"status": {"const": "ready", "type": "string"}}),
                         "503": {"description": "Database unavailable"},
                     },
                 }
@@ -35,9 +145,15 @@ def add_diagnostics(schema: dict) -> dict:
                     "operationId": "version",
                     "summary": "Logical API version",
                     "security": [],
-                    "responses": {"200": {"description": "Logical API version"}},
+                    "responses": {
+                        "200": _diagnostic_success(
+                            {"version": {"const": "admin-pricing-policy-1", "type": "string"}}
+                        )
+                    },
                 }
             },
         }
     )
-    return schema
+    return add_standard_response_headers(
+        add_go_mutation_header_contracts(add_go_error_contracts(schema))
+    )

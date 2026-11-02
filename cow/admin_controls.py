@@ -1,18 +1,21 @@
 """Go-compatible Admin RBAC and tariff endpoints; every check is server-side."""
 
 import re
+from typing import Literal
 from uuid import UUID
 
+from django.core.exceptions import RequestDataTooBig
 from django.db import IntegrityError
 from django.http import JsonResponse
-from ninja import Schema
+from ninja import Query, Schema
 from pydantic import ConfigDict, Field
-from pydantic import ValidationError as PydanticValidationError
 
+from cow.api_contracts import AckEnvelope
 from cow.errors import reject
 from cow.models import Principal
 from cow.pricing_contract import Draft
 from cow.services import admin_rbac, idempotency, pricing_admin, rbac
+from cow.services.pricing_wire import InvalidPricingBody, check_body
 
 
 class StrictSchema(Schema):
@@ -20,7 +23,15 @@ class StrictSchema(Schema):
 
 
 class RoleChange(StrictSchema):
-    role: str
+    role: Literal[
+        "FULL_ADMIN",
+        "OPERATIONS",
+        "DRIVER_RECRUITMENT",
+        "FINANCE_COMMERCIAL",
+        "SUPPORT",
+        "TECHNICAL_HAL",
+        "READ_ONLY",
+    ]
     reason: str = Field(min_length=8, max_length=500)
 
 
@@ -29,22 +40,19 @@ class Reason(StrictSchema):
 
 
 class OverrideChange(Reason):
-    decision: str = Field(pattern=r"^(ALLOW|DENY)$")
-
-
-class PricingDraftInput(Reason):
-    policy_key: str
-    policy_version: int
-    scope: dict
-    currency: str
-    rules: list[dict]
-    starts_at: str | None = None
-    ends_at: str | None = None
+    decision: Literal["ALLOW", "DENY"]
 
 
 def _json(request):
     if request.content_type.split(";", 1)[0].lower() != "application/json":
         reject(415, "UNSUPPORTED_MEDIA_TYPE", "Expected application/json")
+    try:
+        if int(request.META.get("CONTENT_LENGTH") or 0) > 32768 or len(request.body) > 32768:
+            reject(400, "VALIDATION_FAILED", "Invalid JSON request")
+        if request.path.startswith("/api/v1/admin/pricing/policies"):
+            check_body(request.body)
+    except (InvalidPricingBody, RequestDataTooBig, ValueError):
+        reject(422, "VALIDATION_FAILED", "Invalid pricing request body")
 
 
 def _version(request):
@@ -77,7 +85,6 @@ def _permission_snapshot(account_id):
         reject(404, "NOT_FOUND", "Admin account not found")
     return {
         "account_id": str(target.account_id),
-        "principal_id": str(target.id),
         **rbac.snapshot(target),
     }
 
@@ -85,7 +92,7 @@ def _permission_snapshot(account_id):
 def register(router):
     @router.get("/rbac/me", operation_id="admin_rbac_me")
     def my_permissions(request):
-        return {"data": rbac.snapshot(request.auth)}
+        return {"data": {"account_id": str(request.auth.account_id), **rbac.snapshot(request.auth)}}
 
     @router.get("/rbac/catalog", operation_id="admin_rbac_catalog")
     def catalog(request):
@@ -102,7 +109,11 @@ def register(router):
         rbac.require(request.auth, "system.settings.read")
         return {"data": _permission_snapshot(account_id)}
 
-    @router.post("/rbac/accounts/{account_id}/roles", operation_id="admin_rbac_role_add")
+    @router.post(
+        "/rbac/accounts/{account_id}/roles",
+        response=AckEnvelope,
+        operation_id="admin_rbac_role_add",
+    )
     def assign_role(request, account_id: UUID, payload: RoleChange):
         rbac.require(request.auth, "system.settings.manage")
         _json(request)
@@ -111,7 +122,9 @@ def register(router):
         }
 
     @router.delete(
-        "/rbac/accounts/{account_id}/roles/{role}", operation_id="admin_rbac_role_remove"
+        "/rbac/accounts/{account_id}/roles/{role}",
+        response=AckEnvelope,
+        operation_id="admin_rbac_role_remove",
     )
     def remove_role(request, account_id: UUID, role: str, payload: Reason):
         rbac.require(request.auth, "system.settings.manage")
@@ -119,7 +132,9 @@ def register(router):
         return {"data": admin_rbac.revoke_role(request.auth, account_id, role, payload.reason)}
 
     @router.put(
-        "/rbac/accounts/{account_id}/overrides/{capability}", operation_id="admin_rbac_override_set"
+        "/rbac/accounts/{account_id}/overrides/{capability}",
+        response=AckEnvelope,
+        operation_id="admin_rbac_override_set",
     )
     def set_override(request, account_id: UUID, capability: str, payload: OverrideChange):
         rbac.require(request.auth, "system.settings.manage")
@@ -132,6 +147,7 @@ def register(router):
 
     @router.delete(
         "/rbac/accounts/{account_id}/overrides/{capability}",
+        response=AckEnvelope,
         operation_id="admin_rbac_override_remove",
     )
     def remove_override(request, account_id: UUID, capability: str, payload: Reason):
@@ -142,7 +158,7 @@ def register(router):
         }
 
     @router.get("/pricing/policies", operation_id="adminPricingList")
-    def list_pricing(request, status: str = "", limit: int = 50):
+    def list_pricing(request, status: str = "", limit: int = Query(50, ge=1, le=100)):
         rbac.require(request.auth, "pricing.read")
         if (
             status not in {"", "DRAFT", "PUBLISHED", "WITHDRAWN"}
@@ -153,17 +169,13 @@ def register(router):
         return {"data": pricing_admin.list_policies(status, limit)}
 
     @router.post("/pricing/policies", response={201: dict}, operation_id="adminPricingCreateDraft")
-    def create_pricing(request, payload: PricingDraftInput):
+    def create_pricing(request, payload: Draft):
         rbac.require(request.auth, "pricing.manage")
         _json(request)
         key = _key(request)
-        try:
-            draft = Draft.model_validate(payload.model_dump(mode="json"))
-        except PydanticValidationError:
-            reject(422, "VALIDATION_FAILED", "Invalid tariff draft")
 
         def create():
-            policy = pricing_admin.create(request.auth, draft)
+            policy = pricing_admin.create(request.auth, payload)
             return 201, {"data": pricing_admin.encode(policy)}
 
         status, body = idempotency.execute(

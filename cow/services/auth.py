@@ -1,19 +1,28 @@
 """Opaque rotating credentials scoped to one principal plane; no JWT fallback."""
+import hmac
 from datetime import timedelta
 from hashlib import sha256
-from secrets import token_urlsafe, randbelow
-import hmac
+from secrets import randbelow, token_urlsafe
+
 from django.conf import settings
-from cow.services.mail import enqueue_secret, ready as mail_ready
-from cow.services import throttle
 from django.contrib.auth.hashers import check_password, make_password
-from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
-from cow.models import (Account, Principal, AuthSession, ConsumedRefreshToken,
-                        AuthActionToken, AuthChallenge, Outbox)
+
 from cow.errors import reject
+from cow.models import (
+    Account,
+    AuthActionToken,
+    AuthChallenge,
+    AuthSession,
+    ConsumedRefreshToken,
+    Principal,
+)
+from cow.services import throttle
+from cow.services.mail import enqueue_secret
+from cow.services.mail import ready as mail_ready
 
 ACCESS_TTL = timedelta(seconds=settings.ACCESS_TOKEN_TTL_SECONDS)
 REFRESH_TTL = timedelta(seconds=settings.REFRESH_TOKEN_TTL_SECONDS)
@@ -26,7 +35,7 @@ def digest(token: str) -> str:
 
 def normalize_email(email: str) -> str:
     email = email.strip().lower()
-    if not (3 <= len(email) <= 254):
+    if not (3 <= len(email.encode("utf-8")) <= 254):
         reject(400, "VALIDATION_FAILED", "Invalid email")
     try:
         validate_email(email)
@@ -36,8 +45,21 @@ def normalize_email(email: str) -> str:
 
 
 def validate_password(password: str) -> None:
-    if len(password) < 12 or len(password) > 256:
-        reject(400, "VALIDATION_FAILED", "Password does not meet length policy")
+    if not 12 <= len(password.encode("utf-8")) <= 256:
+        reject(422, "VALIDATION_FAILED", "password must contain 12-256 UTF-8 bytes")
+    weak = password.casefold()
+    if any(word in weak for word in (
+        "password123", "qwerty123", "123456789012", "letmein123", "adminadmin", "changeme123",
+    )):
+        reject(422, "VALIDATION_FAILED", "password is too common")
+
+
+def validate_opaque_token(token: str) -> None:
+    # The Go service rejects by fixed byte length before digest lookup. It does
+    # not impose an alphabet check at this boundary, even though issued tokens
+    # are URL-safe base64. Keeping that distinction preserves error ordering.
+    if len((token or "").encode("utf-8")) != 43:
+        reject(401, "INVALID_CREDENTIALS", "Invalid credentials or token")
 
 
 def issue_action(account: Account, kind: str):
@@ -68,12 +90,12 @@ def register(plane: str, email: str, password: str):
 
 
 def verify_email(token: str):
-    if not token or len(token) > 200:
-        reject(400, "VALIDATION_FAILED", "Invalid token")
+    if len((token or "").encode("utf-8")) != 43:
+        reject(401, "INVALID_CREDENTIALS", "Invalid credentials or token")
     with transaction.atomic():
         a = AuthActionToken.objects.select_for_update().filter(digest=digest(token), kind="VERIFY_EMAIL").first()
         if not a or a.consumed_at or a.expires_at <= timezone.now():
-            reject(400, "TOKEN_INVALID", "Token invalid or expired")
+            reject(401, "INVALID_CREDENTIALS", "Invalid credentials or token")
         a.consumed_at = timezone.now()
         a.save(update_fields=["consumed_at", "updated_at"])
         Account.objects.filter(pk=a.account_id).update(email_verified=True)
@@ -82,7 +104,7 @@ def verify_email(token: str):
 
 def make_tokens(principal: Principal, session: AuthSession | None = None):
     now = timezone.now()
-    access, refresh = token_urlsafe(48), token_urlsafe(48)
+    access, refresh = token_urlsafe(32), token_urlsafe(32)
     if session is None:
         session = AuthSession.objects.create(
             principal=principal, access_digest=digest(access), refresh_digest=digest(refresh),
@@ -95,8 +117,13 @@ def make_tokens(principal: Principal, session: AuthSession | None = None):
         session.refresh_expires_at = min(now + REFRESH_TTL, session.absolute_expires_at)
         session.refresh_generation += 1
         session.save(update_fields=["access_digest", "refresh_digest", "access_expires_at", "refresh_expires_at", "refresh_generation", "updated_at"])
+    def rfc3339(instant):
+        return instant.isoformat().replace("+00:00", "Z")
     return {"access_token": access, "refresh_token": refresh,
-            "token_type": "Bearer", "expires_in": int(ACCESS_TTL.total_seconds())}
+            "token_type": "Bearer",
+            "access_expires_at": rfc3339(session.access_expires_at),
+            "refresh_expires_at": rfc3339(session.refresh_expires_at),
+            "session_id": str(session.id), "plane": principal.plane}
 
 
 def _auth_status_allowed(plane: str, status: str) -> bool:
@@ -131,23 +158,22 @@ def login(plane: str, email: str, password: str):
 
 
 def authenticate(token: str, expected_plane: str) -> Principal:
-    if not token or len(token) > 256:
-        reject(401, "UNAUTHORIZED", "Invalid authentication")
+    validate_opaque_token(token)
     session = AuthSession.objects.select_related("principal", "principal__account").filter(
         access_digest=digest(token), revoked_at__isnull=True, access_expires_at__gt=timezone.now(),
         absolute_expires_at__gt=timezone.now()).first()
     if not session:
-        reject(401, "UNAUTHORIZED", "Invalid authentication")
+        reject(401, "INVALID_CREDENTIALS", "Invalid credentials or token")
     if session.principal.plane != expected_plane:
         reject(403, "PRINCIPAL_PLANE_MISMATCH", "This token belongs to another application plane")
     if not _auth_status_allowed(expected_plane, session.principal.status) or not session.principal.account.email_verified:
-        reject(403, "ACCOUNT_NOT_READY", "Principal not active")
+        reject(401, "INVALID_CREDENTIALS", "Invalid credentials or token")
     return session.principal
 
 
 def refresh(plane: str, token: str):
-    if not token or len(token) > 256:
-        reject(401, "UNAUTHORIZED", "Invalid refresh token")
+    if len((token or "").encode("utf-8")) != 43:
+        reject(401, "INVALID_CREDENTIALS", "Invalid credentials or token")
     dig = digest(token)
     with transaction.atomic():
         prior = ConsumedRefreshToken.objects.select_related("session").filter(digest=dig).first()
@@ -157,11 +183,11 @@ def refresh(plane: str, token: str):
             return None, "REFRESH_TOKEN_REUSED"
         session = AuthSession.objects.select_for_update().select_related("principal", "principal__account").filter(refresh_digest=dig).first()
         if not session or session.revoked_at or session.absolute_expires_at <= timezone.now() or session.refresh_expires_at <= timezone.now():
-            return None, "UNAUTHORIZED"
+            return None, "INVALID_CREDENTIALS"
         if session.principal.plane != plane:
             return None, "PRINCIPAL_PLANE_MISMATCH"
         if not _auth_status_allowed(plane, session.principal.status) or not session.principal.account.email_verified:
-            return None, "ACCOUNT_NOT_READY"
+            return None, "INVALID_CREDENTIALS"
         ConsumedRefreshToken.objects.create(digest=dig, session=session)
         return {"two_factor_required": False, "tokens": make_tokens(session.principal, session)}, None
 
@@ -230,7 +256,8 @@ def check_challenge(challenge_id,code,purpose,plane,account_id=None):
 
 def verify_login_otp(challenge_id,code,plane):
     ch=check_challenge(challenge_id,code,"LOGIN_2FA",plane)
-    if ch is None:reject(400,"OTP_INVALID","Invalid or expired code")
+    if ch is None:
+        reject(400, "OTP_INVALID", "Invalid or expired code")
     principal=Principal.objects.select_related("account").filter(account_id=ch.account_id,plane=plane).first()
     if (not principal or not principal.account.email_verified
         or not principal.account.two_factor_enabled
@@ -252,7 +279,8 @@ def begin_two_factor(principal,password,enable):
 
 def confirm_two_factor(principal,challenge_id,code,enable):
     ch=check_challenge(challenge_id,code,"ENABLE_2FA" if enable else "DISABLE_2FA",principal.plane,principal.account_id)
-    if ch is None:reject(400,"OTP_INVALID","Invalid or expired code")
+    if ch is None:
+        reject(400, "OTP_INVALID", "Invalid or expired code")
     with transaction.atomic():
         Account.objects.filter(pk=principal.account_id).update(two_factor_enabled=enable)
         AuthSession.objects.filter(principal__account_id=principal.account_id,revoked_at__isnull=True).update(revoked_at=timezone.now())
@@ -260,7 +288,8 @@ def confirm_two_factor(principal,challenge_id,code,enable):
 
 
 def resend_otp(challenge_id,plane):
-    if not mail_ready():reject(503,"MAIL_PROVIDER_UNAVAILABLE","OTP email unavailable")
+    if not mail_ready():
+        reject(503, "MAIL_PROVIDER_UNAVAILABLE", "OTP email unavailable")
     throttle.check("otp-resend",str(challenge_id),5,600)
     with transaction.atomic():
         ch=AuthChallenge.objects.select_for_update().filter(pk=challenge_id,plane=plane).first()
@@ -278,7 +307,8 @@ def resend_otp(challenge_id,plane):
 
 
 def resend_verification(email):
-    if not mail_ready():reject(503,"MAIL_PROVIDER_UNAVAILABLE","Verification email unavailable")
+    if not mail_ready():
+        reject(503, "MAIL_PROVIDER_UNAVAILABLE", "Verification email unavailable")
     throttle.check("resend-verify",normalize_email(email),3,3600)
     with transaction.atomic():
         account=Account.objects.select_for_update().filter(email=normalize_email(email),email_verified=False).first()
@@ -288,7 +318,8 @@ def resend_verification(email):
 
 
 def forgot_password(email):
-    if not mail_ready():reject(503,"MAIL_PROVIDER_UNAVAILABLE","Password reset email unavailable")
+    if not mail_ready():
+        reject(503, "MAIL_PROVIDER_UNAVAILABLE", "Password reset email unavailable")
     throttle.check("forgot",normalize_email(email),3,3600)
     with transaction.atomic():
         account=Account.objects.select_for_update().filter(email=normalize_email(email)).first()
@@ -298,11 +329,12 @@ def forgot_password(email):
 
 
 def reset_password(token,password):
+    validate_opaque_token(token)
     validate_password(password)
     with transaction.atomic():
         row=AuthActionToken.objects.select_for_update().filter(digest=digest(token),kind="RESET_PASSWORD").first()
         if not row or row.consumed_at or row.expires_at<=timezone.now():
-            reject(400,"TOKEN_INVALID","Invalid or expired reset token")
+            reject(401, "INVALID_CREDENTIALS", "Invalid credentials or token")
         account=Account.objects.select_for_update().get(pk=row.account_id)
         account.password_hash=make_password(password)
         account.save(update_fields=["password_hash","updated_at"])

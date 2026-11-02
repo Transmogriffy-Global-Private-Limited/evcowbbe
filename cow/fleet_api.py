@@ -10,7 +10,7 @@ from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
-from ninja import Router, Schema
+from ninja import Query, Router, Schema
 from ninja.security import HttpBearer
 from pydantic import ConfigDict, Field, field_validator
 
@@ -173,6 +173,8 @@ def _data(request, status: int, payload: dict, *, etag: int | None = None):
 def _json_mutation(request) -> None:
     if request.content_type.split(";", 1)[0].lower() != "application/json":
         reject(415, "UNSUPPORTED_MEDIA_TYPE", "Expected application/json")
+    if int(request.META.get("CONTENT_LENGTH") or 0) > 32768 or len(request.body) > 32768:
+        reject(400, "VALIDATION_FAILED", "Invalid JSON request")
 
 
 def _require(request, capability: str) -> None:
@@ -221,7 +223,7 @@ def _fields(payload, *, patch: bool) -> dict:
 @fleet_router.get("/vehicles", operation_id="adminFleetVehiclesList")
 def list_vehicles(
     request,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=100),
     after: UUID | None = None,
     status: str = "",
     active: bool | None = None,
@@ -367,7 +369,7 @@ def vehicle_maintenance(request, vehicle_id: UUID, payload: FleetMaintenanceCrea
 @fleet_router.get("/chargers", operation_id="adminFleetChargersList")
 def list_chargers(
     request,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=100),
     after: UUID | None = None,
     status: str = "",
     active: bool | None = None,
@@ -577,7 +579,7 @@ def patch_connector(request, charger_id: UUID, connector_id: UUID, payload: Flee
 @fleet_router.get("/pairings", operation_id="adminFleetPairingsList")
 def list_pairings(
     request,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=100),
     vehicle_id: UUID | None = None,
     charger_id: UUID | None = None,
     status: str = "",

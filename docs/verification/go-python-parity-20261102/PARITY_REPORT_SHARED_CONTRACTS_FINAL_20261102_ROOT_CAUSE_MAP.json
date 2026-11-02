@@ -1,0 +1,133 @@
+{
+  "report": "PARITY_REPORT_SHARED_CONTRACTS_FINAL_20261102.json",
+  "checker_version": "2026-11-02.4",
+  "discrepancy_count": 38,
+  "groups": [
+    {
+      "classification": "Header/parameter declaration discrepancy",
+      "finding_type": "parameter_mismatch",
+      "status": null,
+      "count": 1,
+      "finding_ids": [
+        20
+      ],
+      "operations": [
+        "GET /api/v1/admin/pricing/policies"
+      ]
+    },
+    {
+      "classification": "Python declaration/schema deficiency",
+      "finding_type": "request_schema_mismatch",
+      "status": null,
+      "count": 1,
+      "finding_ids": [
+        22
+      ],
+      "operations": [
+        "POST /api/v1/admin/pricing/policies"
+      ]
+    },
+    {
+      "classification": "Python declaration/schema deficiency",
+      "finding_type": "success_response_schema_mismatch",
+      "status": "200",
+      "count": 23,
+      "finding_ids": [
+        1,
+        4,
+        6,
+        7,
+        8,
+        12,
+        13,
+        14,
+        16,
+        17,
+        19,
+        21,
+        24,
+        25,
+        26,
+        27,
+        28,
+        31,
+        33,
+        34,
+        35,
+        36,
+        38
+      ],
+      "operations": [
+        "GET /api/v1/admin/chargers",
+        "GET /api/v1/admin/chargers/{charger_id}",
+        "GET /api/v1/admin/chargers/{charger_id}/availability",
+        "GET /api/v1/admin/chargers/{charger_id}/connectors",
+        "GET /api/v1/admin/chargers/{charger_id}/history",
+        "GET /api/v1/admin/pairings",
+        "GET /api/v1/admin/pricing/policies",
+        "GET /api/v1/admin/pricing/policies/{policy_id}",
+        "GET /api/v1/admin/pricing/policies/{policy_id}/history",
+        "GET /api/v1/admin/vehicles",
+        "GET /api/v1/admin/vehicles/{vehicle_id}",
+        "GET /api/v1/admin/vehicles/{vehicle_id}/availability",
+        "GET /api/v1/admin/vehicles/{vehicle_id}/history",
+        "PATCH /api/v1/admin/chargers/{charger_id}",
+        "PATCH /api/v1/admin/chargers/{charger_id}/connectors/{connector_id}",
+        "PATCH /api/v1/admin/vehicles/{vehicle_id}",
+        "POST /api/v1/admin/chargers/{charger_id}/deactivate",
+        "POST /api/v1/admin/chargers/{charger_id}/reactivate",
+        "POST /api/v1/admin/pairings/{pairing_id}/end",
+        "POST /api/v1/admin/pricing/policies/{policy_id}/publish",
+        "POST /api/v1/admin/pricing/policies/{policy_id}/withdraw",
+        "POST /api/v1/admin/vehicles/{vehicle_id}/deactivate",
+        "POST /api/v1/admin/vehicles/{vehicle_id}/reactivate"
+      ]
+    },
+    {
+      "classification": "Python declaration/schema deficiency",
+      "finding_type": "success_response_schema_mismatch",
+      "status": "201",
+      "count": 7,
+      "finding_ids": [
+        3,
+        10,
+        15,
+        18,
+        23,
+        30,
+        37
+      ],
+      "operations": [
+        "POST /api/v1/admin/chargers",
+        "POST /api/v1/admin/chargers/{charger_id}/connectors",
+        "POST /api/v1/admin/chargers/{charger_id}/maintenance",
+        "POST /api/v1/admin/pairings",
+        "POST /api/v1/admin/pricing/policies",
+        "POST /api/v1/admin/vehicles",
+        "POST /api/v1/admin/vehicles/{vehicle_id}/maintenance"
+      ]
+    },
+    {
+      "classification": "Stale Go specification or Python declaration discrepancy",
+      "finding_type": "request_schema_mismatch",
+      "status": null,
+      "count": 6,
+      "finding_ids": [
+        2,
+        5,
+        9,
+        11,
+        29,
+        32
+      ],
+      "operations": [
+        "PATCH /api/v1/admin/chargers/{charger_id}",
+        "PATCH /api/v1/admin/chargers/{charger_id}/connectors/{connector_id}",
+        "PATCH /api/v1/admin/vehicles/{vehicle_id}",
+        "POST /api/v1/admin/chargers",
+        "POST /api/v1/admin/chargers/{charger_id}/connectors",
+        "POST /api/v1/admin/vehicles"
+      ]
+    }
+  ]
+}
