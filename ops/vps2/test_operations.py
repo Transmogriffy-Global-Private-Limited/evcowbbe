@@ -1,5 +1,8 @@
 """Offline invariants for the tracked VPS2 operator. No root or VPS needed."""
 import importlib.util
+import os
+import stat
+from types import SimpleNamespace
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import tempfile
@@ -67,6 +70,55 @@ class Operations(unittest.TestCase):
         self.assertTrue(str(self.cleanup.BASE).startswith('/var/backups/evcowbbe'))
         self.assertTrue(str(self.op.BACKUPS).startswith('/var/backups/evcowbbe'))
         self.assertTrue(str(self.op.LOCK).startswith('/run/lock'))
+
+    def test_revision_marker_normalization_and_service_gate(self):
+        if os.geteuid()!=0:
+            self.skipTest('metadata is intentionally root-owned on VPS2')
+        rev='a'*40
+        with tempfile.TemporaryDirectory() as folder:
+            release=Path(folder)/rev
+            release.mkdir()
+            marker=release/'REVISION'
+            marker.write_text(rev+'\n')
+            marker.chmod(0o400)
+            with patch.object(self.op,'RELEASES',Path(folder)), patch.object(
+                self.op,'cmd',return_value=SimpleNamespace(returncode=0)) as runner:
+                self.op.ensure_service_revision_readable(rev)
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode),0o444)
+            self.assertEqual(marker.read_text(),rev+'\n')
+            runner.assert_called_once_with(
+                ['runuser','-u','evcowbbe','--','test','-r',str(marker)],check=False)
+
+    def test_revision_marker_rejects_wrong_content_without_chmod(self):
+        if os.geteuid()!=0:
+            self.skipTest('metadata is intentionally root-owned on VPS2')
+        rev='a'*40
+        with tempfile.TemporaryDirectory() as folder:
+            release=Path(folder)/rev
+            release.mkdir()
+            marker=release/'REVISION'
+            marker.write_text('b'*40+'\n')
+            marker.chmod(0o400)
+            with patch.object(self.op,'RELEASES',Path(folder)), patch.object(
+                self.op,'cmd',side_effect=AssertionError('should not check service')):
+                with self.assertRaises(self.op.Stop):
+                    self.op.ensure_service_revision_readable(rev)
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode),0o400)
+
+    def test_revision_marker_requires_real_service_readability(self):
+        if os.geteuid()!=0:
+            self.skipTest('metadata is intentionally root-owned on VPS2')
+        rev='a'*40
+        with tempfile.TemporaryDirectory() as folder:
+            release=Path(folder)/rev
+            release.mkdir()
+            marker=release/'REVISION'
+            marker.write_text(rev+'\n')
+            marker.chmod(0o400)
+            with patch.object(self.op,'RELEASES',Path(folder)), patch.object(
+                self.op,'cmd',return_value=SimpleNamespace(returncode=1)):
+                with self.assertRaisesRegex(self.op.Stop,'REVISION_NOT_READABLE_BY_SERVICE_ACCOUNT'):
+                    self.op.ensure_service_revision_readable(rev)
 
     def test_mail_requires_root_approved_marker(self):
         guard=(ROOT/'mail_guard.py').read_text()

@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -118,6 +119,32 @@ def release_ok(rev):
     need((p/'.venv/bin/gunicorn').is_file(),'GUNICORN_MISSING')
     return p
 
+def ensure_service_revision_readable(rev):
+    """Keep non-secret revision seal readable by the actual non-root service.
+
+    The historical sealed baseline was created under a private umask: root could
+    validate REVISION, but Gunicorn's launcher and mail runner could not read it.
+    Never relax permissions on source, secrets, virtualenv, or manifests.
+    """
+    need(re.fullmatch('[a-f0-9]{40}',rev) is not None, 'INVALID_RELEASE_REVISION')
+    p=RELEASES/rev
+    need(p.is_dir() and not p.is_symlink(), 'RELEASE_BOUNDARY_FAILED')
+    marker=p/'REVISION'
+    fd=os.open(marker, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        info=os.fstat(fd)
+        need(stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1,
+             'REVISION_FILE_OWNERSHIP_OR_TYPE_INVALID')
+        content=os.read(fd,128)
+        need(content in (rev.encode(), (rev+'\n').encode()), 'REVISION_CONTENT_MISMATCH')
+        # The SHA identifies the release; it is neither a credential nor private data.
+        os.fchmod(fd,0o444)
+    finally:
+        os.close(fd)
+    result=cmd(['runuser','-u','evcowbbe','--','test','-r',str(marker)],check=False)
+    need(result.returncode==0,'REVISION_NOT_READABLE_BY_SERVICE_ACCOUNT')
+    print('SERVICE_RELEASE_REVISION_READABLE=PASS '+rev,flush=True)
+
 def atomic(path,data,mode):
     need(not path.is_symlink(), 'SYMLINK_TARGET='+str(path))
     need(path.parent.is_dir() and not path.parent.is_symlink(),'UNSAFE_PARENT='+str(path))
@@ -209,6 +236,8 @@ def adopt():
     for name,(_,expected) in mod.WORKER_FILES.items():
         need(digest(mod.WORKER_FILES[name][0])==expected,'OLD_MAIL_ARTIFACT_DRIFT='+name)
     for name,d in old_expected.items():need(digest(Path(name))==d,'OLD_RUNTIME_DRIFT='+name)
+    # Complete this boundary before stopping mail or restarting the working API.
+    ensure_service_revision_readable(BASE_REV)
     backup=BACKUPS/('runtime-adopt-'+str(int(time.time())))
     need(not backup.exists(),'BACKUP_COLLISION'); backup.mkdir(mode=0o700)
     original={}
@@ -251,8 +280,16 @@ def adopt():
         if STATE.exists():STATE.unlink()
         if ROOT_STATE.exists() and not any(ROOT_STATE.iterdir()):ROOT_STATE.rmdir()
         cmd(['systemctl','daemon-reload'],check=False)
-        cmd(['systemctl','restart','evcowbbe.service'],timeout=90,check=False)
+        restore_restart=cmd(['systemctl','restart','evcowbbe.service'],timeout=90,check=False)
         cmd(['systemctl','start','evcowbbe-mail.timer'],check=False)
+        if restore_restart.returncode==0:
+            try:
+                wait_health()
+                print('ORIGINAL_RUNTIME_HEALTH_RESTORED=PASS',file=sys.stderr,flush=True)
+            except (Stop,subprocess.TimeoutExpired):
+                print('ORIGINAL_RUNTIME_RESTORATION_UNVERIFIED',file=sys.stderr,flush=True)
+        else:
+            print('ORIGINAL_RUNTIME_RESTART_FAILED',file=sys.stderr,flush=True)
         print('CHECK_SERVICE_AND_JOURNAL_BEFORE_RETRY=YES',file=sys.stderr)
         raise
     print('PERMANENT_DJANGO_RUNTIME_ADOPTED=PASS')
@@ -326,6 +363,7 @@ def build(rev):
         for path in sorted(p.rglob('*'),reverse=True):
             if not path.is_symlink():path.chmod(path.stat().st_mode&~0o222)
         p.chmod(p.stat().st_mode&~0o222)
+        ensure_service_revision_readable(rev)
     except Exception:
         print('BUILD_INCOMPLETE='+str(p)+'; quarantined for operator inspection',file=sys.stderr)
         raise
@@ -340,6 +378,7 @@ def deploy(rev):
     cur=current_rev();release_ok(cur)
     if not (RELEASES/rev).exists():build(rev)
     release_ok(rev)
+    ensure_service_revision_readable(rev)
     need(rev==main_rev(),'DEPLOY_REV_MUST_EQUAL_MAIN_SOURCE')
     git_clean()
     remote_main_is_local()
@@ -378,6 +417,7 @@ def rollback_code(approved):
     need(isinstance(target,str) and re.fullmatch('[a-f0-9]{40}',target),
          'NO_RECORDED_PREVIOUS_DJANGO_RELEASE')
     release_ok(cur);release_ok(target);schema_identical(cur,target)
+    ensure_service_revision_readable(target)
     health();verify_db()
     journal=BACKUPS/('code-revert-'+str(int(time.time())))
     need(not journal.exists(),'ROLLBACK_JOURNAL_COLLISION')
