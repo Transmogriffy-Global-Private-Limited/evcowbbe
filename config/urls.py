@@ -27,6 +27,7 @@ def ready(request):
                     "code": "DEPENDENCY_UNAVAILABLE",
                     "message": "Database unavailable",
                     "request_id": request.cow_request_id,
+                    "details": {},
                 }
             },
             status=503,

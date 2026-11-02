@@ -24,6 +24,9 @@ from cow.services import idempotency
 
 VEHICLE_FIELDS = tuple(VehicleFields.model_fields)
 ADDRESS_FIELDS = tuple(AddressFields.model_fields)
+# Django Ninja's Body marker is immutable and deliberately shared so route
+# declarations stay explicit without evaluating a call in each default.
+REQUIRED_BODY = Body(...)
 
 
 def _parse(model, payload):
@@ -144,8 +147,14 @@ def _lock_owner(actor):
 
 
 def register_customer_routes(router):
+    @router.get("/profile", operation_id="app_profile_get")
+    def get_profile(request):
+        # Preserve the additional Python customer profile without contaminating
+        # Go's exact /api/v1/app/me response envelope.
+        return {"data": profile_json(request.auth)}
+
     @router.patch("/profile", operation_id="app_profile_patch")
-    def edit_profile(request, payload: dict = Body(...)):
+    def edit_profile(request, payload: dict = REQUIRED_BODY):
         _json(request)
         patch = _parse(ProfilePatch, payload)
         version = _version(request)
@@ -178,7 +187,7 @@ def register_customer_routes(router):
             owner=request.auth, active=True, saved=True).order_by("created_at", "id")[:100]]}
 
     @router.post("/vehicles", operation_id="app_vehicles_create")
-    def add_vehicle(request, payload: dict = Body(...)):
+    def add_vehicle(request, payload: dict = REQUIRED_BODY):
         _json(request)
         data = _parse(VehicleCreate, payload)
         key = _key(request, required=False)
@@ -198,7 +207,7 @@ def register_customer_routes(router):
         return _as_response(200, vehicle_json(item), etag=item.version)
 
     @router.patch("/vehicles/{vehicle_id}", operation_id="app_vehicles_patch")
-    def edit_vehicle(request, vehicle_id: UUID, payload: dict = Body(...)):
+    def edit_vehicle(request, vehicle_id: UUID, payload: dict = REQUIRED_BODY):
         _json(request)
         patch = _parse(VehiclePatch, payload)
         version = _version(request)
@@ -248,7 +257,7 @@ def register_customer_routes(router):
             owner=request.auth, active=True, saved=True).order_by("created_at", "id")[:100]]}
 
     @router.post("/addresses", operation_id="app_addresses_create")
-    def add_address(request, payload: dict = Body(...)):
+    def add_address(request, payload: dict = REQUIRED_BODY):
         _json(request)
         data = _parse(AddressCreate, payload)
         key = _key(request, required=False)
@@ -274,7 +283,7 @@ def register_customer_routes(router):
         return _as_response(200, address_json(item), etag=item.version)
 
     @router.patch("/addresses/{address_id}", operation_id="app_addresses_patch")
-    def edit_address(request, address_id: UUID, payload: dict = Body(...)):
+    def edit_address(request, address_id: UUID, payload: dict = REQUIRED_BODY):
         _json(request)
         patch = _parse(AddressPatch, payload)
         version = _version(request)
