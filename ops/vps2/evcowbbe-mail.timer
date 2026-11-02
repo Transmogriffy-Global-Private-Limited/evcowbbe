@@ -1,0 +1,11 @@
+[Unit]
+Description=EVCOWBBE Django outbox timer
+PartOf=evcowbbe.service
+After=evcowbbe.service
+ConditionPathExists=/var/lib/evcowbbe-rehost/runtime.json
+[Timer]
+OnActiveSec=20s
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Persistent=false
+Unit=evcowbbe-mail.service

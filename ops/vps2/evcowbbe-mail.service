@@ -1,0 +1,31 @@
+[Unit]
+Description=EVCOWBBE Django credential outbox
+PartOf=evcowbbe.service
+After=evcowbbe.service postgresql.service network-online.target
+ConditionPathExists=/var/lib/evcowbbe-rehost/runtime.json
+[Service]
+Type=oneshot
+User=evcowbbe
+Group=evcowbbe
+WorkingDirectory=/srv/evcowbbe/current-python/source
+EnvironmentFile=/etc/evcowbbe/host.env
+EnvironmentFile=/etc/evcowbbe/secrets.env
+EnvironmentFile=/etc/evcowbbe/managed.env
+ExecCondition=+/usr/local/libexec/evcowbbe-mail-guard
+ExecStart=/usr/local/libexec/evcowbbe-mail-runner
+TimeoutStartSec=240s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=evcowbbe-mail

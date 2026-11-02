@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""Canonical EVCOWBBE Django-only VPS2 rehost operator.
+
+status: read-only. adopt: one-time guarded replacement of cutover-era runtime
+scripts, with local file rollback on failed startup. deploy: build and activate
+only schema-identical revisions. No Go activation, no DB renames or automatic
+reversion after a service begins accepting traffic.
+"""
+from __future__ import annotations
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+
+ROOT = Path('/srv/evcowbbe')
+SOURCE = ROOT / 'source'
+RELEASES = ROOT / 'python-releases'
+CURRENT = ROOT / 'current-python'
+ROOT_STATE = Path('/var/lib/evcowbbe-rehost')
+STATE = ROOT_STATE / 'runtime.json'
+BACKUPS = Path('/var/backups/evcowbbe')
+LOCK = Path('/run/lock/evcowbbe-rehost.lock')
+BASE_REV = '2304fdfc092636e345cbef9423d3ae4044e80eee'
+REPO = 'https://github.com/Transmogriffy-Global-Private-Limited/evcowbbe.git'
+PUBLIC = 'https://dev-evcowbbe.transev.site'
+OP_FILES = Path(__file__).resolve().parent
+INSTALL = {
+    'rehost-evcowbbe': Path('/usr/local/sbin/rehost-evcowbbe'),
+    'launcher.py': Path('/usr/local/libexec/evcowbbe-django-release-launcher'),
+    'mail_guard.py': Path('/usr/local/libexec/evcowbbe-mail-guard'),
+    'mail_runner.py': Path('/usr/local/libexec/evcowbbe-mail-runner'),
+    '90-evcowbbe-django-cutover.conf': Path('/etc/systemd/system/evcowbbe.service.d/90-evcowbbe-django-cutover.conf'),
+    'evcowbbe-mail.service': Path('/etc/systemd/system/evcowbbe-mail.service'),
+    'evcowbbe-mail.timer': Path('/etc/systemd/system/evcowbbe-mail.timer'),
+}
+
+class Stop(Exception):
+    pass
+
+def need(cond, reason):
+    if not cond:
+        raise Stop(reason)
+
+def cmd(argv, *, timeout=75, cwd=None, env=None, check=True, stdout=None, stdin=None):
+    p = subprocess.run(argv, timeout=timeout, cwd=cwd, env=env, stdin=stdin or subprocess.DEVNULL,
+                       stdout=stdout if stdout is not None else subprocess.PIPE,
+                       stderr=subprocess.PIPE, text=stdout is None, check=False)
+    if check and p.returncode:
+        raise Stop('COMMAND_FAILED=' + argv[0] + ' rc=' + str(p.returncode))
+    return p
+
+def digest(path):
+    h=hashlib.sha256()
+    with path.open('rb') as f:
+        for b in iter(lambda:f.read(1048576), b''):
+            h.update(b)
+    return h.hexdigest()
+
+def check_file(path):
+    need(path.is_file() and not path.is_symlink(), 'INVALID_FILE='+str(path))
+
+def systemd_value(field):
+    return cmd(['systemctl','show','-P',field,'evcowbbe.service']).stdout.strip()
+
+def active(unit='evcowbbe.service'):
+    return cmd(['systemctl','is-active','--quiet',unit],check=False).returncode==0
+
+def health():
+    need(active(), 'SERVICE_NOT_ACTIVE')
+    need('evcowbbe-django-release-launcher' in systemd_value('ExecStart'), 'NON_DJANGO_SERVICE')
+    cmd(['curl','--noproxy','*','-fsS','--max-time','8','http://127.0.0.1:18280/health/ready'])
+    cmd(['curl','-fsS','--max-time','15',PUBLIC+'/health/ready'])
+    cmd(['curl','-fsS','--max-time','15',PUBLIC+'/openapi.yaml'])
+    need(not active('evcowbbe-django-stage.service'), 'STAGING_BACKEND_ACTIVE')
+
+def wait_health():
+    last=None
+    for _ in range(30):
+        try:
+            health()
+            return
+        except (Stop, subprocess.TimeoutExpired) as e:
+            last=e
+            time.sleep(1)
+    raise Stop('DJANGO_HEALTH_TIMEOUT: '+str(last))
+
+def main_rev():
+    return cmd(['git','-C',str(SOURCE),'rev-parse','HEAD']).stdout.strip()
+
+def git_clean():
+    need(cmd(['git','-C',str(SOURCE),'status','--porcelain','--untracked-files=all']).stdout.strip()=='', 'DIRTY_SOURCE')
+    need(cmd(['git','-C',str(SOURCE),'branch','--show-current']).stdout.strip()=='main', 'NOT_ON_MAIN')
+    need(cmd(['git','-C',str(SOURCE),'remote','get-url','origin']).stdout.strip()==REPO, 'UNEXPECTED_ORIGIN')
+
+def remote_main_is_local():
+    remote=cmd(['git','-C',str(SOURCE),'ls-remote','--heads','origin','main'],timeout=30).stdout.split()
+    need(len(remote)==2 and remote[0]==main_rev(),'REMOTE_MAIN_SOURCE_MISMATCH')
+
+def release_ok(rev):
+    need(re.fullmatch('[a-f0-9]{40}',rev) is not None, 'BAD_RELEASE_ID')
+    p=RELEASES/rev
+    need(p.is_dir() and not p.is_symlink(),'RELEASE_NOT_PRESENT')
+    need((p/'REVISION').read_text().strip()==rev, 'RELEASE_REVISION_MISMATCH')
+    ready=p/'READY'; manifest=p/'MANIFEST.sha256'
+    check_file(ready); check_file(manifest)
+    fields=dict(line.split('=',1) for line in ready.read_text().splitlines() if '=' in line)
+    need(fields.get('REVISION')==rev and fields.get('MANIFEST_SHA256')==digest(manifest), 'RELEASE_SEAL_FAILED')
+    need(cmd(['sha256sum','--quiet','-c','MANIFEST.sha256'],cwd=p,timeout=180,check=False).returncode==0,'RELEASE_MANIFEST_FAILED')
+    need((p/'.venv/bin/gunicorn').is_file(),'GUNICORN_MISSING')
+    return p
+
+def atomic(path,data,mode):
+    need(not path.is_symlink(), 'SYMLINK_TARGET='+str(path))
+    need(path.parent.is_dir() and not path.parent.is_symlink(),'UNSAFE_PARENT='+str(path))
+    fd, name=tempfile.mkstemp(prefix='.cow-new-',dir=path.parent)
+    try:
+        os.fchmod(fd,mode)
+        with os.fdopen(fd,'wb') as f:
+            f.write(data);f.flush();os.fsync(f.fileno())
+        os.replace(name,path)
+    finally:
+        if os.path.exists(name):os.unlink(name)
+
+def current_rev():
+    need(CURRENT.is_symlink(),'CURRENT_POINTER_NOT_SYMLINK')
+    target=CURRENT.resolve(strict=True)
+    need(target.parent==RELEASES.resolve(strict=True),'CURRENT_POINTER_ESCAPED')
+    return target.name
+
+def point(rev):
+    need((RELEASES/rev).is_dir(),'UNKNOWN_RELEASE')
+    need(not CURRENT.exists() or CURRENT.is_symlink(),'CURRENT_POINTER_CONFLICT')
+    temp=ROOT/('.next-python-'+str(os.getpid()))
+    need(not temp.exists() and not temp.is_symlink(),'TEMP_POINTER_CONFLICT')
+    temp.symlink_to('python-releases/'+rev)
+    try:os.replace(temp,CURRENT)
+    finally:
+        if temp.is_symlink():temp.unlink()
+    need(current_rev()==rev,'POINTER_SWITCH_FAILED')
+
+def state_write(rev,phase,*,prev=None):
+    need(ROOT_STATE.is_dir() and ROOT_STATE.stat().st_uid==0 and ROOT_STATE.stat().st_mode&0o077==0,'RUNTIME_STATE_DIRECTORY_UNSAFE')
+    data={'schema':1,'backend':'django','database':'evcowbbe_django_next','revision':rev,
+          'phase':phase,'previous_revision':prev,'updated_utc':int(time.time())}
+    atomic(STATE,(json.dumps(data,sort_keys=True,indent=2)+'\n').encode(),0o600)
+
+def check_state():
+    check_file(STATE)
+    st=STATE.stat()
+    need(st.st_uid==0 and st.st_mode & 0o077==0,'STATE_PERMISSIONS_BAD')
+    j=json.loads(STATE.read_text())
+    need(j.get('backend')=='django' and j.get('database')=='evcowbbe_django_next','STATE_BOUNDARY_FAILED')
+    return j
+
+def verify_db():
+    q="SELECT CASE WHEN (SELECT count(*) FROM pg_database WHERE datname IN ('evcowbbe','evcowbbe_django_next') AND pg_get_userbyid(datdba)='evcowbbe_app')=2 THEN 'OK' ELSE 'FAIL' END"
+    x=cmd(['runuser','-u','postgres','--','psql','-X','-A','-t','-v','ON_ERROR_STOP=1','-d','postgres','-c',q]).stdout.strip()
+    need(x=='OK','PROJECT_DB_IDENTITIES_CHANGED')
+    x=cmd(['runuser','-u','postgres','--','psql','-X','-A','-t','-v','ON_ERROR_STOP=1','-d','evcowbbe_django_next','-c',
+      "SELECT count(*) FROM public.django_migrations WHERE app='cow'"],timeout=20).stdout.strip()
+    need(x.isdigit() and int(x)>=7,'DJANGO_SCHEMA_LEDGER_UNEXPECTED')
+
+def status():
+    print('SOURCE_MAIN='+main_rev())
+    print('ACTIVE='+str(active()))
+    print('LAUNCHER='+systemd_value('ExecStart'))
+    print('STAGING_ACTIVE='+str(active('evcowbbe-django-stage.service')))
+    print('MAIL_TIMER_ACTIVE='+str(active('evcowbbe-mail.timer')))
+    print('CURRENT_RELEASE='+ (current_rev() if CURRENT.is_symlink() else 'NOT_ADOPTED'))
+    print('MANAGED_STATE='+ (json.dumps(check_state(),sort_keys=True) if STATE.exists() else 'NOT_ADOPTED'))
+    health()
+    verify_db()
+    print('DJANGO_RUNTIME_HEALTH=PASS')
+
+def adopt():
+    need(os.geteuid()==0,'ROOT_REQUIRED')
+    need(not STATE.exists() and not STATE.is_symlink(),'ALREADY_ADOPTED')
+    need(not CURRENT.exists() and not CURRENT.is_symlink(),'POINTER_ALREADY_EXISTS')
+    git_clean();remote_main_is_local()
+    need(cmd(['git','-C',str(SOURCE),'merge-base','--is-ancestor',BASE_REV,'HEAD'],check=False).returncode==0,
+         'DEPLOYED_BASELINE_NOT_ANCESTOR')
+    release_ok(BASE_REV);health();verify_db()
+    cut=Path('/var/lib/evcowbbe-cutover/state.json')
+    check_file(cut)
+    j=json.loads(cut.read_text())
+    need(j.get('phase')=='DJANGO_PUBLIC_ACTIVE' and j.get('revision')==BASE_REV,'OLD_CUTOVER_NOT_COMMITTED')
+    for file in INSTALL.values():check_file(file)
+    # Ensure the old runtime exactly matches the tested controller artifacts.
+    from importlib.machinery import SourceFileLoader
+    oldmod=Path('/root/evcowbbe-dev-cutover/controller-dev.py')
+    check_file(oldmod)
+    need(digest(oldmod)=='b6bb0b8c6ce7e082755fe783f27041cacd24895d13efd6129d07cb09d084679e','CUTOVER_CONTROLLER_HASH_DRIFT')
+    mod=SourceFileLoader('cutover_baseline',str(oldmod)).load_module()
+    from hashlib import sha256
+    old_expected={
+        '/usr/local/sbin/rehost-evcowbbe':sha256(mod.GUARD_TEXT.encode()).hexdigest(),
+        '/usr/local/libexec/evcowbbe-django-release-launcher':sha256(mod.LAUNCH_TEXT.encode()).hexdigest(),
+        '/etc/systemd/system/evcowbbe.service.d/90-evcowbbe-django-cutover.conf':sha256(mod.UNIT_TEXT.encode()).hexdigest(),
+    }
+    for name,(_,expected) in mod.WORKER_FILES.items():
+        need(digest(mod.WORKER_FILES[name][0])==expected,'OLD_MAIL_ARTIFACT_DRIFT='+name)
+    for name,d in old_expected.items():need(digest(Path(name))==d,'OLD_RUNTIME_DRIFT='+name)
+    backup=BACKUPS/('runtime-adopt-'+str(int(time.time())))
+    need(not backup.exists(),'BACKUP_COLLISION'); backup.mkdir(mode=0o700)
+    original={}
+    for name,path in INSTALL.items():
+        copy=backup/name
+        copy.write_bytes(path.read_bytes());copy.chmod(0o600)
+        original[name]={'sha256':digest(path),'mode':path.stat().st_mode&0o777}
+    (backup/'original_manifest.json').write_text(json.dumps(original,sort_keys=True,indent=2)+'\n')
+    (backup/'original_manifest.json').chmod(0o600)
+    print('ORIGINAL_RUNTIME_BACKUP='+str(backup),flush=True)
+    # Fail safe: before any file mutation, disable new outbox timer activations.
+    cmd(['systemctl','stop','evcowbbe-mail.timer'])
+    if active('evcowbbe-mail.service'):
+        cmd(['systemctl','start','evcowbbe-mail.timer'],check=False)
+        raise Stop('MAIL_WORKER_BUSY: retry after its batch exits')
+    try:
+        point(BASE_REV)
+        ROOT_STATE.mkdir(mode=0o700,parents=False,exist_ok=False)
+        state_write(BASE_REV,'INSTALLING')
+        for name,path in INSTALL.items():
+            data=(OP_FILES/name).read_bytes()
+            mode=0o755 if name in ('rehost-evcowbbe','launcher.py','mail_guard.py','mail_runner.py') else 0o644
+            atomic(path,data,mode)
+        changed=True
+        cmd(['systemctl','daemon-reload'])
+        cmd(['systemctl','restart','evcowbbe.service'],timeout=95)
+        wait_health()
+        state_write(BASE_REV,'ACTIVE')
+        cmd(['systemctl','start','evcowbbe-mail.timer'])
+        need(active('evcowbbe-mail.timer'),'MAIL_TIMER_NOT_ACTIVE')
+        gate=cmd(['/usr/local/libexec/evcowbbe-mail-guard'],check=False)
+        need(gate.returncode==0,'MAIL_GUARD_DID_NOT_PASS')
+    except Exception:
+        print('ADOPTION_FAILED_REVERTING_ORIGINAL_RUNTIME',file=sys.stderr,flush=True)
+        # Return service and outbox guard to previous live configuration. No DB modifications.
+        cmd(['systemctl','stop','evcowbbe-mail.timer'],check=False)
+        for name,path in INSTALL.items():
+            atomic(path,(backup/name).read_bytes(),original[name]['mode'])
+        if CURRENT.is_symlink():CURRENT.unlink()
+        if STATE.exists():STATE.unlink()
+        if ROOT_STATE.exists() and not any(ROOT_STATE.iterdir()):ROOT_STATE.rmdir()
+        cmd(['systemctl','daemon-reload'],check=False)
+        cmd(['systemctl','restart','evcowbbe.service'],timeout=90,check=False)
+        cmd(['systemctl','start','evcowbbe-mail.timer'],check=False)
+        print('CHECK_SERVICE_AND_JOURNAL_BEFORE_RETRY=YES',file=sys.stderr)
+        raise
+    print('PERMANENT_DJANGO_RUNTIME_ADOPTED=PASS')
+    print('GO_CUTOVER_BACKUP_PRESERVED=YES')
+    print('BACKUP='+str(backup))
+
+def schema_identical(a,b):
+    x=RELEASES/a/'source/cow/migrations'
+    y=RELEASES/b/'source/cow/migrations'
+    def files(p):return {f.name:digest(f) for f in p.glob('*.py') if f.is_file()}
+    need(files(x)==files(y),'SCHEMA_MIGRATIONS_CHANGED: manual database-migration procedure required')
+
+def build(rev):
+    """Build an immutable Django-only release from clean, remote-main Git.
+
+    Uses frozen dependency versions from current release; changed migrations
+    block until a separately reviewed database migration/restore workflow exists.
+    """
+    need(rev==main_rev(),'BUILD_REV_NOT_CHECKED_OUT')
+    git_clean();remote_main_is_local()
+    if (RELEASES/rev).exists():return release_ok(rev)
+    previous=current_rev(); old=release_ok(previous)
+    p=RELEASES/rev
+    p.mkdir(mode=0o755)
+    (p/'source').mkdir()
+    print('BUILD_STARTED='+str(p),flush=True)
+    try:
+        # Git archive, not a copy of potentially untracked VPS paths.
+        with tempfile.TemporaryFile() as tmp:
+            cmd(['git','-C',str(SOURCE),'archive','--format=tar',rev],stdout=tmp,timeout=90)
+            tmp.seek(0)
+            with tarfile.open(fileobj=tmp,mode='r:') as tar:
+                tar.extractall(path=p/'source',filter='data')
+        (p/'REVISION').write_text(rev+'\n')
+        schema_identical(previous,rev)
+        pinned=old/'requirements-resolved.txt'
+        check_file(pinned)
+        (p/'requirements-resolved.txt').write_bytes(pinned.read_bytes())
+        py=cmd([str(old/'.venv/bin/python'),'-c','import sys; print(sys._base_executable)']).stdout.strip()
+        need(Path(py).is_file(),'BASE_PYTHON_MISSING')
+        cmd([py,'-m','venv',str(p/'.venv')],timeout=60)
+        env=os.environ.copy(); env.update(PIP_DISABLE_PIP_VERSION_CHECK='1',PYTHONDONTWRITEBYTECODE='1')
+        with (p/'dependency-install.log').open('wb') as f:
+            cmd([str(p/'.venv/bin/python'),'-m','pip','install','--no-cache-dir','-r',str(p/'requirements-resolved.txt')],
+                timeout=600,env=env,stdout=f)
+        with (p/'project-install.log').open('wb') as f:
+            cmd([str(p/'.venv/bin/python'),'-m','pip','install','--no-deps','-e',str(p/'source')],
+                timeout=300,env=env,stdout=f)
+        cmd([str(p/'.venv/bin/python'),'-m','pip','check'],timeout=60)
+        testenv={'HOME':'/tmp','PATH':'/usr/local/bin:/usr/bin:/bin',
+          'DJANGO_SETTINGS_MODULE':'config.settings','APP_ENV':'test',
+          'PUBLIC_BASE_URL':'http://localhost:18282','HTTP_LISTEN_ADDR':'127.0.0.1:18282',
+          'DATABASE_URL':'postgresql://unused:unused@127.0.0.1:1/cow_offline?sslmode=disable',
+          'PASSWORD_PEPPER':'test-only-password-pepper-pppppppppppppppppppppppppppppppppppppppp',
+          'OTP_HMAC_PEPPER':'test-only-otp-pepper-oooooooooooooooooooooooooooooooooooooooo',
+          'SMTP_TLS_MODE':'starttls','PYTHONDONTWRITEBYTECODE':'1'}
+        with (p/'unit-tests.log').open('wb') as f:
+            cmd([str(p/'.venv/bin/python'),'-m','unittest','discover','-s','tests','-p','test_*.py'],
+                cwd=p/'source',timeout=300,env=testenv,stdout=f)
+        with (p/'ruff.log').open('wb') as f:
+            cmd([str(p/'.venv/bin/ruff'),'check','.'],cwd=p/'source',timeout=90,env=testenv,stdout=f)
+        with (p/'MANIFEST.sha256').open('w') as f:
+            for prefix in ('source','.venv'):
+                for path in sorted((p/prefix).rglob('*')):
+                    if path.is_file() and not path.is_symlink():
+                        f.write(digest(path)+'  '+str(path.relative_to(p))+'\n')
+        fields='REVISION='+rev+'\nMANIFEST_SHA256='+digest(p/'MANIFEST.sha256')+'\n'
+        (p/'READY').write_text(fields)
+        # Disable live service changes until the frozen release passes verification.
+        release_ok(rev)
+        for path in sorted(p.rglob('*'),reverse=True):
+            if not path.is_symlink():path.chmod(path.stat().st_mode&~0o222)
+        p.chmod(p.stat().st_mode&~0o222)
+    except Exception:
+        print('BUILD_INCOMPLETE='+str(p)+'; quarantined for operator inspection',file=sys.stderr)
+        raise
+    print('IMMUTABLE_RELEASE_BUILT='+rev)
+    return p
+
+def deploy(rev):
+    # Only vetted already-sealed immutable releases may be promoted; builders must
+    # produce a release and check its tests/migration gate separately.
+    need(STATE.is_file(),'ADOPT_FIRST')
+    check_state();health();verify_db()
+    cur=current_rev();release_ok(cur)
+    if not (RELEASES/rev).exists():build(rev)
+    release_ok(rev)
+    need(rev==main_rev(),'DEPLOY_REV_MUST_EQUAL_MAIN_SOURCE')
+    git_clean()
+    remote_main_is_local()
+    schema_identical(cur,rev)
+    if rev==cur:
+        print('ALREADY_RUNNING='+rev);return
+    backup=BACKUPS/('deploy-'+str(int(time.time())))
+    backup.mkdir(mode=0o700)
+    journal={'from':cur,'to':rev,'phase':'STARTED','code_only':True}
+    (backup/'deploy.json').write_text(json.dumps(journal))
+    print('DEPLOY_JOURNAL='+str(backup/'deploy.json'),flush=True)
+    cmd(['systemctl','stop','evcowbbe-mail.timer'])
+    need(not active('evcowbbe-mail.service'),'MAIL_WORKER_BUSY')
+    point(rev)
+    state_write(rev,'PROMOTING',prev=cur)
+    try:
+        cmd(['systemctl','restart','evcowbbe.service'],timeout=95)
+        wait_health()
+        state_write(rev,'ACTIVE',prev=cur)
+        cmd(['systemctl','start','evcowbbe-mail.timer'])
+        need(active('evcowbbe-mail.timer'),'MAIL_TIMER_NOT_ACTIVE')
+    except Exception:
+        print('DEPLOY_INTERRUPTED=YES; no automatic rollback because new code may have accepted writes',file=sys.stderr)
+        raise
+    journal['phase']='COMMITTED';(backup/'deploy.json').write_text(json.dumps(journal))
+    print('DJANGO_RELEASE_PROMOTED='+rev)
+
+def rollback_code(approved):
+    """Explicit compatibility-only Django code revert, never a database revert."""
+    need(approved,'CODE_ROLLBACK_REQUIRES_EXPLICIT_DATA_COMPATIBILITY_APPROVAL')
+    current=check_state()
+    need(current.get('phase')=='ACTIVE','RUNTIME_NOT_COMMITTED')
+    cur=current_rev()
+    need(cur==current['revision'],'CURRENT_RELEASE_STATE_MISMATCH')
+    target=current.get('previous_revision')
+    need(isinstance(target,str) and re.fullmatch('[a-f0-9]{40}',target),
+         'NO_RECORDED_PREVIOUS_DJANGO_RELEASE')
+    release_ok(cur);release_ok(target);schema_identical(cur,target)
+    health();verify_db()
+    journal=BACKUPS/('code-revert-'+str(int(time.time())))
+    need(not journal.exists(),'ROLLBACK_JOURNAL_COLLISION')
+    journal.mkdir(mode=0o700)
+    (journal/'intent.json').write_text(json.dumps({'from':cur,'to':target,'approved':True,'phase':'STARTED'}))
+    print('EXPLICIT_CODE_REVERT_JOURNAL='+str(journal),flush=True)
+    cmd(['systemctl','stop','evcowbbe-mail.timer'])
+    need(not active('evcowbbe-mail.service'),'MAIL_WORKER_BUSY')
+    point(target)
+    state_write(target,'PROMOTING',prev=cur)
+    try:
+        cmd(['systemctl','restart','evcowbbe.service'],timeout=95)
+        wait_health()
+        state_write(target,'ACTIVE',prev=cur)
+        cmd(['systemctl','start','evcowbbe-mail.timer'])
+        need(active('evcowbbe-mail.timer'),'MAIL_TIMER_NOT_ACTIVE')
+    except Exception:
+        print('CODE_ROLLBACK_INTERRUPTED: inspect service, pointer and journal; no automatic retry',file=sys.stderr)
+        raise
+    (journal/'intent.json').write_text(json.dumps({'from':cur,'to':target,'approved':True,'phase':'COMMITTED'}))
+    print('EXPLICIT_DJANGO_CODE_REVERT=PASS')
+    print('DATABASE_ROLLBACK_PERFORMED=NO')
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    sub=p.add_subparsers(dest='action',required=True)
+    sub.add_parser('status');sub.add_parser('adopt')
+    dp=sub.add_parser('deploy');dp.add_argument('revision')
+    rb=sub.add_parser('rollback');rb.add_argument('--approve-code-compatibility',action='store_true')
+    args=p.parse_args()
+    if args.action=='status':status();return
+    need(os.geteuid()==0,'ROOT_REQUIRED')
+    fd=os.open(LOCK,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    os.fchmod(fd,0o600)
+    with os.fdopen(fd,'a+b') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if args.action=='adopt':adopt()
+        elif args.action=='deploy':deploy(args.revision)
+        elif args.action=='rollback':rollback_code(args.approve_code_compatibility)
+
+if __name__=='__main__':
+    try:main()
+    except (Stop,OSError,ValueError,subprocess.TimeoutExpired) as e:
+        print('EVCOWBBE_OPERATION_BLOCKED='+str(e),file=sys.stderr)
+        raise SystemExit(1)
