@@ -14,6 +14,11 @@ from ninja import Query, Router, Schema
 from ninja.security import HttpBearer
 from pydantic import ConfigDict, Field, field_validator
 
+from cow.api_parity_responses import (
+    AvailabilityEnvelope, ChargerEnvelope, ChargerPageEnvelope, ConnectorEnvelope,
+    ConnectorPageEnvelope, HistoryPageEnvelope, MaintenanceEnvelope,
+    PairingEnvelope, PairingPageEnvelope, VehicleEnvelope, VehiclePageEnvelope,
+)
 from cow.errors import reject
 from cow.services import auth, idempotency, rbac
 from cow.services import fleet as fleet_service
@@ -48,10 +53,11 @@ class FleetVehicleCreate(StrictSchema):
 
 
 class FleetVehiclePatch(FleetVehicleCreate):
-    asset_tag: str | None = Field(default=None, min_length=2, max_length=64)
-    make: str | None = Field(default=None, min_length=1, max_length=120)
-    model: str | None = Field(default=None, min_length=1, max_length=120)
-    inspection_status: Literal["UNKNOWN", "VALID", "FAILED", "EXPIRED"] | None = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, json_schema_extra={"minProperties": 1})
+    asset_tag: str = Field(default=None, min_length=2, max_length=64)
+    make: str = Field(default=None, min_length=1, max_length=120)
+    model: str = Field(default=None, min_length=1, max_length=120)
+    inspection_status: Literal["UNKNOWN", "VALID", "FAILED", "EXPIRED"] = None
 
 
 class FleetReason(StrictSchema):
@@ -112,9 +118,10 @@ class FleetChargerCreate(StrictSchema):
 
 
 class FleetChargerPatch(FleetChargerCreate):
-    asset_tag: str | None = Field(default=None, min_length=2, max_length=64)
-    manufacturer: str | None = Field(default=None, min_length=1, max_length=120)
-    model: str | None = Field(default=None, min_length=1, max_length=120)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, json_schema_extra={"minProperties": 1})
+    asset_tag: str = Field(default=None, min_length=2, max_length=64)
+    manufacturer: str = Field(default=None, min_length=1, max_length=120)
+    model: str = Field(default=None, min_length=1, max_length=120)
 
 
 class FleetConnectorCreate(StrictSchema):
@@ -134,12 +141,13 @@ class FleetConnectorCreate(StrictSchema):
 
 
 class FleetConnectorPatch(StrictSchema):
-    connector_number: int | None = Field(default=None, ge=1, le=2_147_483_647)
-    connector_type: str | None = Field(default=None, min_length=2, max_length=64)
-    max_power_w: int | None = Field(default=None, ge=1, le=2_147_483_647)
-    supports_ac: bool | None = None
-    supports_dc: bool | None = None
-    is_active: bool | None = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, json_schema_extra={"minProperties": 1})
+    connector_number: int = Field(default=None, ge=1, le=2_147_483_647)
+    connector_type: str = Field(default=None, min_length=2, max_length=64)
+    max_power_w: int = Field(default=None, ge=1, le=2_147_483_647)
+    supports_ac: bool = None
+    supports_dc: bool = None
+    is_active: bool = None
 
     @field_validator("connector_type", mode="after")
     @classmethod
@@ -220,7 +228,7 @@ def _fields(payload, *, patch: bool) -> dict:
     return fields
 
 
-@fleet_router.get("/vehicles", operation_id="adminFleetVehiclesList")
+@fleet_router.get("/vehicles", operation_id="adminFleetVehiclesList", response={200: VehiclePageEnvelope})
 def list_vehicles(
     request,
     limit: int = Query(50, ge=1, le=100),
@@ -247,7 +255,7 @@ def list_vehicles(
     return _data(request, 200, data)
 
 
-@fleet_router.post("/vehicles", response={201: dict}, operation_id="adminFleetVehiclesCreate")
+@fleet_router.post("/vehicles", response={201: VehicleEnvelope}, operation_id="adminFleetVehiclesCreate")
 def create_vehicle(request, payload: FleetVehicleCreate):
     _require(request, "fleet.manage")
     _json_mutation(request)
@@ -264,14 +272,14 @@ def create_vehicle(request, payload: FleetVehicleCreate):
     return _data(request, status, body["data"], etag=body["data"].get("version"))
 
 
-@fleet_router.get("/vehicles/{vehicle_id}", operation_id="adminFleetVehicleGet")
+@fleet_router.get("/vehicles/{vehicle_id}", operation_id="adminFleetVehicleGet", response={200: VehicleEnvelope})
 def get_vehicle(request, vehicle_id: UUID):
     _require(request, "fleet.read")
     vehicle = fleet_service.get(vehicle_id)
     return _data(request, 200, fleet_service.vehicle_data(vehicle), etag=vehicle.version)
 
 
-@fleet_router.patch("/vehicles/{vehicle_id}", operation_id="adminFleetVehiclePatch")
+@fleet_router.patch("/vehicles/{vehicle_id}", operation_id="adminFleetVehiclePatch", response={200: VehicleEnvelope})
 def patch_vehicle(request, vehicle_id: UUID, payload: FleetVehiclePatch):
     _require(request, "fleet.manage")
     _json_mutation(request)
@@ -294,7 +302,7 @@ def patch_vehicle(request, vehicle_id: UUID, payload: FleetVehiclePatch):
     return _data(request, status, body["data"], etag=body["data"].get("version"))
 
 
-@fleet_router.get("/vehicles/{vehicle_id}/history", operation_id="adminFleetVehicleHistory")
+@fleet_router.get("/vehicles/{vehicle_id}/history", operation_id="adminFleetVehicleHistory", response={200: HistoryPageEnvelope})
 def vehicle_history(request, vehicle_id: UUID):
     _require(request, "fleet.read")
     _require(request, "audit.read")
@@ -302,8 +310,7 @@ def vehicle_history(request, vehicle_id: UUID):
 
 
 @fleet_router.get(
-    "/vehicles/{vehicle_id}/availability", operation_id="adminFleetVehicleAvailability"
-)
+    "/vehicles/{vehicle_id}/availability", operation_id="adminFleetVehicleAvailability", response={200: AvailabilityEnvelope})
 def vehicle_availability(request, vehicle_id: UUID):
     _require(request, "fleet.read")
     return _data(request, 200, fleet_service.availability(vehicle_id))
@@ -331,19 +338,19 @@ def _lifecycle(request, vehicle_id: UUID, payload: FleetReason, *, active: bool)
     return _data(request, status, body["data"], etag=body["data"].get("version"))
 
 
-@fleet_router.post("/vehicles/{vehicle_id}/deactivate", operation_id="adminFleetVehicleDeactivate")
+@fleet_router.post("/vehicles/{vehicle_id}/deactivate", operation_id="adminFleetVehicleDeactivate", response={200: VehicleEnvelope})
 def deactivate_vehicle(request, vehicle_id: UUID, payload: FleetReason):
     return _lifecycle(request, vehicle_id, payload, active=False)
 
 
-@fleet_router.post("/vehicles/{vehicle_id}/reactivate", operation_id="adminFleetVehicleReactivate")
+@fleet_router.post("/vehicles/{vehicle_id}/reactivate", operation_id="adminFleetVehicleReactivate", response={200: VehicleEnvelope})
 def reactivate_vehicle(request, vehicle_id: UUID, payload: FleetReason):
     return _lifecycle(request, vehicle_id, payload, active=True)
 
 
 @fleet_router.post(
     "/vehicles/{vehicle_id}/maintenance",
-    response={201: dict},
+    response={201: MaintenanceEnvelope},
     operation_id="adminFleetVehicleMaintenance",
 )
 def vehicle_maintenance(request, vehicle_id: UUID, payload: FleetMaintenanceCreate):
@@ -366,7 +373,7 @@ def vehicle_maintenance(request, vehicle_id: UUID, payload: FleetMaintenanceCrea
     return _data(request, status, body["data"])
 
 
-@fleet_router.get("/chargers", operation_id="adminFleetChargersList")
+@fleet_router.get("/chargers", operation_id="adminFleetChargersList", response={200: ChargerPageEnvelope})
 def list_chargers(
     request,
     limit: int = Query(50, ge=1, le=100),
@@ -393,7 +400,7 @@ def list_chargers(
     return _data(request, 200, data)
 
 
-@fleet_router.post("/chargers", response={201: dict}, operation_id="adminFleetChargersCreate")
+@fleet_router.post("/chargers", response={201: ChargerEnvelope}, operation_id="adminFleetChargersCreate")
 def create_charger(request, payload: FleetChargerCreate):
     _require(request, "fleet.manage")
     _json_mutation(request)
@@ -409,14 +416,14 @@ def create_charger(request, payload: FleetChargerCreate):
     return _data(request, status, body["data"], etag=body["data"].get("version"))
 
 
-@fleet_router.get("/chargers/{charger_id}", operation_id="adminFleetChargerGet")
+@fleet_router.get("/chargers/{charger_id}", operation_id="adminFleetChargerGet", response={200: ChargerEnvelope})
 def get_charger(request, charger_id: UUID):
     _require(request, "fleet.read")
     charger = fleet_service.get_charger(charger_id)
     return _data(request, 200, fleet_service.charger_data(charger), etag=charger.version)
 
 
-@fleet_router.patch("/chargers/{charger_id}", operation_id="adminFleetChargerPatch")
+@fleet_router.patch("/chargers/{charger_id}", operation_id="adminFleetChargerPatch", response={200: ChargerEnvelope})
 def patch_charger(request, charger_id: UUID, payload: FleetChargerPatch):
     _require(request, "fleet.manage")
     _json_mutation(request)
@@ -438,7 +445,7 @@ def patch_charger(request, charger_id: UUID, payload: FleetChargerPatch):
     return _data(request, status, body["data"], etag=body["data"].get("version"))
 
 
-@fleet_router.get("/chargers/{charger_id}/history", operation_id="adminFleetChargerHistory")
+@fleet_router.get("/chargers/{charger_id}/history", operation_id="adminFleetChargerHistory", response={200: HistoryPageEnvelope})
 def charger_history(request, charger_id: UUID):
     _require(request, "fleet.read")
     _require(request, "audit.read")
@@ -446,8 +453,7 @@ def charger_history(request, charger_id: UUID):
 
 
 @fleet_router.get(
-    "/chargers/{charger_id}/availability", operation_id="adminFleetChargerAvailability"
-)
+    "/chargers/{charger_id}/availability", operation_id="adminFleetChargerAvailability", response={200: AvailabilityEnvelope})
 def charger_availability(request, charger_id: UUID):
     _require(request, "fleet.read")
     return _data(request, 200, fleet_service.charger_availability(charger_id))
@@ -474,19 +480,19 @@ def _charger_lifecycle(request, charger_id: UUID, payload: FleetReason, *, activ
     return _data(request, status, body["data"], etag=body["data"].get("version"))
 
 
-@fleet_router.post("/chargers/{charger_id}/deactivate", operation_id="adminFleetChargerDeactivate")
+@fleet_router.post("/chargers/{charger_id}/deactivate", operation_id="adminFleetChargerDeactivate", response={200: ChargerEnvelope})
 def deactivate_charger(request, charger_id: UUID, payload: FleetReason):
     return _charger_lifecycle(request, charger_id, payload, active=False)
 
 
-@fleet_router.post("/chargers/{charger_id}/reactivate", operation_id="adminFleetChargerReactivate")
+@fleet_router.post("/chargers/{charger_id}/reactivate", operation_id="adminFleetChargerReactivate", response={200: ChargerEnvelope})
 def reactivate_charger(request, charger_id: UUID, payload: FleetReason):
     return _charger_lifecycle(request, charger_id, payload, active=True)
 
 
 @fleet_router.post(
     "/chargers/{charger_id}/maintenance",
-    response={201: dict},
+    response={201: MaintenanceEnvelope},
     operation_id="adminFleetChargerMaintenance",
 )
 def charger_maintenance(request, charger_id: UUID, payload: FleetMaintenanceCreate):
@@ -508,7 +514,7 @@ def charger_maintenance(request, charger_id: UUID, payload: FleetMaintenanceCrea
     return _data(request, status, body["data"])
 
 
-@fleet_router.get("/chargers/{charger_id}/connectors", operation_id="adminFleetConnectorsList")
+@fleet_router.get("/chargers/{charger_id}/connectors", operation_id="adminFleetConnectorsList", response={200: ConnectorPageEnvelope})
 def list_connectors(request, charger_id: UUID):
     _require(request, "fleet.read")
     return _data(
@@ -525,7 +531,7 @@ def list_connectors(request, charger_id: UUID):
 
 @fleet_router.post(
     "/chargers/{charger_id}/connectors",
-    response={201: dict},
+    response={201: ConnectorEnvelope},
     operation_id="adminFleetConnectorCreate",
 )
 def create_connector(request, charger_id: UUID, payload: FleetConnectorCreate):
@@ -549,8 +555,7 @@ def create_connector(request, charger_id: UUID, payload: FleetConnectorCreate):
 
 @fleet_router.patch(
     "/chargers/{charger_id}/connectors/{connector_id}",
-    operation_id="adminFleetConnectorPatch",
-)
+    operation_id="adminFleetConnectorPatch", response={200: ConnectorEnvelope})
 def patch_connector(request, charger_id: UUID, connector_id: UUID, payload: FleetConnectorPatch):
     _require(request, "fleet.manage")
     _json_mutation(request)
@@ -576,7 +581,7 @@ def patch_connector(request, charger_id: UUID, connector_id: UUID, payload: Flee
     return _data(request, status, body["data"], etag=body["data"].get("version"))
 
 
-@fleet_router.get("/pairings", operation_id="adminFleetPairingsList")
+@fleet_router.get("/pairings", operation_id="adminFleetPairingsList", response={200: PairingPageEnvelope})
 def list_pairings(
     request,
     limit: int = Query(50, ge=1, le=100),
@@ -598,7 +603,7 @@ def list_pairings(
     return _data(request, 200, {"items": [fleet_service.pairing_data(item) for item in pairings]})
 
 
-@fleet_router.post("/pairings", response={201: dict}, operation_id="adminFleetPairCreate")
+@fleet_router.post("/pairings", response={201: PairingEnvelope}, operation_id="adminFleetPairCreate")
 def create_pairing(request, payload: FleetPairCreate):
     _require(request, "fleet.manage")
     _json_mutation(request)
@@ -615,7 +620,7 @@ def create_pairing(request, payload: FleetPairCreate):
     return _data(request, status, body["data"])
 
 
-@fleet_router.post("/pairings/{pairing_id}/end", operation_id="adminFleetPairEnd")
+@fleet_router.post("/pairings/{pairing_id}/end", operation_id="adminFleetPairEnd", response={200: PairingEnvelope})
 def end_pairing(request, pairing_id: UUID, payload: FleetReason):
     _require(request, "fleet.manage")
     _json_mutation(request)

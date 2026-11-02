@@ -111,6 +111,57 @@ def add_standard_response_headers(schema: dict) -> dict:
     return schema
 
 
+ETAG_RESPONSES = {
+    ("post", "/api/v1/admin/vehicles"),
+    ("post", "/api/v1/admin/chargers"),
+    ("get", "/api/v1/admin/vehicles/{vehicle_id}"),
+    ("patch", "/api/v1/admin/vehicles/{vehicle_id}"),
+    ("post", "/api/v1/admin/vehicles/{vehicle_id}/deactivate"),
+    ("post", "/api/v1/admin/vehicles/{vehicle_id}/reactivate"),
+    ("get", "/api/v1/admin/chargers/{charger_id}"),
+    ("patch", "/api/v1/admin/chargers/{charger_id}"),
+    ("post", "/api/v1/admin/chargers/{charger_id}/deactivate"),
+    ("post", "/api/v1/admin/chargers/{charger_id}/reactivate"),
+    ("post", "/api/v1/admin/chargers/{charger_id}/connectors"),
+    ("patch", "/api/v1/admin/chargers/{charger_id}/connectors/{connector_id}"),
+    ("post", "/api/v1/admin/pricing/policies"),
+    ("get", "/api/v1/admin/pricing/policies/{policy_id}"),
+    ("post", "/api/v1/admin/pricing/policies/{policy_id}/publish"),
+    ("post", "/api/v1/admin/pricing/policies/{policy_id}/withdraw"),
+}
+
+
+def add_source_verified_etag_contracts(schema: dict) -> dict:
+    """Document ETags actually produced by fleet/pricing detail/mutations."""
+    for (method, path) in ETAG_RESPONSES:
+        operation = schema.get("paths", {}).get(path, {}).get(method)
+        if not operation:
+            continue
+        for status, response in operation.get("responses", {}).items():
+            if str(status).startswith("2"):
+                response.setdefault("headers", {})["ETag"] = {
+                    "description": "Strong resource version ETag.",
+                    "schema": {"type": "string"},
+                }
+    return schema
+
+
+def add_source_verified_pricing_query_contracts(schema: dict) -> dict:
+    """Describe status validation without changing the existing 422 path."""
+    operation = schema.get("paths", {}).get("/api/v1/admin/pricing/policies", {}).get("get")
+    if not isinstance(operation, dict):
+        raise ValueError("Missing pricing list operation")
+    matches = [p for p in operation.get("parameters", [])
+               if p.get("in") == "query" and p.get("name") == "status"]
+    if len(matches) != 1 or matches[0].get("required", False):
+        raise ValueError("Pricing status parameter missing or unexpectedly required")
+    shape = matches[0].get("schema")
+    if not isinstance(shape, dict) or shape.get("type") != "string":
+        raise ValueError("Unexpected pricing status schema")
+    shape["enum"] = ["", "DRAFT", "PUBLISHED", "WITHDRAWN"]
+    return schema
+
+
 def add_diagnostics(schema: dict) -> dict:
     """Add the three registered Django diagnostic operations to Ninja output."""
     paths = schema.setdefault("paths", {})
@@ -155,5 +206,5 @@ def add_diagnostics(schema: dict) -> dict:
         }
     )
     return add_standard_response_headers(
-        add_go_mutation_header_contracts(add_go_error_contracts(schema))
+        add_source_verified_pricing_query_contracts(add_source_verified_etag_contracts(add_go_mutation_header_contracts(add_go_error_contracts(schema))))
     )

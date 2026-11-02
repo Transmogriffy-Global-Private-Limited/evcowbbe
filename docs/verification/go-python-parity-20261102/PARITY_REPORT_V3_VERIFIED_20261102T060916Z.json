@@ -1,0 +1,19 @@
+{
+  "go_operations": 82,
+  "python_operation_count": 103,
+  "go_operations_found_in_python": 82,
+  "discrepancy_count": 0,
+  "discrepancies": [],
+  "checker_version": "2026-11-02.5",
+  "generated_at": "2026-11-02T06:09:17.754301Z",
+  "go_revision": "1e966a2ce29bc2d1ef3e25500ee474c1ab380853",
+  "published_go_openapi_revision": "070cd06514b4d63b29aaa12ff115d08c9551d0c8",
+  "python_base_revision": "760c64f17c3ecd196f95f6e344360ad22dc8c3a6",
+  "native_diagnostics": [
+    "GET /health/live",
+    "GET /health/ready",
+    "GET /openapi.yaml",
+    "GET /version"
+  ],
+  "caveat": "Static declarations only; handler behavior, database state, SMTP, and live acceptance remain separate gates."
+}

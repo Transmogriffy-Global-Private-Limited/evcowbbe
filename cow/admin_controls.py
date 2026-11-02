@@ -11,6 +11,7 @@ from ninja import Query, Schema
 from pydantic import ConfigDict, Field
 
 from cow.api_contracts import AckEnvelope
+from cow.api_parity_responses import (PricingEnvelope, PricingHistoryEnvelope, PricingListEnvelope)
 from cow.errors import reject
 from cow.models import Principal
 from cow.pricing_contract import Draft
@@ -157,7 +158,7 @@ def register(router):
             "data": admin_rbac.clear_override(request.auth, account_id, capability, payload.reason)
         }
 
-    @router.get("/pricing/policies", operation_id="adminPricingList")
+    @router.get("/pricing/policies", operation_id="adminPricingList", response={200: PricingListEnvelope})
     def list_pricing(request, status: str = "", limit: int = Query(50, ge=1, le=100)):
         rbac.require(request.auth, "pricing.read")
         if (
@@ -168,7 +169,7 @@ def register(router):
             reject(422, "VALIDATION_FAILED", "Invalid tariff listing filter")
         return {"data": pricing_admin.list_policies(status, limit)}
 
-    @router.post("/pricing/policies", response={201: dict}, operation_id="adminPricingCreateDraft")
+    @router.post("/pricing/policies", response={201: PricingEnvelope}, operation_id="adminPricingCreateDraft")
     def create_pricing(request, payload: Draft):
         rbac.require(request.auth, "pricing.manage")
         _json(request)
@@ -189,12 +190,12 @@ def register(router):
         response["ETag"] = f'"{body["data"]["state_version"]}"'
         return response
 
-    @router.get("/pricing/policies/{policy_id}", operation_id="adminPricingGet")
+    @router.get("/pricing/policies/{policy_id}", operation_id="adminPricingGet", response={200: PricingEnvelope})
     def get_pricing(request, policy_id: UUID):
         rbac.require(request.auth, "pricing.read")
         return _policy_response(pricing_admin.get(policy_id))
 
-    @router.get("/pricing/policies/{policy_id}/history", operation_id="adminPricingHistory")
+    @router.get("/pricing/policies/{policy_id}/history", operation_id="adminPricingHistory", response={200: PricingHistoryEnvelope})
     def pricing_history(request, policy_id: UUID):
         rbac.require(request.auth, "pricing.read")
         rbac.require(request.auth, "audit.read")
@@ -227,10 +228,10 @@ def register(router):
         response["ETag"] = f'"{body["data"]["state_version"]}"'
         return response
 
-    @router.post("/pricing/policies/{policy_id}/publish", operation_id="adminPricingPublish")
+    @router.post("/pricing/policies/{policy_id}/publish", operation_id="adminPricingPublish", response={200: PricingEnvelope})
     def publish_pricing(request, policy_id: UUID, payload: Reason):
         return transition(request, policy_id, payload, "publish")
 
-    @router.post("/pricing/policies/{policy_id}/withdraw", operation_id="adminPricingWithdraw")
+    @router.post("/pricing/policies/{policy_id}/withdraw", operation_id="adminPricingWithdraw", response={200: PricingEnvelope})
     def withdraw_pricing(request, policy_id: UUID, payload: Reason):
         return transition(request, policy_id, payload, "withdraw")

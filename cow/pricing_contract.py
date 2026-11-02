@@ -3,12 +3,21 @@
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 RATE = re.compile(r"^(0|[1-9][0-9]{0,11})(\.[0-9]{1,6})?$")
+Identifier = Annotated[str, StringConstraints(pattern=IDENTIFIER.pattern)]
+DecimalRate = Annotated[str, StringConstraints(pattern=RATE.pattern)]
 
 
 class Strict(BaseModel):
@@ -16,7 +25,7 @@ class Strict(BaseModel):
 
 
 class Scope(Strict):
-    kind: str = Field(min_length=1, max_length=64)
+    kind: Identifier
     key: str = Field(min_length=1, max_length=160)
 
     @field_validator("key")
@@ -35,15 +44,34 @@ class Scope(Strict):
 
 
 class Rule(Strict):
-    id: str
+    id: Identifier
     kind: Literal["BASE", "OVERRIDE_RATE", "MULTIPLIER", "DISCOUNT_PERCENT"]
-    rate: str
-    priority: int = Field(default=0, ge=0, le=100_000, strict=True)
+    rate: DecimalRate
+    priority: int | None = Field(default=0, ge=0, le=100_000, strict=True)
     component: str | None = None
     basis: str | None = None
     target: str | None = None
     tax_class: str | None = None
-    conditions: dict[str, str] = Field(default_factory=dict)
+    conditions: dict[str, str] | None = Field(default_factory=dict)
+
+    # encoding/json decodes null integer -> 0, null map -> nil, and null
+    # string -> empty. Go pricing.Validate treats zero priority and an absent
+    # conditions map as valid; blank optional dimensions mean "not set".
+    # Preserve the domain invariants in valid_shape below.
+    @field_validator("priority", mode="before")
+    @classmethod
+    def go_null_priority(cls, value):
+        return 0 if value is None else value
+
+    @field_validator("conditions", mode="before")
+    @classmethod
+    def go_null_conditions(cls, value):
+        return {} if value is None else value
+
+    @field_validator("component", "basis", "target", "tax_class", mode="before")
+    @classmethod
+    def go_empty_optional_string(cls, value):
+        return None if value == "" else value
 
     @field_validator("id")
     @classmethod
@@ -74,8 +102,8 @@ class Rule(Strict):
 
 
 class Draft(Strict):
-    policy_key: str
-    policy_version: int = Field(ge=1, strict=True)
+    policy_key: Identifier
+    policy_version: int = Field(ge=1, strict=True, json_schema_extra={"format": "int64"})
     scope: Scope
     currency: Literal["INR"]
     rules: list[Rule] = Field(min_length=1, max_length=128)
@@ -111,7 +139,7 @@ class Draft(Strict):
         base = {r.id for r in self.rules if r.kind == "BASE"}
         if not base:
             raise ValueError("At least one BASE rule is required")
-        from cow.services.pricing_engine import validate, PricingError
+        from cow.services.pricing_engine import PricingError, validate
         try:
             validate({"policy_id": self.policy_key, "policy_version": self.policy_version,
                       "currency": self.currency,

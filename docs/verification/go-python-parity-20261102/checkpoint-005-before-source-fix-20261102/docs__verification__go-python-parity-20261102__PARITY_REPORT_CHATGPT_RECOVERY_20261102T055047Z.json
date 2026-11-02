@@ -1,0 +1,1094 @@
+{
+  "go_operations": 82,
+  "python_operation_count": 103,
+  "go_operations_found_in_python": 82,
+  "discrepancy_count": 5,
+  "discrepancies": [
+    {
+      "operation": "POST /api/v1/admin/chargers/{charger_id}/maintenance",
+      "type": "success_response_schema_mismatch",
+      "status": "201",
+      "go": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "ACTIVE",
+                          "ENDED",
+                          "INVALIDATED"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  }
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        },
+        "headers": {
+          "ETag": {
+            "type": "string"
+          },
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "python": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "charger_id": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "created_by": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "ends_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "starts_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "vehicle_id": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "created_at",
+                  "created_by",
+                  "ends_at",
+                  "id",
+                  "reason",
+                  "starts_at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "data"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    {
+      "operation": "POST /api/v1/admin/pairings",
+      "type": "success_response_schema_mismatch",
+      "status": "201",
+      "go": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "ACTIVE",
+                          "ENDED",
+                          "INVALIDATED"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  }
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        },
+        "headers": {
+          "ETag": {
+            "type": "string"
+          },
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "python": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "charger_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "created_at": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "date-time"
+                  },
+                  "created_by": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "effective_to": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "date-time"
+                  },
+                  "end_reason": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "ended_by": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ACTIVE",
+                      "ENDED",
+                      "INVALIDATED"
+                    ]
+                  },
+                  "vehicle_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "charger_id",
+                  "created_at",
+                  "created_by",
+                  "effective_from",
+                  "effective_to",
+                  "end_reason",
+                  "ended_by",
+                  "id",
+                  "reason",
+                  "source",
+                  "status",
+                  "vehicle_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "data"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    {
+      "operation": "POST /api/v1/admin/pairings/{pairing_id}/end",
+      "type": "success_response_schema_mismatch",
+      "status": "200",
+      "go": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "ACTIVE",
+                          "ENDED",
+                          "INVALIDATED"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  }
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        },
+        "headers": {
+          "ETag": {
+            "type": "string"
+          },
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "python": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "charger_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "created_at": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "date-time"
+                  },
+                  "created_by": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "effective_to": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "date-time"
+                  },
+                  "end_reason": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "ended_by": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ACTIVE",
+                      "ENDED",
+                      "INVALIDATED"
+                    ]
+                  },
+                  "vehicle_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "charger_id",
+                  "created_at",
+                  "created_by",
+                  "effective_from",
+                  "effective_to",
+                  "end_reason",
+                  "ended_by",
+                  "id",
+                  "reason",
+                  "source",
+                  "status",
+                  "vehicle_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "data"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    {
+      "operation": "POST /api/v1/admin/pricing/policies",
+      "type": "request_schema_mismatch",
+      "go": {
+        "application/json": {
+          "type": "object",
+          "properties": {
+            "currency": {
+              "type": "string",
+              "const": "INR"
+            },
+            "ends_at": {
+              "type": [
+                "null",
+                "string"
+              ],
+              "format": "date-time"
+            },
+            "policy_key": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+            },
+            "policy_version": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 500
+            },
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "basis": {
+                    "type": "string"
+                  },
+                  "component": {
+                    "type": "string"
+                  },
+                  "conditions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "BASE",
+                      "OVERRIDE_RATE",
+                      "MULTIPLIER",
+                      "DISCOUNT_PERCENT"
+                    ]
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "rate": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,11})(\\.[0-9]{1,6})?$"
+                  },
+                  "target": {
+                    "type": "string"
+                  },
+                  "tax_class": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "priority",
+                  "rate"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "maxLength": 160
+                },
+                "kind": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                }
+              },
+              "required": [
+                "key",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "starts_at": {
+              "type": [
+                "null",
+                "string"
+              ],
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "currency",
+            "policy_key",
+            "policy_version",
+            "reason",
+            "rules",
+            "scope"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "python": {
+        "application/json": {
+          "type": "object",
+          "properties": {
+            "currency": {
+              "type": "string",
+              "const": "INR"
+            },
+            "ends_at": {
+              "type": [
+                "null",
+                "string"
+              ],
+              "format": "date-time"
+            },
+            "policy_key": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+            },
+            "policy_version": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 500
+            },
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "basis": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "component": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "conditions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "BASE",
+                      "OVERRIDE_RATE",
+                      "MULTIPLIER",
+                      "DISCOUNT_PERCENT"
+                    ]
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "rate": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,11})(\\.[0-9]{1,6})?$"
+                  },
+                  "target": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "tax_class": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "rate"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "kind": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                }
+              },
+              "required": [
+                "key",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "starts_at": {
+              "type": [
+                "null",
+                "string"
+              ],
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "currency",
+            "policy_key",
+            "policy_version",
+            "reason",
+            "rules",
+            "scope"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "operation": "POST /api/v1/admin/vehicles/{vehicle_id}/maintenance",
+      "type": "success_response_schema_mismatch",
+      "status": "201",
+      "go": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "ACTIVE",
+                          "ENDED",
+                          "INVALIDATED"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  }
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        },
+        "headers": {
+          "ETag": {
+            "type": "string"
+          },
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "python": {
+        "content": {
+          "application/json": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "charger_id": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "created_by": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  },
+                  "ends_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "starts_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "vehicle_id": {
+                    "type": [
+                      "null",
+                      "string"
+                    ],
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "created_at",
+                  "created_by",
+                  "ends_at",
+                  "id",
+                  "reason",
+                  "starts_at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "data"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    }
+  ],
+  "checker_version": "2026-11-02.4",
+  "generated_at": "2026-11-02T05:50:48.793333Z",
+  "go_revision": "1e966a2ce29bc2d1ef3e25500ee474c1ab380853",
+  "published_go_openapi_revision": "070cd06514b4d63b29aaa12ff115d08c9551d0c8",
+  "python_base_revision": "760c64f17c3ecd196f95f6e344360ad22dc8c3a6",
+  "native_diagnostics": [
+    "GET /health/live",
+    "GET /health/ready",
+    "GET /openapi.yaml",
+    "GET /version"
+  ],
+  "caveat": "Static declarations only; handler behavior, database state, SMTP, and live acceptance remain separate gates."
+}

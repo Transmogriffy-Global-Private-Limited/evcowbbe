@@ -1,0 +1,47 @@
+{
+  "report": "PARITY_REPORT_CHATGPT_RECOVERY_20261102T055047Z.json",
+  "checker_version": "2026-11-02.4",
+  "discrepancy_count": 5,
+  "groups": [
+    {
+      "classification": "Python declaration/schema deficiency",
+      "finding_type": "request_schema_mismatch",
+      "status": null,
+      "count": 1,
+      "finding_ids": [
+        4
+      ],
+      "operations": [
+        "POST /api/v1/admin/pricing/policies"
+      ]
+    },
+    {
+      "classification": "Python declaration/schema deficiency",
+      "finding_type": "success_response_schema_mismatch",
+      "status": "200",
+      "count": 1,
+      "finding_ids": [
+        3
+      ],
+      "operations": [
+        "POST /api/v1/admin/pairings/{pairing_id}/end"
+      ]
+    },
+    {
+      "classification": "Python declaration/schema deficiency",
+      "finding_type": "success_response_schema_mismatch",
+      "status": "201",
+      "count": 3,
+      "finding_ids": [
+        1,
+        2,
+        5
+      ],
+      "operations": [
+        "POST /api/v1/admin/chargers/{charger_id}/maintenance",
+        "POST /api/v1/admin/pairings",
+        "POST /api/v1/admin/vehicles/{vehicle_id}/maintenance"
+      ]
+    }
+  ]
+}
