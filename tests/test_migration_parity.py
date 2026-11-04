@@ -10,13 +10,14 @@ ROOT = Path(__file__).parents[1]
 
 class MigrationParity(unittest.TestCase):
     def test_migration_lineage_model_and_field_coverage(self):
-        src = ast.parse((ROOT / "cow/models.py").read_text())
+        sources = [ast.parse((ROOT / "cow" / filename).read_text()) for filename in ("models.py", "models_zone.py")]
+        nodes = [node for source in sources for node in source.body]
         model_fields = {}
         inherited = []
-        for node in src.body:
+        for node in nodes:
             if isinstance(node, ast.ClassDef) and node.name == "Timestamped":
                 inherited = [s.targets[0].id for s in node.body if isinstance(s, ast.Assign)]
-        for node in src.body:
+        for node in nodes:
             if not isinstance(node, ast.ClassDef) or node.name == "Timestamped":
                 continue
             if not any(

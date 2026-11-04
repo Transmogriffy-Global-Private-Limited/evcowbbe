@@ -537,3 +537,6 @@ class MeterObservation(models.Model):
     fact = models.OneToOneField(HALFact, on_delete=models.PROTECT)
     energy_wh = models.BigIntegerField()
     observed_at = models.DateTimeField()
+
+# Sprint 6 additive zone registry models: required for Django migration autodetection.
+from .models_zone import ServiceZone, DutyZoneAssignment, ChargerZoneAssignment, ZoneGSTAssignment, ZoneTariffPayload  # noqa: F401
