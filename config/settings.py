@@ -4,6 +4,7 @@ No independent COW_* credential aliases and no automatic migration on startup.
 """
 import os
 from pathlib import Path
+
 from config.legacy_env import checked_int, derive_key, listen, postgres, public_host, smtp_mode
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,10 +23,19 @@ COW_PUBLIC_APP_URL = os.environ["PUBLIC_BASE_URL"]
 HTTP_LISTEN_ADDR = listen(os.environ)
 DATABASES = {"default": postgres(os.environ)}
 DB_MAX_CONNS = checked_int(os.environ, "DB_MAX_CONNS", 10, 1, 100)
-INSTALLED_APPS = ["django.contrib.contenttypes", "django.contrib.auth", "ninja", "cow"]
+INSTALLED_APPS = ["django.contrib.contenttypes", "django.contrib.auth", "django.contrib.staticfiles", "ninja", "cow"]
 MIDDLEWARE = ["config.middleware.RequestSecurityMiddleware"]
 ROOT_URLCONF = "config.urls"
-TEMPLATES = []
+# Django Ninja Swagger renders app-provided Django templates even with DEBUG=False.
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {"context_processors": ["django.template.context_processors.request"]},
+    }
+]
+STATIC_URL = "/static/"
 USE_TZ = True
 TIME_ZONE = "UTC"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

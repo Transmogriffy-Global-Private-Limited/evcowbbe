@@ -1,0 +1,494 @@
+{
+  "base_git_commit": "aad69e67f5851043a3ee932b1ae5cf5936d4ad0c",
+  "exceptions": {
+    "config/asgi.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 2
+      },
+      "issues": 2,
+      "sha256": "7e9b2ea5700d4cfc4cfcd5625185c95587c118f5de1fb98ae2dc5738bf2a6eb4"
+    },
+    "config/wsgi.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 2
+      },
+      "issues": 2,
+      "sha256": "641e8dc1ae03c4d25587ab7839087434837704e8ef7ba9d164ee7f96f0aeb9e1"
+    },
+    "cow/admin_controls.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "9674d475be418166837d31b93d04164e0c1eefd1b2f215393d600c37791d5720"
+    },
+    "cow/apps.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "cd4087db90e24b365613b9326f92d67aba7b7cd235bd1c9da114e391c6c1abcd"
+    },
+    "cow/errors.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "882f0453fec6596134bd88f359d47660be35b85a7f8868e503e005877737c361"
+    },
+    "cow/fleet_api.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "1a701309bc9cb9cec2ad0c5e9a960d3ed404ee208ec7c9f6090ff952b02d8722"
+    },
+    "cow/hal/client.py": {
+      "codes": [
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "F401": 3,
+        "I001": 1
+      },
+      "issues": 4,
+      "sha256": "c84135fe38eb3200c2093d68c496703e6a783bd97714990f7772e802fe87a2d0"
+    },
+    "cow/hal/contract.py": {
+      "codes": [
+        "F401"
+      ],
+      "counts": {
+        "F401": 3
+      },
+      "issues": 3,
+      "sha256": "27e21ced7e6900b6193b9ca1ff20cdff7b46712502f9fd0cfb57d60c68d4bbaa"
+    },
+    "cow/hal/ingress.py": {
+      "codes": [
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "F401": 2,
+        "I001": 1
+      },
+      "issues": 3,
+      "sha256": "ba8d7bf42444624fc0da0586d102c1f80275b957ffddc7568fe4997cb3959bd9"
+    },
+    "cow/hal/reducer.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "1a7b07267df25aff2aa29c4eb7fe351d0d6bafa7920d22e2c6b78e816be5659a"
+    },
+    "cow/hal/simulator.py": {
+      "codes": [
+        "F401",
+        "I001",
+        "UP017"
+      ],
+      "counts": {
+        "F401": 1,
+        "I001": 1,
+        "UP017": 1
+      },
+      "issues": 3,
+      "sha256": "f236e55c1ba1a03c44e8fa9874226112190379f1800a3e2cf4e9e5319d666e05"
+    },
+    "cow/management/commands/bootstrap_admin.py": {
+      "codes": [
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "F401": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "a8dae7f5f4eddc2a96bb13214dcd0f559f6c081e6f29f23573ef685da0919397"
+    },
+    "cow/management/commands/hal_dispatch.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "2e067de6b0e45c56832343c0fcdce43db780d9b0519269765a80e1a6f9a0a3e4"
+    },
+    "cow/management/commands/hal_reconcile.py": {
+      "codes": [
+        "B904",
+        "E701",
+        "I001"
+      ],
+      "counts": {
+        "B904": 1,
+        "E701": 2,
+        "I001": 1
+      },
+      "issues": 4,
+      "sha256": "2f5683c1102e9b97c36d47e8fd382c9b08987d09310f0a21ee09cd4c88e976d9"
+    },
+    "cow/management/commands/hal_send_once.py": {
+      "codes": [
+        "B904",
+        "E701",
+        "I001"
+      ],
+      "counts": {
+        "B904": 1,
+        "E701": 2,
+        "I001": 1
+      },
+      "issues": 4,
+      "sha256": "52e01f24af609b373a3c1136ee0a362afc202db6bf4c60d485dcd19c17c4fed4"
+    },
+    "cow/management/commands/mail_worker.py": {
+      "codes": [
+        "E701",
+        "I001"
+      ],
+      "counts": {
+        "E701": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "fd9f8c6e4ed9662fa8cd618ad45edc0ca53728ecfdd5a1739c065b495998433c"
+    },
+    "cow/migrations/0001_initial.py": {
+      "codes": [
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "F401": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "a2159e1b677d345662845fe644f04bd5b239c6368336ea06f7ce0d3a23269219"
+    },
+    "cow/migrations/0007_rbac_pricing_consequential_parity.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "53a736d585ee502c70e4568f5b09b65dee20331611dec4d428c7506a212a06cf"
+    },
+    "cow/passwords.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "ba30bbc01790bf4df20e0ec0dd7f0e480fd1df9744672cb6bfc61bc6daaa6b3a"
+    },
+    "cow/services/admin_rbac.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "71ba2d234a5ca4969fb7adb633f67c075053895d8439863d926069d9e3e8e847"
+    },
+    "cow/services/mail.py": {
+      "codes": [
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "F401": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "f1955c84edc019e6ef8fbaaffc3ce2eab9ba56f55fa655849f2ae08d4b36b1c9"
+    },
+    "cow/services/pricing.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "7a5730f791047a18cdb52b4581f7234d76193d1fae7be13b8ac46bd899380e34"
+    },
+    "cow/services/pricing_admin.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "c4d6b85b3a7ffa75c2844c8780c45626f2bc318ba922f609cbc8e806bbc6ba30"
+    },
+    "cow/services/pricing_engine.py": {
+      "codes": [
+        "B905",
+        "I001"
+      ],
+      "counts": {
+        "B905": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "423b7b113e9d7427423e7652f0e38709b24556aa52bc896ef339ffcea96d9a82"
+    },
+    "cow/services/pricing_topology.py": {
+      "codes": [
+        "E702",
+        "I001"
+      ],
+      "counts": {
+        "E702": 2,
+        "I001": 1
+      },
+      "issues": 3,
+      "sha256": "d3de8fbab145608babc3f48f499be4bc05d46aa8283c63027be81b569786e599"
+    },
+    "cow/services/throttle.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "d157d0a2a0b907f8b8f116eff58b9f3c206103a71c195c24aa204b3dcad8e4f2"
+    },
+    "docs/verification/go-python-parity-20261102/checkpoint-005-before-source-fix-20261102/cow__pricing_contract.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 2
+      },
+      "issues": 2,
+      "sha256": "4c035c6b8f4a6a00e77fc23d7aa5e21e2da99ecace2bfa74f063704d23e2ad11"
+    },
+    "ops/vps2/evcowbbe-cleanup.py": {
+      "codes": [
+        "B904",
+        "E701",
+        "E702",
+        "I001",
+        "UP031"
+      ],
+      "counts": {
+        "B904": 1,
+        "E701": 17,
+        "E702": 16,
+        "I001": 1,
+        "UP031": 2
+      },
+      "issues": 37,
+      "sha256": "65f1811d9ce19a99473ae7136b9b0db49c068d493b161145e81cff7d2b694c4f"
+    },
+    "ops/vps2/mail_guard.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "ce6834a54896c8946991777c51c3e12574375f34a72eee77f76c99f526e73bb1"
+    },
+    "ops/vps2/mail_runner.py": {
+      "codes": [
+        "I001"
+      ],
+      "counts": {
+        "I001": 1
+      },
+      "issues": 1,
+      "sha256": "0ab6210e62c88aa7c865b7f783214b28d46b47f29bc9e8e00468de77f6db9af1"
+    },
+    "ops/vps2/test_operations.py": {
+      "codes": [
+        "E701",
+        "I001"
+      ],
+      "counts": {
+        "E701": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "7626017ba9681122fdd5cf937daf9a693420e7f69c99d7eb05d2a0b9764e729e"
+    },
+    "scripts/dev.py": {
+      "codes": [
+        "E701",
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "E701": 4,
+        "F401": 2,
+        "I001": 1
+      },
+      "issues": 7,
+      "sha256": "f58d9f6edc7e3833129019e61cc080ff97709aa6553487ba4916f556801b8f3b"
+    },
+    "tests/integration/test_database_and_api.py": {
+      "codes": [
+        "B017",
+        "E701",
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "B017": 2,
+        "E701": 4,
+        "F401": 4,
+        "I001": 3
+      },
+      "issues": 13,
+      "sha256": "976bb9683061628689dc6d864e762aba064928e81aae7f3f7d5131898a24d6f5"
+    },
+    "tests/integration/test_pricing_topology_db.py": {
+      "codes": [
+        "E702",
+        "I001"
+      ],
+      "counts": {
+        "E702": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "79cb13d01e653dce58046247fb5aa8c334246efc695d1632fdcc4324ec2c8f91"
+    },
+    "tests/integration/test_rbac_transaction_security.py": {
+      "codes": [
+        "E701",
+        "F401",
+        "F841",
+        "I001"
+      ],
+      "counts": {
+        "E701": 5,
+        "F401": 1,
+        "F841": 2,
+        "I001": 1
+      },
+      "issues": 9,
+      "sha256": "54ece9b9b568f3e310ae71a932f35e01dd4f68b445cc441157d5470632ad0312"
+    },
+    "tests/test_driver_auth_parity.py": {
+      "codes": [
+        "E402",
+        "I001"
+      ],
+      "counts": {
+        "E402": 1,
+        "I001": 2
+      },
+      "issues": 3,
+      "sha256": "c145ebebb96b60700250e85cf0575ccf4c8fad24844a6b524faca41b3e087ff7"
+    },
+    "tests/test_go_response_refinement.py": {
+      "codes": [
+        "B017",
+        "I001"
+      ],
+      "counts": {
+        "B017": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "a27c892f155b0e6d2cf1482240c197655decec14dc548013466200546d9cc082"
+    },
+    "tests/test_json_contract_fixtures.py": {
+      "codes": [
+        "E701",
+        "I001"
+      ],
+      "counts": {
+        "E701": 1,
+        "I001": 1
+      },
+      "issues": 2,
+      "sha256": "bcffa2b0ffbbe83a1d7a969c5d8ff07ce18cb1b5dc2da34e92a398ede0eefc56"
+    },
+    "tests/test_legacy_env.py": {
+      "codes": [
+        "B023",
+        "E701",
+        "E702",
+        "I001"
+      ],
+      "counts": {
+        "B023": 6,
+        "E701": 2,
+        "E702": 1,
+        "I001": 1
+      },
+      "issues": 10,
+      "sha256": "d2c9f742d63c87ceab14d169a9638798e83c1c5044f72ceb4dc2f0d1dc9a29d3"
+    },
+    "tests/test_pure_contracts.py": {
+      "codes": [
+        "E701",
+        "F401",
+        "I001"
+      ],
+      "counts": {
+        "E701": 4,
+        "F401": 2,
+        "I001": 1
+      },
+      "issues": 7,
+      "sha256": "489778de92669237c6f80f517e4216ba98398190b871c6e5ab0fc3889498735b"
+    },
+    "tests/test_wp31e_pricing.py": {
+      "codes": [
+        "E701",
+        "E702",
+        "I001"
+      ],
+      "counts": {
+        "E701": 7,
+        "E702": 1,
+        "I001": 1
+      },
+      "issues": 9,
+      "sha256": "dbd9b0f638a5f7c0730f2d69f9616951151012d36a7209cd33a5b988bd804adb"
+    }
+  },
+  "ruff_version": "ruff 0.17.3",
+  "schema": 1,
+  "total_legacy_findings": 157
+}

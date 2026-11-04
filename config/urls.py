@@ -4,6 +4,7 @@ from django.db import connection, transaction
 from django.http import HttpResponse, JsonResponse
 from django.urls import path
 
+from config.swagger_static import ninja_docs_asset
 from cow.api import api
 
 
@@ -58,5 +59,6 @@ urlpatterns = [
     path("health/ready", ready),
     path("version", version),
     path("openapi.yaml", openapi_yaml),
+    path("static/ninja/<path:asset>", ninja_docs_asset),
     path("api/", api.urls),
 ]
