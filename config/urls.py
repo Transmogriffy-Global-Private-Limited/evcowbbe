@@ -43,12 +43,10 @@ def version(request):
 def openapi_yaml(request):
     import yaml
 
-    from cow.openapi import add_diagnostics
-
     # Ninja returns an OpenAPISchema dict subclass that PyYAML's safe dumper
     # deliberately refuses. Round-tripping through JSON preserves OpenAPI data
     # while materializing only standard mapping/list/scalar values.
-    schema = json.loads(json.dumps(add_diagnostics(api.get_openapi_schema())))
+    schema = json.loads(json.dumps(api.get_openapi_schema()))
     return HttpResponse(
         yaml.safe_dump(schema, sort_keys=False, allow_unicode=True), content_type="application/yaml"
     )

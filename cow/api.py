@@ -7,6 +7,7 @@ from django.db import transaction
 from ninja import NinjaAPI, Router, Schema
 from ninja.errors import AuthenticationError
 from ninja.errors import ValidationError as NinjaValidationError
+from ninja.openapi.docs import Swagger
 from ninja.security import HttpBearer
 from pydantic import ConfigDict, Field
 
@@ -140,10 +141,29 @@ class OverridePayload(StrictSchema):
     decision: Literal["ALLOW","DENY"]
     reason: str = Field(min_length=8,max_length=500)
 
-api = NinjaAPI(title="TransEV Charger on Wheels CMS", version="0.1.0", description=(
+class FrontendDocumentedAPI(NinjaAPI):
+    """One source for UI, JSON and YAML with unchanged business handlers."""
+
+    def get_openapi_schema(self, *, path_prefix=None, path_params=None):
+        from cow.fe_openapi import decorate_fe_schema
+        from cow.openapi import add_diagnostics
+
+        native = super().get_openapi_schema(
+            path_prefix=path_prefix, path_params=path_params
+        )
+        return decorate_fe_schema(add_diagnostics(native))
+
+
+api = FrontendDocumentedAPI(title="TransEV Charger on Wheels CMS", version="0.1.0", description=(
     "Independent mobile charging business API. Go HAL boundary: cow-hal.v1. "
     "HAL acceptance is NOT physical start. Existing Go FE routes are NOT declared compatible until parity gate passes."),
-    docs_url="/swagger/", openapi_url="/openapi.json")
+    docs_url="/swagger/", openapi_url="/openapi.json",
+    docs=Swagger(settings={
+        "docExpansion": "none", "filter": True, "deepLinking": True,
+        "displayRequestDuration": True, "displayOperationId": True,
+        "persistAuthorization": False,
+    }),
+)
 
 @api.exception_handler(DomainError)
 def domain_error(request, exc):

@@ -13,6 +13,7 @@ recovery. The old Go PostgreSQL database is not imported into Django.
 
 - **API:** `https://dev-evcowbbe.transev.site`
 - **Public OpenAPI:** `/openapi.yaml` (YAML) and `/api/openapi.json` (JSON)
+- **FE integration:** [frontend contract guide](docs/FRONTEND_INTEGRATION.md) and the `/api/swagger/` interactive explorer
 - **Service:** `evcowbbe.service`, Gunicorn/Django, 127.0.0.1:18280 through Caddy
 - **Database:** PostgreSQL `evcowbbe_django_next`, Django migrations, owner `evcowbbe_app`
 - **Email:** guarded, timer-driven Django encrypted outbox worker
