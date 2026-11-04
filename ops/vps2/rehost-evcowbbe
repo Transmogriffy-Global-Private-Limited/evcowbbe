@@ -378,7 +378,7 @@ def _build_with_release_umask(rev):
         # The revision marker is not enough: service user must also load the
         # actual Django application and pinned Python environment before cutover.
         service_import = cmd(
-            ['runuser', '-u', 'evcowbbe', '--', str(p/'.venv/bin/python'),
+            ['/usr/sbin/runuser', '-u', 'evcowbbe', '--', str(p/'.venv/bin/python'),
              '-c', 'from config.wsgi import application; assert application is not None'],
             cwd=p/'source', env=testenv, timeout=45, check=False,
         )

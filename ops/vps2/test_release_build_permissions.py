@@ -60,6 +60,18 @@ class ReleaseBuildUmask(unittest.TestCase):
             source.index("service_import = cmd("),
         )
 
+    def test_sanitized_environment_uses_absolute_runuser(self):
+        source = OPERATOR.read_text()
+        self.assertIn(
+            "['/usr/sbin/runuser', '-u', 'evcowbbe', '--', str(p/'.venv/bin/python')",
+            source,
+        )
+        self.assertIn("cwd=p/'source', env=testenv", source)
+        self.assertNotIn(
+            "['runuser', '-u', 'evcowbbe', '--', str(p/'.venv/bin/python')",
+            source,
+        )
+
     def test_release_build_has_no_ruff_gate(self):
         source = OPERATOR.read_text()
         self.assertNotIn("ruff.log", source)
