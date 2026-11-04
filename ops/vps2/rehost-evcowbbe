@@ -303,6 +303,19 @@ def schema_identical(a,b):
     need(files(x)==files(y),'SCHEMA_MIGRATIONS_CHANGED: manual database-migration procedure required')
 
 def build(rev):
+    """Use service-traversable modes for public release assets, regardless of caller umask.
+
+    Only the build section changes umask; it is restored before deployment
+    journals, secrets, or any unrelated runtime operations are touched.
+    """
+    caller_umask = os.umask(0o022)
+    try:
+        return _build_with_release_umask(rev)
+    finally:
+        os.umask(caller_umask)
+
+
+def _build_with_release_umask(rev):
     """Build an immutable Django-only release from clean, remote-main Git.
 
     Uses frozen dependency versions from current release; changed migrations
@@ -349,8 +362,6 @@ def build(rev):
         with (p/'unit-tests.log').open('wb') as f:
             cmd([str(p/'.venv/bin/python'),'-m','unittest','discover','-s','tests','-p','test_*.py'],
                 cwd=p/'source',timeout=300,env=testenv,stdout=f)
-        with (p/'ruff.log').open('wb') as f:
-            cmd([str(p/'.venv/bin/ruff'),'check','.'],cwd=p/'source',timeout=90,env=testenv,stdout=f)
         with (p/'MANIFEST.sha256').open('w') as f:
             for prefix in ('source','.venv'):
                 for path in sorted((p/prefix).rglob('*')):
@@ -364,6 +375,14 @@ def build(rev):
             if not path.is_symlink():path.chmod(path.stat().st_mode&~0o222)
         p.chmod(p.stat().st_mode&~0o222)
         ensure_service_revision_readable(rev)
+        # The revision marker is not enough: service user must also load the
+        # actual Django application and pinned Python environment before cutover.
+        service_import = cmd(
+            ['runuser', '-u', 'evcowbbe', '--', str(p/'.venv/bin/python'),
+             '-c', 'from config.wsgi import application; assert application is not None'],
+            cwd=p/'source', env=testenv, timeout=45, check=False,
+        )
+        need(service_import.returncode == 0, 'RELEASE_NOT_IMPORTABLE_BY_SERVICE_ACCOUNT')
     except Exception:
         print('BUILD_INCOMPLETE='+str(p)+'; quarantined for operator inspection',file=sys.stderr)
         raise

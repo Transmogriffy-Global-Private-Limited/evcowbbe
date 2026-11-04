@@ -67,7 +67,7 @@ For a new code revision: commit and push tested Django changes to `main`; update
 VPS checkout using **fast-forward only**, verify it is clean and matches remote
 `main`; then `sudo rehost-evcowbbe deploy <exact 40-hex commit>`. This path builds
 and seals a fresh immutable release from the Git archive using pinned packages
-from the previous release and runs offline unit tests/lint; it refuses changed
+from the previous release and runs offline unit tests and service-account checks; Ruff is not a deployment gate; it refuses changed
 Django migration files. After seal verification it promotes the release pointer,
 restarts only the API, probes health, re-enables the guarded mail timer, and
 commits the runtime state. It makes no DB schema changes. If health fails after

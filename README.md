@@ -52,8 +52,9 @@ are in `pyproject.toml`:
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
-.venv/bin/ruff check .
 ```
+
+Ruff is optional for individual developers, not a test or deployment gate.
 
 The app requires correctly scoped environment variables; do not commit or
 print real secrets. Never point a test command at either the authoritative

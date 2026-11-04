@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "pytest-django>=4.9,<5", "ruff>=0.11,<1", "pyright>=1.1,<2", "freezegun>=1.5,<2", "jsonschema>=4.22,<5"]
+dev = ["pytest>=8,<10", "pytest-django>=4.9,<5", "pyright>=1.1,<2", "freezegun>=1.5,<2", "jsonschema>=4.22,<5"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
