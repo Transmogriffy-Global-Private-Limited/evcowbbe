@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from cow.api_contracts import GO_ERROR_ENVELOPE_SCHEMA
+from cow.common.contracts import GO_ERROR_ENVELOPE_SCHEMA
 from cow.go_wire import declared_header_parameters, match_operation
 
 REQUEST_ID_HEADER = {

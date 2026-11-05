@@ -7,7 +7,7 @@ from uuid import UUID
 from ninja import Schema
 from pydantic import ConfigDict, Field
 
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import ServiceJob
 from cow.services import idempotency, jobs
 

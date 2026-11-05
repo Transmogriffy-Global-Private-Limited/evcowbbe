@@ -4,7 +4,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import (
     AuditEvent,
     CustomerAddress,

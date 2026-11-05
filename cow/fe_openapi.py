@@ -261,7 +261,7 @@ def _notes(path: str, method: str) -> list[str]:
 
 
 def _add_customer_headers(path: str, method: str, operation: dict) -> None:
-    """Only annotate requirements verified in cow/customer_api.py."""
+    """Only annotate requirements verified in cow/users/master.py."""
     if not path.startswith("/api/v1/app/"):
         return
     family = path.split("/")[4] if len(path.split("/")) > 4 else ""
@@ -353,7 +353,7 @@ _CUSTOMER_EXAMPLES = {
 
 def _install_customer_models(document: dict) -> None:
     """Publish 5 request contracts and 5 source-verified response structures."""
-    from cow import customer_contract as c
+    from cow.users import contracts as c
 
     models = {name: getattr(c, name) for name, _ in _CUSTOMER_INPUTS.values()}
     schemas = document.setdefault("components", {}).setdefault("schemas", {})
@@ -492,7 +492,7 @@ def _enrich_customer_operation(document: dict, path: str, method: str, operation
     for status, description in error_codes.items():
         if status in responses:
             continue
-        from cow.api_contracts import GO_ERROR_ENVELOPE_SCHEMA
+        from cow.common.contracts import GO_ERROR_ENVELOPE_SCHEMA
         responses[status] = {
             "description": description,
             "headers": {

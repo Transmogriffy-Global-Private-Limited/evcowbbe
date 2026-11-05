@@ -11,7 +11,7 @@ from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
 
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import (
     Account,
     AuthActionToken,

@@ -125,7 +125,7 @@ class FleetContractTests(unittest.TestCase):
     def test_fleet_schemas_reject_unknown_invalid_and_empty_patch(self):
         from pydantic import ValidationError
 
-        from cow.fleet_api import (
+        from cow.admin.fleet import (
             FleetChargerCreate,
             FleetConnectorCreate,
             FleetVehicleCreate,

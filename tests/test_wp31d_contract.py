@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from cow.customer_contract import (
+from cow.users.contracts import (
     AddressCreate,
     AddressPatch,
     ProfilePatch,

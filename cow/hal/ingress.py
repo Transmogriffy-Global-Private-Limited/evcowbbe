@@ -10,7 +10,7 @@ from uuid import UUID
 from django.conf import settings
 from django.db import transaction, IntegrityError
 from django.utils import timezone
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.hal.contract import verify, validate_fact, FactContractError, fingerprint
 from cow.models import (HALFact, HALCommand, Charger, ChargingSession,
                         MeterObservation, ServiceJob, JobEvent)

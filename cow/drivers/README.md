@@ -11,3 +11,7 @@ verified eligibility and concurrency safeguards. Never issue physical HAL
 commands from a role route without approved core admission.
 
 See `docs/ROLE_MODULE_ARCHITECTURE_20261105.md`.
+
+## Working branch
+
+Driver work currently belongs on `anubhab-work` or a reviewed PR against `main`. No separate permanent driver branch exists.

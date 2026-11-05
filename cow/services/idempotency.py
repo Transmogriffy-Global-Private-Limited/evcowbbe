@@ -7,7 +7,7 @@ from datetime import timedelta
 from django.db import connection, transaction
 from django.utils import timezone
 
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import IdempotencyReceipt
 
 

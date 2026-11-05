@@ -6,7 +6,7 @@ import json
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import AuditEvent, PricingPolicy
 from cow.pricing_contract import Draft
 from cow.services.pricing_topology import validate_topology, resolve as resolve_policies

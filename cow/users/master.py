@@ -18,7 +18,7 @@ from cow.users.contracts import (
     VehicleFields,
     VehiclePatch,
 )
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import AuditEvent, CustomerAddress, CustomerProfile, CustomerVehicle, Principal
 from cow.services import idempotency
 

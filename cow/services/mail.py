@@ -13,7 +13,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import Outbox
 
 

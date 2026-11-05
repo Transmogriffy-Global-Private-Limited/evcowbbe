@@ -34,9 +34,9 @@ identity, authorization, idempotency, pricing, wallet and HAL domain.
 
 No role may introduce its own `models.py`, `migrations/`, NinjaAPI,
 pricing engine, wallet ledger, tax authority or authentication bypass.
-Existing imports `cow/customer_api.py`, `cow/customer_contract.py`,
-`cow/admin_controls.py`, `cow/fleet_api.py`, `cow/api_contracts.py`,
-`cow/errors.py` are compatibility shims only, not development entrypoints.
+The six obsolete root-level role and HTTP shim modules were removed after
+updating active imports. Use only the canonical role and `common` packages.
+Historical documentation remains clearly dated evidence, not current instructions.
 
 ### Known boundary decisions
 
@@ -57,18 +57,32 @@ Existing imports `cow/customer_api.py`, `cow/customer_contract.py`,
 
 ### Contributor routine
 
-1. Start from reviewed `integration/django-core`; work on a role-specific
-   branch, with changed files inside that role directory and tests.
+1. Fetch current `main`, then work on `anubhab-work` (core) or
+   `abhranil-pal-evcowbbe` (users). Keep changes in the owning package and tests.
 2. For a core requirement, propose a typed API/service contract and tests;
    core owner implements centrally; never fork the business rule inside a role.
 3. Keep positive role/authorization, request validation, lifecycle, retries,
    money precision, audit, replay and time-window checks in shared services.
 4. Run role and shared test suites and capture before/after OpenAPI JSON parity
    for structural changes.
-5. PR to integration, core review, rebase only after integration changes;
-   keep `main` untouched until separately approved for release.
+5. Open a reviewed PR toward `main`. Never bypass the core owner for schema,
+   shared policy, auth, wallet, taxes, dispatch, HAL or deployment changes.
+   Updating the `main` Git source does not deploy or migrate VPS2.
 6. Do not migrate, deploy, rehost, contact real chargers or process customer
    funds as part of local source restructuring.
 
 Read `cow/{users,drivers,admin,common}/README.md` and corresponding AGENTS.md
 before editing any module. `README.md` and root `AGENTS.md` link here.
+
+## Canonical branches (exactly three remote heads)
+
+- `main`: canonical **source** baseline; review and migration/deployment gates still apply.
+- `anubhab-work`: core/backend owner's working branch. Integrate reviewed changes via PR to `main`.
+- `abhranil-pal-evcowbbe`: user-side contributor's branch, based on the same `main` revision; owns `cow/users/` and associated tests/docs.
+
+Use existing shared services and models; request contract changes via PR/review rather
+than implementing duplicate business rules. Neither Git branches nor folder boundaries
+restrict write permissions; configure GitHub branch protection/rulesets for enforcement.
+Historical Go parity reports, deployment and migration records remain evidence, not
+parallel live implementations. The `0008` migration is source-only until separately
+approved and rehearsed for the actual VPS2 database.

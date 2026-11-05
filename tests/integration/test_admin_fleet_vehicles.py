@@ -9,7 +9,7 @@ from django.db import close_old_connections, transaction
 from django.test import Client
 from django.utils import timezone
 
-from cow.errors import DomainError
+from cow.common.errors import DomainError
 from cow.models import (
     Account,
     AdminOverride,

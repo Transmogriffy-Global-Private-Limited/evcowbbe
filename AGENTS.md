@@ -66,6 +66,10 @@ The `main` branch remains the baseline for the deployed development service;
 feature branches are isolated source-development checkpoints and require review
 before any merge or runtime adoption.
 
+## Canonical development branches
+
+`main` is the reviewed source baseline; `anubhab-work` is the backend owner branch; `abhranil-pal-evcowbbe` is the user-module contributor branch. There are no other active Git branch heads after consolidation. Review into `main`, never deploy solely because a branch advanced. The exact route/schema/ownership boundaries are in `docs/ROLE_MODULE_ARCHITECTURE_20261105.md`. Changes to shared contracts/schema require core review. Removed legacy wrapper modules must never be reintroduced.
+
 ## Cleanup and rollback
 
 Clean only explicitly enumerated former EVCOWBBE scratch DBs. Confirm service,

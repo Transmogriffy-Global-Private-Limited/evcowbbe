@@ -19,7 +19,7 @@ from cow.api_parity_responses import (
     ConnectorPageEnvelope, HistoryPageEnvelope, MaintenanceEnvelope,
     PairingEnvelope, PairingPageEnvelope, VehicleEnvelope, VehiclePageEnvelope,
 )
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.services import auth, idempotency, rbac
 from cow.services import fleet as fleet_service
 

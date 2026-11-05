@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db import transaction, connection
 from django.utils import timezone
 from cow.models import AuthRateBucket
-from cow.errors import reject
+from cow.common.errors import reject
 
 
 def check(kind: str, identifier: str, max_hits: int, window_s: int):

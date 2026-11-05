@@ -48,6 +48,16 @@ is not a claim of completed business behavior parity.
 Read [Role module architecture](docs/ROLE_MODULE_ARCHITECTURE_20261105.md) before changing user, driver or shared business code. The user, driver and Admin role packages, plus shared `cow/common/`,
 share a single ORM schema, security implementation and Django Ninja API.
 
+## Active branches and ownership
+
+| Git branch | Purpose |
+| --- | --- |
+| `main` | Canonical reviewed Django source baseline |
+| `anubhab-work` | Backend/core owner changes |
+| `abhranil-pal-evcowbbe` | Junior developer user-module changes |
+
+There are **no other active branch heads** after consolidation. Routes live in `cow/{users,drivers,admin}/`; common HTTP contracts/errors live in `cow/common/`; services/domain/models/migrations remain central. See `docs/ROLE_MODULE_ARCHITECTURE_20261105.md` for the sole ownership map. Old Go reports and static parity tests are historical evidence; do not treat them as a second runtime. Git source updates alone do not migrate or deploy VPS2.
+
 ## Local development
 
 Install Python 3.12-3.14 in a fresh venv. The authoritative dependency ranges

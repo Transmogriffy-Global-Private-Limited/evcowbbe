@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 from django.db import transaction, IntegrityError
-from cow.errors import DomainError
+from cow.common.errors import DomainError
 from cow.models import Account, Principal, AdminRole, PricingPolicy
 from cow.pricing_contract import Draft
 from cow.services import pricing_admin

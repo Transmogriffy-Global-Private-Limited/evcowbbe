@@ -55,7 +55,7 @@ class GoWireHTTPTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "INVALID_CREDENTIALS")
 
     def test_go_token_and_utf8_password_boundaries(self):
-        from cow.errors import DomainError
+        from cow.common.errors import DomainError
         from cow.services.auth import validate_opaque_token, validate_password
 
         validate_opaque_token("A" * 43)

@@ -2,7 +2,7 @@
 from uuid import uuid4
 import pytest
 from django.test import Client
-from cow.errors import DomainError
+from cow.common.errors import DomainError
 from cow.models import Account, Principal, AdminRole, AdminOverride
 from cow.services import admin_rbac
 

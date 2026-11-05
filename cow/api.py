@@ -11,8 +11,8 @@ from ninja.openapi.docs import Swagger
 from ninja.security import HttpBearer
 from pydantic import ConfigDict, Field
 
-from cow.api_contracts import AckEnvelope
-from cow.errors import DomainError, reject
+from cow.common.contracts import AckEnvelope
+from cow.common.errors import DomainError, reject
 from cow.admin.fleet import fleet_router
 from cow.hal.ingress import accept_signed_fact
 from cow.models import (

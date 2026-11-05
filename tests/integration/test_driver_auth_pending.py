@@ -7,7 +7,7 @@ from django.contrib.auth.hashers import make_password
 from django.test import Client
 from django.utils import timezone
 
-from cow.errors import DomainError
+from cow.common.errors import DomainError
 from cow.models import Account, AuthChallenge, AuthSession, Principal
 from cow.services import auth
 

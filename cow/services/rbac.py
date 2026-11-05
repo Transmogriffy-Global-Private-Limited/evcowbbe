@@ -1,6 +1,6 @@
 """Normative Annex 44 admin capabilities: exact grants; explicit DENY wins."""
 
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import AdminOverride, AdminRole
 
 CAPABILITIES = (

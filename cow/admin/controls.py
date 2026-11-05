@@ -10,9 +10,9 @@ from django.http import JsonResponse
 from ninja import Query, Schema
 from pydantic import ConfigDict, Field
 
-from cow.api_contracts import AckEnvelope
+from cow.common.contracts import AckEnvelope
 from cow.api_parity_responses import (PricingEnvelope, PricingHistoryEnvelope, PricingListEnvelope)
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import Principal
 from cow.pricing_contract import Draft
 from cow.services import admin_rbac, idempotency, pricing_admin, rbac

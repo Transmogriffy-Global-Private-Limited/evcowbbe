@@ -5,7 +5,7 @@ from django.db import transaction
 from ninja import Schema
 from pydantic import ConfigDict, Field
 
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import Charger, HALCommand, ServiceJob
 from cow.services import idempotency, rbac
 

@@ -6,7 +6,7 @@ then proves a verified active manager still exists before commit.
 """
 import unicodedata
 from django.db import connection, transaction
-from cow.errors import reject
+from cow.common.errors import reject
 from cow.models import AdminOverride, AdminRole, AuditEvent, Principal
 from cow.services import rbac
 
