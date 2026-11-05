@@ -1,10 +1,8 @@
-from ninja.errors import HttpError
+"""Historical common error import shim.
 
-class DomainError(HttpError):
-    def __init__(self, status: int, code: str, message: str):
-        super().__init__(status, message)
-        self.code = code
+New code must import from cow.common.errors."""
 
-
-def reject(status, code, message):
-    raise DomainError(status, code, message)
+from cow.common.errors import (
+    DomainError as DomainError,
+    reject as reject,
+)

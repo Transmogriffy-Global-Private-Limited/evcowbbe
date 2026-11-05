@@ -43,6 +43,11 @@ The Go-to-Python wire-compatibility work is preserved under
 `docs/verification/go-python-parity-20261102/`. Static path/method equivalence
 is not a claim of completed business behavior parity.
 
+## Repository structure and onboarding
+
+Read [Role module architecture](docs/ROLE_MODULE_ARCHITECTURE_20261105.md) before changing user, driver or shared business code. The user, driver and Admin role packages, plus shared `cow/common/`,
+share a single ORM schema, security implementation and Django Ninja API.
+
 ## Local development
 
 Install Python 3.12-3.14 in a fresh venv. The authoritative dependency ranges

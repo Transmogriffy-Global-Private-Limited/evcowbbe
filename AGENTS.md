@@ -52,6 +52,20 @@ blueprint for unfinished business areas. API path-level parity is not proof of
 business behavior parity. OpenAPI is public at `/openapi.yaml` and
 `/api/openapi.json`.
 
+## Role modules and change ownership
+
+This repository has one Django app and one centrally managed ORM schema. Feature modules
+`cow/users/`, `cow/drivers/` and `cow/admin/` own role-specific HTTP routes while `cow/api.py` composes
+the single NinjaAPI. See `docs/ROLE_MODULE_ARCHITECTURE_20261105.md` for the
+ownership map, contracts, branch workflow, tests and non-activation boundaries.
+`cow/common/` owns shared HTTP contracts/errors while `cow/services/`,
+`cow/domain/`, central models/migrations and HAL own their specific shared
+business concerns. Do not duplicate shared auth, wallet, GST, tariff,
+dispatch or HAL logic.
+The `main` branch remains the baseline for the deployed development service;
+feature branches are isolated source-development checkpoints and require review
+before any merge or runtime adoption.
+
 ## Cleanup and rollback
 
 Clean only explicitly enumerated former EVCOWBBE scratch DBs. Confirm service,

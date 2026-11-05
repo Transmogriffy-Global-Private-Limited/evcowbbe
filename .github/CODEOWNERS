@@ -1,0 +1,12 @@
+# Core review owner for every module; branch rulesets needed for enforcement.
+* @AnubhabDey-TransEV
+/cow/users/ @AnubhabDey-TransEV
+/cow/drivers/ @AnubhabDey-TransEV
+/cow/admin/ @AnubhabDey-TransEV
+/cow/common/ @AnubhabDey-TransEV
+/cow/models.py @AnubhabDey-TransEV
+/cow/models_zone.py @AnubhabDey-TransEV
+/cow/migrations/ @AnubhabDey-TransEV
+/cow/domain/ @AnubhabDey-TransEV
+/cow/services/ @AnubhabDey-TransEV
+/cow/hal/ @AnubhabDey-TransEV

@@ -76,7 +76,7 @@ class CustomerContractTests(unittest.TestCase):
         self.assertEqual(ProfilePatch.model_validate({"phone": "+919876543210"}).phone, "+919876543210")
 
     def test_thirteen_routes_are_defined_and_immutable_snapshots_not_rewritten(self):
-        src = (ROOT / "cow/customer_api.py").read_text()
+        src = (ROOT / "cow/users/master.py").read_text()
         expected = (
             '"/profile"', '"/vehicles"', '"/vehicles/{vehicle_id}"',
             '"/addresses"', '"/addresses/{address_id}"',
