@@ -49,8 +49,10 @@ def json_call(client, method, path, body, who, *, version=None, key=None):
 def test_unverified_account_is_denied_even_with_valid_session():
     customer = principal(verified=False)
     response = Client().get("/api/v1/app/me", **auth_headers(customer))
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "ACCOUNT_NOT_READY"
+    # Protected bearer reads intentionally use the generic invalid-credential
+    # response instead of disclosing an unverified account status.
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
 
 
 def test_profile_is_owner_only_versioned_and_auth_fields_immutable():
@@ -58,9 +60,11 @@ def test_profile_is_owner_only_versioned_and_auth_fields_immutable():
     another = principal()
     driver = principal("driver")
     client = Client()
-    before = client.get("/api/v1/app/me", **auth_headers(app))
+    # Identity GET /me intentionally has a frozen auth envelope; customer
+    # master data is served by its own GET /profile endpoint.
+    before = client.get("/api/v1/app/profile", **auth_headers(app))
     assert before.status_code == 200
-    assert before.json()["data"]["profile"]["version"] == 0
+    assert before.json()["data"]["version"] == 0
     assert client.get("/api/v1/app/me", **auth_headers(driver)).status_code == 403
     wrong = json_call(client, "patch", "/api/v1/app/profile", {"email": "x@example.test"}, app,
                       version=0, key="x" * 16)

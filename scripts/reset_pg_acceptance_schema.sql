@@ -126,11 +126,20 @@ SELECT (
         '0006_customer_master_parity',
         '0007_rbac_pricing_consequential_parity'
     ]::text[]
+    OR names = ARRAY[
+        '0001_initial', '0002_business_invariants',
+        '0003_admin_fleet_vehicle_parity',
+        '0004_admin_charger_connector_pairing_parity',
+        '0005_admin_rbac_pricing_parity',
+        '0006_customer_master_parity',
+        '0007_rbac_pricing_consequential_parity',
+        '0008_zone_commercial_registry'
+    ]::text[]
 ) AS cow_ledger_allowed
 FROM ledger \gset
 \if :cow_ledger_allowed
 \else
-\echo 'REFUSED: Cow migration history is neither the reviewed 0003, 0004 nor 0005 ledger'
+\echo 'REFUSED: Cow migration history is neither the reviewed 0003 through 0008 ledger'
 DO $cow_guard$ BEGIN RAISE EXCEPTION 'COW_TEST_RESET_REFUSED'; END $cow_guard$;
 \endif
 SELECT NOT EXISTS (
@@ -149,7 +158,8 @@ SELECT NOT EXISTS (
           'cow_chargerconnector', 'cow_vehiclechargerpairing', 'cow_driverprofile',
           'cow_dutysession', 'cow_pricingpolicy', 'cow_servicerequest', 'cow_quote',
           'cow_servicejob', 'cow_jobevent', 'cow_chargingsession', 'cow_halcommand',
-          'cow_halfact', 'cow_meterobservation', 'cow_vehiclemaintenanceperiod', 'cow_chargermaintenanceperiod'
+          'cow_halfact', 'cow_meterobservation', 'cow_vehiclemaintenanceperiod', 'cow_chargermaintenanceperiod',
+          'cow_servicezone', 'cow_dutyzoneassignment', 'cow_chargerzoneassignment', 'cow_zonegstassignment', 'cow_zonetariffpayload'
       )
 ) AS public_objects_allowed \gset
 \if :public_objects_allowed

@@ -5,7 +5,6 @@
 /cow/admin/ @AnubhabDey-TransEV
 /cow/common/ @AnubhabDey-TransEV
 /cow/models.py @AnubhabDey-TransEV
-/cow/models_zone.py @AnubhabDey-TransEV
 /cow/migrations/ @AnubhabDey-TransEV
 /cow/domain/ @AnubhabDey-TransEV
 /cow/services/ @AnubhabDey-TransEV

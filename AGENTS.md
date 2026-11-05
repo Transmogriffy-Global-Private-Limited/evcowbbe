@@ -70,6 +70,16 @@ before any merge or runtime adoption.
 
 `main` is the reviewed source baseline; `anubhab-work` is the backend owner branch; `abhranil-pal-evcowbbe` is the user-module contributor branch. There are no other active Git branch heads after consolidation. Review into `main`, never deploy solely because a branch advanced. The exact route/schema/ownership boundaries are in `docs/ROLE_MODULE_ARCHITECTURE_20261105.md`. Changes to shared contracts/schema require core review. Removed legacy wrapper modules must never be reintroduced.
 
+## Schema-first development contract
+
+`cow/models.py` is the single authoritative Django ORM schema. Never create
+models or migrations in role directories. Generate migrations using
+`makemigrations` via `scripts/db.ps1`; review and version-control generated
+files. For triggers/complex SQL, add a separately reviewed reversible RunSQL
+operation. `scripts/run_pg_tests.py` targets `0008` in the marker-verified
+disposable DB. VPS2 schema mutation remains forbidden through ordinary rehost;
+see `docs/DATABASE_SCHEMA_WORKFLOW.md` for migration/recovery acceptance.
+
 ## Cleanup and rollback
 
 Clean only explicitly enumerated former EVCOWBBE scratch DBs. Confirm service,

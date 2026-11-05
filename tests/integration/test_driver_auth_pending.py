@@ -33,7 +33,8 @@ def test_pending_driver_login_me_refresh_and_absolute_expiry():
     assert auth.authenticate(tokens["access_token"], "driver").id == p.id
     response = Client().get("/api/v1/driver/me", HTTP_AUTHORIZATION=f"Bearer {tokens['access_token']}")
     assert response.status_code == 200, response.content
-    assert response.json()["data"]["status"] == "PENDING"
+    # /me uses the shared, documented principal_status field.
+    assert response.json()["data"]["principal_status"] == "PENDING"
     refreshed, error = auth.refresh("driver", tokens["refresh_token"])
     assert error is None, error
     assert refreshed["tokens"]["access_token"] != tokens["access_token"]
@@ -43,7 +44,8 @@ def test_pending_driver_login_me_refresh_and_absolute_expiry():
     with pytest.raises(DomainError):
         auth.authenticate(refreshed["tokens"]["access_token"], "driver")
     denied, error = auth.refresh("driver", refreshed["tokens"]["refresh_token"])
-    assert denied is None and error == "UNAUTHORIZED"
+    # Revoked/expired refresh credentials are masked as invalid credentials.
+    assert denied is None and error == "INVALID_CREDENTIALS"
 
 
 def test_unverified_suspended_and_other_plane_pending_remain_ineligible():
@@ -58,7 +60,9 @@ def test_unverified_suspended_and_other_plane_pending_remain_ineligible():
         with pytest.raises(DomainError):
             auth.authenticate(issued["access_token"], plane)
         renewed, err = auth.refresh(plane, issued["refresh_token"])
-        assert renewed is None and err == "ACCOUNT_NOT_READY"
+        # Never reveal whether the rejected refresh belonged to a
+        # suspended or unverified principal.
+        assert renewed is None and err == "INVALID_CREDENTIALS"
 
 
 def test_pending_driver_2fa_completion_and_suspension_gate():

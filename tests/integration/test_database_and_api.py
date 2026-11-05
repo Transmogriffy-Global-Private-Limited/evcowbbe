@@ -21,11 +21,11 @@ def principal(plane="app"):
 
 
 def headers(p):
-    access="test-access-"+uuid4().hex
-    AuthSession.objects.create(principal=p,access_digest=auth.digest(access),refresh_digest=auth.digest(uuid4().hex),
-        access_expires_at=timezone.now()+timedelta(minutes=15),
-        refresh_expires_at=timezone.now()+timedelta(days=1),absolute_expires_at=timezone.now()+timedelta(days=30))
-    return {"HTTP_AUTHORIZATION":"Bearer "+access}
+    # Use real 43-byte opaque bearer tokens, not the previous 44-byte
+    # test-access-<uuid> string rejected at the credential length gate.
+    access = auth.make_tokens(p)["access_token"]
+    assert len(access.encode("utf-8")) == 43
+    return {"HTTP_AUTHORIZATION": "Bearer " + access}
 
 
 def test_cross_plane_customer_vehicle_blocked_by_db_trigger():

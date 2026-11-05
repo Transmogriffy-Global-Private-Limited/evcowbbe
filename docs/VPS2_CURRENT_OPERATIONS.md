@@ -85,6 +85,14 @@ rows, mail deliveries or third-party effects; a failed rollback is left for
 operator reconciliation, never recursively retried.
 
 **Schema migrations:** NOT automated by this code-only deploy procedure.
+
+For a migration-bearing revision, use the **read-only** review evidence tool
+`python3 ops/vps2/schema_review.py --prior-source <path> --candidate-source <path>`
+(on an operator-approved offline path set). This reports migration file diffs
+and refuses to execute SQL. Never bypass `rehost-evcowbbe` schema hash gate.
+Do not perform live schema changes until a separately tested, approved
+backup/restore, lock/quiescence, migration and runtime compatibility operator
+has been implemented. See `docs/DATABASE_SCHEMA_WORKFLOW.md`.
 Do not manually bypass its migration hash comparison. Plan a project-specific
 reviewed database backup, migration/restore, compatibility and rollback stage
 before deploying a revision that changes Django migrations.

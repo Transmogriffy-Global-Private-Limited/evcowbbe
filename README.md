@@ -58,6 +58,13 @@ share a single ORM schema, security implementation and Django Ninja API.
 
 There are **no other active branch heads** after consolidation. Routes live in `cow/{users,drivers,admin}/`; common HTTP contracts/errors live in `cow/common/`; services/domain/models/migrations remain central. See `docs/ROLE_MODULE_ARCHITECTURE_20261105.md` for the sole ownership map. Old Go reports and static parity tests are historical evidence; do not treat them as a second runtime. Git source updates alone do not migrate or deploy VPS2.
 
+## Database schema
+
+`cow/models.py` is the **single canonical ORM schema**. Run `scripts/db.ps1 check`
+before committing model changes and `scripts/db.ps1 generate --name <label>` to
+create Django migrations with `makemigrations`. Never edit an applied migration;
+use the reviewed schema workflow in `docs/DATABASE_SCHEMA_WORKFLOW.md`.
+
 ## Local development
 
 Install Python 3.12-3.14 in a fresh venv. The authoritative dependency ranges

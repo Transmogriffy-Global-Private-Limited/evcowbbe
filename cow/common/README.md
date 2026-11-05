@@ -5,7 +5,7 @@
 - `cow/services/`: canonical shared stateful application services (including
   authentication, RBAC, pricing, idempotency, dispatch/job workflows).
 - `cow/domain/`: shared pure rules and composite commercial contracts.
-- `cow/models.py`, `cow/models_zone.py`, `cow/migrations/`: **central schema**.
+- `cow/models.py`, `cow/migrations/`: **central schema**.
 - `cow/hal/`: centrally controlled charging hardware integration.
 
 `common` is *not* a second Django app, not a second business ledger, and not a

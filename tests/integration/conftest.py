@@ -9,7 +9,7 @@ def pytest_collection_modifyitems(config, items):
     if any(item.get_closest_marker("postgres") for item in items):
         if os.environ.get("COW_PG_TEST_HARNESS_READY") != "1":
             raise pytest.UsageError(
-                "PostgreSQL integration tests must run through scripts/run_pg_tests.py"
+                "PostgreSQL integration tests require a positively verified acceptance harness"
             )
 
 

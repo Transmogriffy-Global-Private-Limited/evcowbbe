@@ -10,6 +10,19 @@ from django.db import connection
 pytestmark = [pytest.mark.postgres, pytest.mark.django_db(transaction=True)]
 
 EXPECTED_CONSTRAINTS = {
+    "cow_zone_key_revision_unique",
+    "cow_zone_version_positive",
+    "cow_zone_radius_positive",
+    "cow_zone_lat_range",
+    "cow_zone_lon_range",
+    "cow_zone_valid_window",
+    "cow_duty_zone_start_unique",
+    "cow_duty_zone_valid_window",
+    "cow_charger_zone_start_unique",
+    "cow_charger_zone_valid_window",
+    "cow_zone_gst_version_unique",
+    "cow_zone_gst_ver_positive",
+    "cow_zone_gst_valid_window",
     "cow_email_lower",
     "cow_principal_per_plane",
     "cow_one_role_assignment",
@@ -37,6 +50,11 @@ EXPECTED_CONSTRAINTS = {
     "cow_charger_maintenance_range",
 }
 EXPECTED_TRIGGERS = {
+    "cow_zone_identity_guard",
+    "cow_duty_zone_guard",
+    "cow_charger_zone_guard",
+    "cow_zone_gst_guard",
+    "cow_zone_tariff_payload_guard",
     "cow_app_vehicle_plane",
     "cow_app_address_plane",
     "cow_app_request_plane",
@@ -58,6 +76,10 @@ EXPECTED_TRIGGERS = {
     "cow_customer_profile_guard",
 }
 EXPECTED_FUNCTIONS = {
+    "cow_zone_identity_guard",
+    "cow_zone_assignment_guard",
+    "cow_zone_gst_guard",
+    "cow_zone_tariff_payload_guard",
     "cow_guard_principal_plane",
     "cow_guard_job_quote",
     "cow_protect_quote_truth",
@@ -97,6 +119,15 @@ EXPECTED_INDEXES = (
         "cow_pairing_lifecycle",
         "cow_charger_maintenance_range",
         "cow_admin_pricing_window",
+        "cow_zone_version_positive",
+        "cow_zone_radius_positive",
+        "cow_zone_lat_range",
+        "cow_zone_lon_range",
+        "cow_zone_valid_window",
+        "cow_duty_zone_valid_window",
+        "cow_charger_zone_valid_window",
+        "cow_zone_gst_ver_positive",
+        "cow_zone_gst_valid_window",
     }
     | EXPECTED_PARTIAL_UNIQUE_INDEXES
     | {"cow_vehicle_maint_window", "cow_charger_maint_window"}
@@ -224,5 +255,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0005_admin_rbac_pricing_parity",
         "0006_customer_master_parity",
         "0007_rbac_pricing_consequential_parity",
+        "0008_zone_commercial_registry",
     )
     assert after == before

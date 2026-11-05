@@ -38,6 +38,7 @@ MIGRATIONS_0004 = MIGRATIONS_0003 + ("0004_admin_charger_connector_pairing_parit
 MIGRATIONS_0005 = MIGRATIONS_0004 + ("0005_admin_rbac_pricing_parity",)
 MIGRATIONS_0006 = MIGRATIONS_0005 + ("0006_customer_master_parity",)
 MIGRATIONS_0007 = MIGRATIONS_0006 + ("0007_rbac_pricing_consequential_parity",)
+MIGRATIONS_0008 = MIGRATIONS_0007 + ("0008_zone_commercial_registry",)
 FRAMEWORK_TABLES = {
     "auth_group",
     "auth_group_permissions",
@@ -87,6 +88,19 @@ TRIGGERS_0006 = TRIGGERS_0005 | {
     "cow_customer_vehicle_guard", "cow_customer_address_guard", "cow_customer_profile_guard",
 }
 FUNCTIONS_0006 = FUNCTIONS_0005 | {"cow_customer_master_guard", "cow_customer_profile_guard"}
+TRIGGERS_0008 = TRIGGERS_0006 | {
+    "cow_zone_identity_guard",
+    "cow_duty_zone_guard",
+    "cow_charger_zone_guard",
+    "cow_zone_gst_guard",
+    "cow_zone_tariff_payload_guard",
+}
+FUNCTIONS_0008 = FUNCTIONS_0006 | {
+    "cow_zone_identity_guard",
+    "cow_zone_assignment_guard",
+    "cow_zone_gst_guard",
+    "cow_zone_tariff_payload_guard",
+}
 UPGRADE_ACTIVE_PAIRING_ID = uuid.UUID("a1136314-7d21-4a21-8001-000000000001")
 UPGRADE_CLOSED_PAIRING_ID = uuid.UUID("a1136314-7d21-4a21-8001-000000000002")
 UPGRADE_ACTIVE_FROM = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
@@ -100,7 +114,7 @@ def parse_args() -> argparse.Namespace:
     modes.add_argument(
         "--fresh",
         action="store_true",
-        help="require an empty public schema, then accept fresh 0001 through 0007",
+        help="require an empty public schema, then accept fresh 0001 through 0008",
     )
     modes.add_argument(
         "--prepare-upgrade-fixture",
@@ -115,7 +129,7 @@ def parse_args() -> argparse.Namespace:
     modes.add_argument(
         "--existing",
         action="store_true",
-        help="accept an already-migrated 0007 test schema without migration or reset",
+        help="accept an already-migrated 0008 test schema without migration or reset",
     )
     modes.add_argument(
         "--upgrade-0004-to-0005",
@@ -130,6 +144,10 @@ def parse_args() -> argparse.Namespace:
     modes.add_argument(
         "--upgrade-0006-to-0007", action="store_true",
         help="guarded additive 0006 to 0007 pricing trigger update",
+    )
+    modes.add_argument(
+        "--upgrade-0007-to-0008", action="store_true",
+        help="marker-verified empty 0007 to 0008 Zone schema rehearsal",
     )
     # Keep a dangerous historical invocation fail-closed rather than silently
     # accepting it. It deliberately has no implementation path.
@@ -147,6 +165,7 @@ def parse_args() -> argparse.Namespace:
         or args.upgrade_0004_to_0005
         or args.upgrade_0005_to_0006
         or args.upgrade_0006_to_0007
+        or args.upgrade_0007_to_0008
     ):
         args.fresh = True
     return args
@@ -303,6 +322,10 @@ def assert_expected_schema(connection, migration: str) -> None:
         expected_triggers, expected_functions = TRIGGERS_0005, FUNCTIONS_0005
     elif migration == "0006_customer_master_parity":
         expected_triggers, expected_functions = TRIGGERS_0006, FUNCTIONS_0006
+    elif migration == "0007_rbac_pricing_consequential_parity":
+        expected_triggers, expected_functions = TRIGGERS_0006, FUNCTIONS_0006
+    elif migration == "0008_zone_commercial_registry":
+        expected_triggers, expected_functions = TRIGGERS_0008, FUNCTIONS_0008
     else:
         raise TestDatabaseError("unsupported Cow schema assertion target")
     with connection.cursor() as cursor:
@@ -445,9 +468,18 @@ def main() -> int:
         verify_observed_database(target, identity, role, observe_database(connection))
         assert_allowed_schemas(connection)
         if args.existing:
-            assert_cow_migration_history(connection, MIGRATIONS_0007)
-            assert_expected_schema(connection, "0006_customer_master_parity")
+            assert_cow_migration_history(connection, MIGRATIONS_0008)
+            assert_expected_schema(connection, "0008_zone_commercial_registry")
             assert_cow_tables_empty(connection)
+            return run_pytest("tests/integration")
+        if args.upgrade_0007_to_0008:
+            assert_cow_migration_history(connection, MIGRATIONS_0007)
+            assert_expected_schema(connection, "0007_rbac_pricing_consequential_parity")
+            assert_cow_tables_empty(connection)
+            call_command("migrate", "cow", "0008_zone_commercial_registry",
+                         interactive=False, verbosity=1)
+            assert_cow_migration_history(connection, MIGRATIONS_0008)
+            assert_expected_schema(connection, "0008_zone_commercial_registry")
             return run_pytest("tests/integration")
         if args.upgrade_0006_to_0007:
             assert_cow_migration_history(connection, MIGRATIONS_0006)
@@ -456,8 +488,8 @@ def main() -> int:
             call_command("migrate", "cow", "0007_rbac_pricing_consequential_parity",
                          interactive=False, verbosity=1)
             assert_cow_migration_history(connection, MIGRATIONS_0007)
-            assert_expected_schema(connection, "0006_customer_master_parity")
-            return run_pytest("tests/integration")
+            assert_expected_schema(connection, "0007_rbac_pricing_consequential_parity")
+            return run_pytest("tests/integration/test_admin_rbac_pricing.py")
         if args.upgrade_0005_to_0006:
             assert_cow_migration_history(connection, MIGRATIONS_0005)
             assert_expected_schema(connection, "0005_admin_rbac_pricing_parity")
@@ -501,8 +533,8 @@ def main() -> int:
             return run_pytest("tests/integration/test_pairing_upgrade.py")
         assert_application_schema_empty(connection)
         call_command("migrate", interactive=False, verbosity=1)
-        assert_cow_migration_history(connection, MIGRATIONS_0007)
-        assert_expected_schema(connection, "0006_customer_master_parity")
+        assert_cow_migration_history(connection, MIGRATIONS_0008)
+        assert_expected_schema(connection, "0008_zone_commercial_registry")
         before = cow_migration_names(connection)
         call_command("migrate", interactive=False, verbosity=1)
         if cow_migration_names(connection) != before:

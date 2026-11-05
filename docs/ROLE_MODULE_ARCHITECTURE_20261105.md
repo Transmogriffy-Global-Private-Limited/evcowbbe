@@ -15,7 +15,7 @@ identity, authorization, idempotency, pricing, wallet and HAL domain.
 | Common HTTP types and errors | `cow/common/contracts.py`, `cow/common/errors.py` | internal only | backend/core owner |
 | Shared stateful services | `cow/services/` | internal only | backend/core owner |
 | Shared pure business rules | `cow/domain/` | internal only | backend/core owner |
-| Central models/migrations | `cow/models.py`, `cow/models_zone.py`, `cow/migrations/` | internal only | backend/core owner |
+| Central models/migrations | `cow/models.py`, `cow/migrations/` | internal only | backend/core owner |
 | Auth/plane/OTP route assembly | `cow/api.py`, `cow/services/auth.py` | `/api/v1/{app,driver,admin}` | backend/core owner |
 | HAL | `cow/hal/` | internal signed facts only | backend/core owner |
 | Public contract | `cow/api.py`, `cow/fe_openapi.py`, `config/urls.py` | `/openapi.yaml`, `/api/openapi.json` | backend/core owner |
@@ -28,7 +28,7 @@ identity, authorization, idempotency, pricing, wallet and HAL domain.
 - Admin review/approvals, control-plane endpoint -> `cow/admin/`.
 - Shared response/error type -> `cow/common/`; shared business policy ->
   `cow/domain/`; shared transactional use case -> `cow/services/`.
-- A new table/column/index -> central `cow/models*.py` and `cow/migrations/`.
+- A new table/column/index -> central `cow/models.py` and `cow/migrations/`.
 - A physical charging action -> `cow/hal/` plus authorized shared service,
   never directly from an untrusted role route.
 

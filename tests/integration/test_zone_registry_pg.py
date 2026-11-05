@@ -2,7 +2,7 @@
 
 These are not launched by install, nor by generic unittest discover.
 On the disposable DB, after reviewed 0008 migration, invoke:
-python -m pytest tests/integration_zone_registry_pg.py -q
+python -m pytest tests/integration/test_zone_registry_pg.py -q
 """
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -15,7 +15,7 @@ from cow.domain.zone_tariff_convergence import TrustedCommercialContext
 from cow.models import Account, Principal, ServiceZone, ZoneGSTAssignment
 from cow.services.zone_commercial_registry import approved_zone_gst
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [pytest.mark.postgres, pytest.mark.django_db]
 AT = datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc)
 
 

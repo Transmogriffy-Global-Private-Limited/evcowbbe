@@ -10,7 +10,7 @@ ROOT = Path(__file__).parents[1]
 
 class MigrationParity(unittest.TestCase):
     def test_migration_lineage_model_and_field_coverage(self):
-        sources = [ast.parse((ROOT / "cow" / filename).read_text()) for filename in ("models.py", "models_zone.py")]
+        sources = [ast.parse((ROOT / "cow/models.py").read_text())]
         nodes = [node for source in sources for node in source.body]
         model_fields = {}
         inherited = []
@@ -110,6 +110,7 @@ class MigrationParity(unittest.TestCase):
             "0003_admin_fleet_vehicle_parity.py",
             "0004_admin_charger_connector_pairing_parity.py",
             "0006_customer_master_parity.py",
+            "0008_zone_commercial_registry.py",
         ):
             migration = ast.parse((ROOT / "cow/migrations" / name).read_text())
             for node in ast.walk(migration):

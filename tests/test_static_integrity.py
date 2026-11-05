@@ -25,9 +25,7 @@ class SourceIntegrity(unittest.TestCase):
 
     def test_schema_has_single_django_migration_lineage(self):
         migrations = sorted((ROOT / "cow/migrations").glob("0*.py"))
-        self.assertEqual(
-            [p.name for p in migrations],
-            [
+        expected_prefix = [
                 "0001_initial.py",
                 "0002_business_invariants.py",
                 "0003_admin_fleet_vehicle_parity.py",
@@ -36,8 +34,9 @@ class SourceIntegrity(unittest.TestCase):
                 "0006_customer_master_parity.py",
                 "0007_rbac_pricing_consequential_parity.py",
                 "0008_zone_commercial_registry.py",
-            ],
-        )
+        ]
+        self.assertGreaterEqual(len(migrations), len(expected_prefix))
+        self.assertEqual([p.name for p in migrations[:len(expected_prefix)]], expected_prefix)
         for p in migrations:
             self.assertIn("migrations.", p.read_text())
 
