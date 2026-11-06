@@ -105,6 +105,7 @@ EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_session_per_connector",
     "cow_one_active_pairing_per_charger",
     "cow_admin_pricing_revision_unique",
+    "cow_zone_single_published_key",
 }
 EXPECTED_PG_CONSTRAINTS = EXPECTED_CONSTRAINTS - EXPECTED_PARTIAL_UNIQUE_INDEXES
 EXPECTED_INDEXES = (
@@ -256,5 +257,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0006_customer_master_parity",
         "0007_rbac_pricing_consequential_parity",
         "0008_zone_commercial_registry",
+        "0009_zone_admin_operations",
     )
     assert after == before
