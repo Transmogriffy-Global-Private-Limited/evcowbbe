@@ -1,4 +1,9 @@
-"""Go-compatible Admin RBAC and tariff endpoints; every check is server-side."""
+"""Admin RBAC and legacy pricing tombstones.
+
+Only Zone composite tariffs are a supported Admin tariff mode. Old generic
+pricing URLs remain 410 Gone for explicit migration feedback, not as a second
+contract in Swagger.
+"""
 
 import re
 from typing import Literal
@@ -158,8 +163,9 @@ def register(router):
             "data": admin_rbac.clear_override(request.auth, account_id, capability, payload.reason)
         }
 
-    @router.get("/pricing/policies", operation_id="adminPricingList", response={200: PricingListEnvelope})
+    @router.get("/pricing/policies", include_in_schema=False, operation_id="adminPricingList", response={200: PricingListEnvelope})
     def list_pricing(request, status: str = "", limit: int = Query(50, ge=1, le=100)):
+        reject(410, "GENERIC_PRICING_RETIRED", "Only Zone composite tariff APIs are supported; use /api/v1/admin/zones/tariffs")
         rbac.require(request.auth, "pricing.read")
         if (
             status not in {"", "DRAFT", "PUBLISHED", "WITHDRAWN"}
@@ -169,8 +175,9 @@ def register(router):
             reject(422, "VALIDATION_FAILED", "Invalid tariff listing filter")
         return {"data": pricing_admin.list_policies(status, limit)}
 
-    @router.post("/pricing/policies", response={201: PricingEnvelope}, operation_id="adminPricingCreateDraft")
+    @router.post("/pricing/policies", include_in_schema=False, response={201: PricingEnvelope}, operation_id="adminPricingCreateDraft")
     def create_pricing(request, payload: Draft):
+        reject(410, "GENERIC_PRICING_RETIRED", "Only Zone composite tariff APIs are supported; use /api/v1/admin/zones/tariffs")
         rbac.require(request.auth, "pricing.manage")
         _json(request)
         key = _key(request)
@@ -190,13 +197,15 @@ def register(router):
         response["ETag"] = f'"{body["data"]["state_version"]}"'
         return response
 
-    @router.get("/pricing/policies/{policy_id}", operation_id="adminPricingGet", response={200: PricingEnvelope})
+    @router.get("/pricing/policies/{policy_id}", include_in_schema=False, operation_id="adminPricingGet", response={200: PricingEnvelope})
     def get_pricing(request, policy_id: UUID):
+        reject(410, "GENERIC_PRICING_RETIRED", "Only Zone composite tariff APIs are supported; use /api/v1/admin/zones/tariffs")
         rbac.require(request.auth, "pricing.read")
         return _policy_response(pricing_admin.get(policy_id))
 
-    @router.get("/pricing/policies/{policy_id}/history", operation_id="adminPricingHistory", response={200: PricingHistoryEnvelope})
+    @router.get("/pricing/policies/{policy_id}/history", include_in_schema=False, operation_id="adminPricingHistory", response={200: PricingHistoryEnvelope})
     def pricing_history(request, policy_id: UUID):
+        reject(410, "GENERIC_PRICING_RETIRED", "Only Zone composite tariff APIs are supported; use /api/v1/admin/zones/tariffs")
         rbac.require(request.auth, "pricing.read")
         rbac.require(request.auth, "audit.read")
         return {"data": pricing_admin.history(policy_id)}
@@ -228,10 +237,12 @@ def register(router):
         response["ETag"] = f'"{body["data"]["state_version"]}"'
         return response
 
-    @router.post("/pricing/policies/{policy_id}/publish", operation_id="adminPricingPublish", response={200: PricingEnvelope})
+    @router.post("/pricing/policies/{policy_id}/publish", include_in_schema=False, operation_id="adminPricingPublish", response={200: PricingEnvelope})
     def publish_pricing(request, policy_id: UUID, payload: Reason):
+        reject(410, "GENERIC_PRICING_RETIRED", "Only Zone composite tariff APIs are supported; use /api/v1/admin/zones/tariffs")
         return transition(request, policy_id, payload, "publish")
 
-    @router.post("/pricing/policies/{policy_id}/withdraw", operation_id="adminPricingWithdraw", response={200: PricingEnvelope})
+    @router.post("/pricing/policies/{policy_id}/withdraw", include_in_schema=False, operation_id="adminPricingWithdraw", response={200: PricingEnvelope})
     def withdraw_pricing(request, policy_id: UUID, payload: Reason):
+        reject(410, "GENERIC_PRICING_RETIRED", "Only Zone composite tariff APIs are supported; use /api/v1/admin/zones/tariffs")
         return transition(request, policy_id, payload, "withdraw")

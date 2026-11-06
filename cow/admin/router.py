@@ -7,6 +7,7 @@ from ninja import Router
 
 from cow.admin.controls import register as register_admin_controls
 from cow.admin.jobs import register_job_routes
+from cow.admin.zones import register as register_zone_routes
 
 
 def build_router(auth_backend, mount_identity, mount_otp) -> Router:
@@ -14,5 +15,6 @@ def build_router(auth_backend, mount_identity, mount_otp) -> Router:
     mount_identity(router, "admin")
     register_job_routes(router)
     register_admin_controls(router)
+    register_zone_routes(router)
     mount_otp(router, "admin")
     return router

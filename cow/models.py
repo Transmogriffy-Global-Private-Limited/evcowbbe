@@ -558,6 +558,7 @@ class ServiceZone(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["zone_key", "version"], name="cow_zone_key_revision_unique"),
+            models.UniqueConstraint(fields=["zone_key"], condition=Q(status="PUBLISHED"), name="cow_zone_single_published_key"),
             models.CheckConstraint(condition=Q(version__gt=0), name="cow_zone_version_positive"),
             models.CheckConstraint(condition=Q(radius_m__gt=0), name="cow_zone_radius_positive"),
             models.CheckConstraint(condition=Q(center_latitude__gte=-90) & Q(center_latitude__lte=90), name="cow_zone_lat_range"),

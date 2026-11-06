@@ -149,6 +149,10 @@ def add_source_verified_etag_contracts(schema: dict) -> dict:
 def add_source_verified_pricing_query_contracts(schema: dict) -> dict:
     """Describe status validation without changing the existing 422 path."""
     operation = schema.get("paths", {}).get("/api/v1/admin/pricing/policies", {}).get("get")
+    if operation is None:
+        # The generic editor was retired in favor of Zone-only tariffs.
+        # No query parameter exists to decorate when that route is hidden.
+        return schema
     if not isinstance(operation, dict):
         raise ValueError("Missing pricing list operation")
     matches = [p for p in operation.get("parameters", [])

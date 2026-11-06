@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from cow.admin.zone_openapi import (DESCRIPTIONS as ZONE_TAG_DESCRIPTIONS,
+    zone_tag, zone_openapi_intro, enrich_zone_operation)
 
 INTRO = """## Frontend integration guide (development API)
 
@@ -76,9 +78,9 @@ TAG_DESCRIPTIONS = {
     "14 | Admin charger connectors": "Admin connector inventory and configuration for registered chargers.",
     "15 | Admin vehicle-charger pairings": "Assignment/pairing lifecycle, subject to compatibility and concurrency guards.",
     "16 | Admin RBAC": "Admin capabilities, role grants/revokes and explicit per-account overrides. All authorization is checked server-side.",
-    "17 | Admin pricing policies": "Versioned Admin tariff policy draft, publication, withdrawal and history. Not proof of complete billing/GST/payment orchestration.",
-    "18 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
-    "19 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
+    **ZONE_TAG_DESCRIPTIONS,
+    "22 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
+    "23 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
 }
 
 PLANE = {"app": "Customer", "driver": "Driver", "admin": "Admin"}
@@ -111,12 +113,6 @@ KNOWN_SUMMARIES = {
     "adminFleetPairingsList": "List fleet pairings",
     "adminFleetPairCreate": "Pair vehicle and charger",
     "adminFleetPairEnd": "End vehicle-charger pairing",
-    "adminPricingList": "List tariff policies",
-    "adminPricingCreateDraft": "Create pricing draft",
-    "adminPricingGet": "Get pricing policy",
-    "adminPricingHistory": "Read pricing policy history",
-    "adminPricingPublish": "Publish pricing policy",
-    "adminPricingWithdraw": "Withdraw pricing policy",
 }
 
 AUTH_ACTIONS = {
@@ -187,11 +183,11 @@ def _tag(path: str) -> str:
         return "15 | Admin vehicle-charger pairings"
     if path.startswith("/api/v1/admin/rbac"):
         return "16 | Admin RBAC"
-    if path.startswith("/api/v1/admin/pricing/policies"):
-        return "17 | Admin pricing policies"
+    if path.startswith("/api/v1/admin/zones"):
+        return zone_tag(path)
     if path.startswith("/api/v1/internal/hal/"):
-        return "18 | HAL internal ingress"
-    return "19 | Other development endpoints"
+        return "22 | HAL internal ingress"
+    return "23 | Other development endpoints"
 
 
 def _summary(path: str, method: str, op: dict) -> str:
@@ -233,8 +229,6 @@ def _notes(path: str, method: str) -> list[str]:
         notes.append("**Principal:** Tokens are not interchangeable between the customer, driver and admin planes.")
     if "/rbac/" in path:
         notes.append("**Permissions:** Authorizations and role changes are enforced server-side; a visible FE control never grants permission.")
-    if "/pricing/policies" in path:
-        notes.append("**Commercial boundary:** Admin policy revisions are versioned. This is not a quote, captured payment, tax invoice or charging settlement.")
     if "/v1/admin/vehicles" in path or "/v1/admin/chargers" in path or "/v1/admin/pairings" in path:
         notes.append("**Fleet:** Use the resource's current ETag and a unique idempotency key for mutations where declared. Historical and availability views are separate from physical charger state.")
     if path.endswith("/history"):
@@ -540,6 +534,8 @@ def decorate_fe_schema(schema: dict) -> dict:
         info["description"] = (
             str(info.get("description", "")).strip() + "\n\n" + INTRO
         ).strip()
+    if "### Tariff authority: Zone composite only" not in str(info.get("description", "")):
+        info["description"] = str(info.get("description", "")).rstrip() + "\n\n" + zone_openapi_intro()
     info["x-documentation-role"] = "development-frontend-integration"
     # Same-origin relative URL works on the public host and in local tests.
     schema["servers"] = [{"url": "/", "description": "Same-origin development API"}]
@@ -574,11 +570,13 @@ def decorate_fe_schema(schema: dict) -> dict:
                 gap_operations.append(method.upper() + " " + path)
                 notes.append("**Documentation gap:** The success response is not fully typed in generated OpenAPI. Treat the documented HTTP route as implemented, but do not infer specific payload fields from an open-ended object schema. FE integration needs a typed, source-verified response contract.")
             operation["description"] = "\n\n".join(x for x in (existing, *notes) if x)
+            enrich_zone_operation(path, method.lower(), operation)
     schema["tags"] = [
         {"name": name, "description": description}
         for name, description in TAG_DESCRIPTIONS.items() if name in used
     ]
     schema["x-fe-documentation-version"] = "1"
+    schema["x-commercial-tariff-mode"] = "zone-composite-only"
     schema["x-fe-contract-coverage"] = {
         "operations": operation_count,
         "declared_success_shapes": operation_count - len(gap_operations),

@@ -99,6 +99,8 @@ def _record(policy):
 
 def resolve_trusted(scopes, at):
     """For server-authorized scope precedence only. Never take scopes from a client."""
+    if any(s.get("kind") in {"ZONE_ROAMING", "ZONE_ON_SITE_QR"} for s in scopes):
+        reject(409, "COMPOSITE_ZONE_TARIFF_REQUIRED", "Use the Zone composite resolver for Zone-owned pricing")
     from django.db.models import Q
     query = Q(pk__in=[])
     for scope in scopes:
@@ -132,6 +134,8 @@ def _audit(actor, policy, action, reason):
 
 
 def create(actor, draft: Draft):
+    if draft.scope.kind in {"ZONE_ROAMING", "ZONE_ON_SITE_QR"}:
+        reject(422, "ZONE_TARIFF_ENDPOINT_REQUIRED", "Use the composite Zone tariff authoring endpoint")
     try:
         with transaction.atomic():
             actor = _authorized_pricing_actor(actor)
@@ -185,12 +189,17 @@ def publish(actor, policy_id, version, reason):
         if p.ends_at is not None and p.ends_at <= timezone.now():
             reject(409, "PRICING_WINDOW_EXPIRED", "Cannot publish an expired window")
         others = list(PricingPolicy.objects.filter(status="PUBLISHED", scope=p.scope).exclude(id=p.id))
-        try:
-            validate_topology([_record(other) for other in others] + [
-                {**_record(p), "active": True}
-            ])
-        except PricingError:
-            reject(409, "PRICING_SCOPE_CONFLICT", "Published pricing windows are ambiguous")
+        if p.scope.get("kind") in {"ZONE_ROAMING", "ZONE_ON_SITE_QR"}:
+            # Zone payload+GST must be present; generic rules are intentionally empty.
+            from cow.services.zone_admin import validate_zone_publication
+            validate_zone_publication(p, others)
+        else:
+            try:
+                validate_topology([_record(other) for other in others] + [
+                    {**_record(p), "active": True}
+                ])
+            except PricingError:
+                reject(409, "PRICING_SCOPE_CONFLICT", "Published pricing windows are ambiguous")
         p.status = "PUBLISHED"
         p.state_version += 1
         p.save(update_fields=["status", "state_version", "updated_at"])

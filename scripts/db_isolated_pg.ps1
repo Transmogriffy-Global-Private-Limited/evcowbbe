@@ -237,6 +237,9 @@ try {
         Write-Host "`n=== MIGRATION 0008 FORWARD ==="
         & $python manage.py migrate cow 0008_zone_commercial_registry --noinput
         Assert-NativeSuccess 'migration 0008 forward'
+        Write-Host "`n=== MIGRATION 0009 ZONE ADMIN OPERATIONS ==="
+        & $python manage.py migrate cow 0009_zone_admin_operations --noinput
+        Assert-NativeSuccess 'migration 0009 forward'
 
         $catalogSQL = @'
 SELECT
@@ -269,8 +272,8 @@ SELECT
         Write-Host "`n=== MIGRATION 0008 REVERSE / REAPPLY ON DISPOSABLE DB ==="
         & $python manage.py migrate cow 0007_rbac_pricing_consequential_parity --noinput
         Assert-NativeSuccess 'migration 0008 reverse'
-        & $python manage.py migrate cow 0008_zone_commercial_registry --noinput
-        Assert-NativeSuccess 'migration 0008 reapply'
+        & $python manage.py migrate cow 0009_zone_admin_operations --noinput
+        Assert-NativeSuccess 'migration 0009 reapply'
         $after = (& $psql -X -w -A -t -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U $role -d $dbname -c $catalogSQL)
         Assert-NativeSuccess '0008 replay catalog query'
         if (($after | Select-Object -First 1).Trim() -ne '1|5|5|4') {

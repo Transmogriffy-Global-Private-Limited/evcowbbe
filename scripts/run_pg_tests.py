@@ -39,6 +39,7 @@ MIGRATIONS_0005 = MIGRATIONS_0004 + ("0005_admin_rbac_pricing_parity",)
 MIGRATIONS_0006 = MIGRATIONS_0005 + ("0006_customer_master_parity",)
 MIGRATIONS_0007 = MIGRATIONS_0006 + ("0007_rbac_pricing_consequential_parity",)
 MIGRATIONS_0008 = MIGRATIONS_0007 + ("0008_zone_commercial_registry",)
+MIGRATIONS_0009 = MIGRATIONS_0008 + ("0009_zone_admin_operations",)
 FRAMEWORK_TABLES = {
     "auth_group",
     "auth_group_permissions",
@@ -324,7 +325,7 @@ def assert_expected_schema(connection, migration: str) -> None:
         expected_triggers, expected_functions = TRIGGERS_0006, FUNCTIONS_0006
     elif migration == "0007_rbac_pricing_consequential_parity":
         expected_triggers, expected_functions = TRIGGERS_0006, FUNCTIONS_0006
-    elif migration == "0008_zone_commercial_registry":
+    elif migration in {"0008_zone_commercial_registry", "0009_zone_admin_operations"}:
         expected_triggers, expected_functions = TRIGGERS_0008, FUNCTIONS_0008
     else:
         raise TestDatabaseError("unsupported Cow schema assertion target")
@@ -345,6 +346,14 @@ def assert_expected_schema(connection, migration: str) -> None:
         actual_functions = {row[0] for row in cursor.fetchall()}
     if actual_triggers != expected_triggers or actual_functions != expected_functions:
         raise TestDatabaseError("Cow trigger/function catalog differs from the reviewed schema")
+    if migration == "0009_zone_admin_operations":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND tablename='cow_servicezone' AND indexname='cow_zone_single_published_key'")
+            if cursor.fetchone()[0] != 1:
+                raise TestDatabaseError("Sprint 7 single-published-zone constraint missing")
+            cursor.execute("SELECT pg_get_functiondef('public.cow_admin_pricing_guard()'::regprocedure)")
+            if 'Composite Zone tariff cannot masquerade' not in cursor.fetchone()[0]:
+                raise TestDatabaseError("Sprint 7 composite tariff policy guard missing")
     assert_no_cross_schema_dependencies(connection)
 
 
@@ -468,8 +477,8 @@ def main() -> int:
         verify_observed_database(target, identity, role, observe_database(connection))
         assert_allowed_schemas(connection)
         if args.existing:
-            assert_cow_migration_history(connection, MIGRATIONS_0008)
-            assert_expected_schema(connection, "0008_zone_commercial_registry")
+            assert_cow_migration_history(connection, MIGRATIONS_0009)
+            assert_expected_schema(connection, "0009_zone_admin_operations")
             assert_cow_tables_empty(connection)
             return run_pytest("tests/integration")
         if args.upgrade_0007_to_0008:
@@ -480,7 +489,8 @@ def main() -> int:
                          interactive=False, verbosity=1)
             assert_cow_migration_history(connection, MIGRATIONS_0008)
             assert_expected_schema(connection, "0008_zone_commercial_registry")
-            return run_pytest("tests/integration")
+            # This historical upgrade mode stops at 0008, before Sprint 7.
+            return run_pytest("tests/integration", "--ignore=tests/integration/test_zone_admin_pg.py")
         if args.upgrade_0006_to_0007:
             assert_cow_migration_history(connection, MIGRATIONS_0006)
             assert_expected_schema(connection, "0006_customer_master_parity")
@@ -533,8 +543,8 @@ def main() -> int:
             return run_pytest("tests/integration/test_pairing_upgrade.py")
         assert_application_schema_empty(connection)
         call_command("migrate", interactive=False, verbosity=1)
-        assert_cow_migration_history(connection, MIGRATIONS_0008)
-        assert_expected_schema(connection, "0008_zone_commercial_registry")
+        assert_cow_migration_history(connection, MIGRATIONS_0009)
+        assert_expected_schema(connection, "0009_zone_admin_operations")
         before = cow_migration_names(connection)
         call_command("migrate", interactive=False, verbosity=1)
         if cow_migration_names(connection) != before:

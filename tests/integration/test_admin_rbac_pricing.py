@@ -149,88 +149,18 @@ def test_rbac_catalog_grants_deny_and_last_admin_guards():
     assert denied_last.status_code == 409
 
 
-def test_pricing_draft_replay_publish_overlap_withdraw_immutability():
-    actor = principal("pricing-root")
-    reader = principal("pricing-reader", role="READ_ONLY")
+def test_generic_pricing_endpoints_are_retired():
+    actor = principal("pricing-retired")
     client = Client()
-    payload = draft()
-    created = post(client, "/api/v1/admin/pricing/policies", payload, actor)
-    assert created.status_code == 201, created.content
-    row = created.json()["data"]
-    assert created["ETag"] == '"1"'
-    replay = post(client, "/api/v1/admin/pricing/policies", payload, actor)
-    assert replay.status_code == 201 and replay.json() == created.json()
-    assert PricingPolicy.objects.filter(policy_key="STANDARD").count() == 1
-    clash = post(
-        client,
-        "/api/v1/admin/pricing/policies",
-        {**payload, "policy_version": 2},
-        actor,
-        key="v" * 16,
-    )
-    assert clash.status_code == 201
-    denied_create = post(
-        client, "/api/v1/admin/pricing/policies", draft(key="UNAUTHORIZED"), reader, key="t" * 16
-    )
-    assert denied_create.status_code == 403
-    item_path = f"/api/v1/admin/pricing/policies/{row['id']}"
-    assert client.get(item_path, **headers(reader)).status_code == 200
-    history = client.get(item_path + "/history", **headers(reader))
-    assert history.status_code == 403  # audit.read is not inherited by READ_ONLY.
-    missing_etag = post(
-        client, item_path + "/publish", {"reason": "Release approved policy"}, actor, key="m" * 16
-    )
-    assert missing_etag.status_code == 428
-    published = post(
-        client,
-        item_path + "/publish",
-        {"reason": "Release approved policy"},
-        actor,
-        key="p" * 16,
-        version=1,
-    )
-    assert published.status_code == 200 and published["ETag"] == '"2"'
-    again = post(
-        client,
-        item_path + "/publish",
-        {"reason": "Release approved policy"},
-        actor,
-        key="p" * 16,
-        version=1,
-    )
-    assert again.status_code == 200 and again.json() == published.json()
-    stale = post(
-        client,
-        item_path + "/withdraw",
-        {"reason": "Withdraw incorrect version"},
-        actor,
-        key="q" * 16,
-        version=1,
-    )
-    assert stale.status_code == 412
-    other_id = clash.json()["data"]["id"]
-    overlap = post(
-        client,
-        f"/api/v1/admin/pricing/policies/{other_id}/publish",
-        {"reason": "Try overlap with published policy"},
-        actor,
-        key="o" * 16,
-        version=1,
-    )
-    assert overlap.status_code == 409
-    with pytest.raises(IntegrityError):
-        with transaction.atomic():
-            PricingPolicy.objects.filter(id=row["id"]).update(rules=[])
-    withdrawn = post(
-        client,
-        item_path + "/withdraw",
-        {"reason": "End published policy"},
-        actor,
-        key="z" * 16,
-        version=2,
-    )
-    assert withdrawn.status_code == 200 and withdrawn["ETag"] == '"3"'
-    # No automatic promotion to legacy active billing policy.
-    assert not PricingPolicy.objects.filter(policy_key="STANDARD", status="ACTIVE").exists()
-    assert client.get(item_path + "/history", **headers(actor)).status_code == 200
-    assert len(client.get("/api/v1/admin/pricing/policies", **headers(actor)).json()["data"]) == 2
+    path = "/api/v1/admin/pricing/policies"
+    assert client.get(path, **headers(actor)).status_code == 410
+    response = post(client, path, draft(), actor)
+    assert response.status_code == 410, response.content
+    assert response.json()["error"]["code"] == "GENERIC_PRICING_RETIRED"
+    example_id = "00000000-0000-4000-8000-000000000001"
+    item = f"{path}/{example_id}"
+    assert client.get(item, **headers(actor)).status_code == 410
+    assert client.get(item + "/history", **headers(actor)).status_code == 410
+    assert post(client, item + "/publish", {"reason": "Retired mode"}, actor, version=1).status_code == 410
+    assert post(client, item + "/withdraw", {"reason": "Retired mode"}, actor, version=2).status_code == 410
+    assert not PricingPolicy.objects.filter(policy_key="STANDARD").exists()

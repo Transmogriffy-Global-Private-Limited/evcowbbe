@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 MIGRATION_7 = "0007_rbac_pricing_consequential_parity"
 MIGRATION_8 = "0008_zone_commercial_registry"
+MIGRATION_9 = "0009_zone_admin_operations"
 
 
 class Refused(Exception):
@@ -124,10 +125,13 @@ def expected_state(connection) -> str:
     from scripts.run_pg_tests import (cow_migration_names, MIGRATIONS_0007, MIGRATIONS_0008,
                                       assert_expected_schema)
     actual = cow_migration_names(connection)
+    from scripts.run_pg_tests import MIGRATIONS_0009
     if actual == MIGRATIONS_0007:
         name = MIGRATION_7
     elif actual == MIGRATIONS_0008:
         name = MIGRATION_8
+    elif actual == MIGRATIONS_0009:
+        name = MIGRATION_9
     else:
         raise Refused("Unreviewed test migration ledger; no mutation permitted")
     assert_expected_schema(connection, name)

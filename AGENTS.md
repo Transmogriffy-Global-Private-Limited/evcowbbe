@@ -1,91 +1,23 @@
-# EVCOWBBE operating contract (Django development backend, 2026-11-02)
+# EVCOWBBE engineering contract (local-first Django development, 2026-11-06)
 
-## Authoritative state
+## Current source and environment
 
-Repository: `Transmogriffy-Global-Private-Limited/evcowbbe`; active development branch `main`.
-The canonical backend is Django/Gunicorn, `evcowbbe.service`, at
-`https://dev-evcowbbe.transev.site`, proxied to `127.0.0.1:18280` on shared VPS2.
-The authoritative application DB is PostgreSQL `evcowbbe_django_next` (role
-`evcowbbe_app`). The old Go DB `evcowbbe` and binary are historical emergency
-recovery resources, **not** a second active service, and Go data is deliberately
-not imported. The Django staging service is disabled. HAL/physical charging is
-not certified; do not enable physical commands or expose an unverified gateway.
+Source of truth: `Transmogriffy-Global-Private-Limited/evcowbbe` GitHub `main`; core feature work on `anubhab-work`; customer module on `abhranil-pal-evcowbbe`. The shared VPS2 EVCOWBBE deployment, databases, backups and systemd/Caddy artifacts were deleted 2026-11-06. **Do not run historic VPS2 deployment/cutover, restore or rehost scripts** or revive Go as a runtime. Git branches were not deleted. Current developer DB is independently configured by its owner; never infer DB authority from a URL alone and never expose secrets.
 
-Production and development are different acceptance scopes. This is a
-**development** service; unfinished FE/business/HAL work does not prevent safe
-feature development. Do not describe this as a commissioned charging service.
+## Code ownership
 
-## Source, runtime and change ownership
+- `cow/models.py`: the only ORM model declarations. `cow/migrations/`: append-only, reviewed Django migration and trigger ledger. Never edit already-applied migrations or force a migration by falsifying `django_migrations`.
+- `cow/services/`: shared transaction/invariant layer; `cow/domain/`: pure rules; `cow/common/`: shared response and error contracts; `cow/hal/`: separate hardware boundary.
+- `cow/users/`, `cow/drivers/`, `cow/admin/`: role-specific HTTP controls, without duplicated business state or schema.
+- Preserve admin RBAC DENY precedence, fresh transaction-level authorization, idempotency, concurrency, immutable financial policy snapshots, audit, exact decimal money, secure identity planes, and controlled error responses.
+- New business features must be coherent vertical slices, not disconnected helpers. Proper database schema changes are permitted during development when source/migration/test/rollback implications are reviewed. Do not hardcode fictitious location, legal, route, payment or HAL authority.
 
-- `main` is authoritative for Django source; never write migration artifacts or
-  secrets directly into the Git tree. Never force-push or delete another person's
-  branches as part of cleanup. Make isolated tested commits for changes.
-- `/srv/evcowbbe/source` is the VPS checkout, not the running working directory.
-- `/srv/evcowbbe/python-releases/<commit>/` is a sealed immutable release.
-- `/srv/evcowbbe/current-python` is the canonical runtime release pointer after
-  the guarded adoption. Do not use `/srv/evcowbbe/current` to launch Go.
-- `/etc/evcowbbe` holds protected runtime configuration. Do not print or commit
-  environment values, passwords, tokens, or SMTP credentials.
-- `/var/lib/evcowbbe-rehost/runtime.json` records the managed Django revision after
-  adoption; `/var/lib/evcowbbe-cutover/state.json` retains historic Go-to-Django
-  cutover evidence. Retain original Go rollback resources offline.
-- `/usr/local/sbin/rehost-evcowbbe` is the single Django-aware operator after
-  adoption, with matching tracked source under `ops/vps2/`.
-- Caddy, PostgreSQL cluster, shared DNS and unrelated projects are shared. Never
-  alter them wholesale. Clean only explicitly identified EVCOWBBE test resources.
+## Sprint 7 architecture
 
-## Required change workflow
+Migration `0008` added ServiceZone, DutyZoneAssignment, ChargerZoneAssignment, ZoneGSTAssignment and ZoneTariffPayload. Migration `0009_zone_admin_operations` introduces single-published-zone protection and makes `PricingPolicy.rules=[]` valid **only** for composite Zone scopes, with a mandatory matching ZoneTariffPayload on publication. Generic pricing remains unchanged; Zone plans use the existing composite domain and pricing engine, never a duplicated ledger. Admin APIs are registered in `cow/admin/zones.py`, state mutations in `cow/services/zone_admin.py`, read-side resolution in `cow/services/zone_commercial_registry.py`. See `docs/SPRINT7_ZONE_ADMIN_OPERATIONS.md`.
 
-Read `docs/VPS2_CURRENT_OPERATIONS.md` before operational changes. Distinguish
-`status` and dry-run audits from mutating commands. Require positively verified
-Git revision, clean worktree, immutable release, bounded resource use, service
-identity and DB identity; use controlled systemd operations and health checks.
-No automatic DB schema DDL at startup. The current rehost workflow deliberately
-blocks revisions that change Django migration files until a reviewed migration
-and database recovery workflow is provided. Do not bypass that gate.
+## Verification and release
 
-Use Django migrations as the sole schema ledger. Preserve identity-plane
-separation (Customer/Driver/Admin), authorization DENY precedence, idempotency,
-audit history, money precision, safe failure, and encrypted outbox behavior.
-Use `docs/BLUEPRINT_IMPLEMENTATION_STATUS.md` and the retained normative
-blueprint for unfinished business areas. API path-level parity is not proof of
-business behavior parity. OpenAPI is public at `/openapi.yaml` and
-`/api/openapi.json`.
+Read relevant README and architecture documentation before work. Keep changes on `anubhab-work` until reviewed; do not rewrite or force-push another developer's branch. Use `scripts/db.ps1 check` and the offline tests; use an approved isolated PostgreSQL acceptance harness for trigger/concurrency tests. Local dev PostgreSQL migration `0009` is a separate explicit action, not an application startup hook. Never run destructive tests against unverified shared applications or real customer data. Confirm schema, API docs, security, approval provenance, and legacy endpoints before merge.
 
-## Role modules and change ownership
-
-This repository has one Django app and one centrally managed ORM schema. Feature modules
-`cow/users/`, `cow/drivers/` and `cow/admin/` own role-specific HTTP routes while `cow/api.py` composes
-the single NinjaAPI. See `docs/ROLE_MODULE_ARCHITECTURE_20261105.md` for the
-ownership map, contracts, branch workflow, tests and non-activation boundaries.
-`cow/common/` owns shared HTTP contracts/errors while `cow/services/`,
-`cow/domain/`, central models/migrations and HAL own their specific shared
-business concerns. Do not duplicate shared auth, wallet, GST, tariff,
-dispatch or HAL logic.
-The `main` branch remains the baseline for the deployed development service;
-feature branches are isolated source-development checkpoints and require review
-before any merge or runtime adoption.
-
-## Canonical development branches
-
-`main` is the reviewed source baseline; `anubhab-work` is the backend owner branch; `abhranil-pal-evcowbbe` is the user-module contributor branch. There are no other active Git branch heads after consolidation. Review into `main`, never deploy solely because a branch advanced. The exact route/schema/ownership boundaries are in `docs/ROLE_MODULE_ARCHITECTURE_20261105.md`. Changes to shared contracts/schema require core review. Removed legacy wrapper modules must never be reintroduced.
-
-## Schema-first development contract
-
-`cow/models.py` is the single authoritative Django ORM schema. Never create
-models or migrations in role directories. Generate migrations using
-`makemigrations` via `scripts/db.ps1`; review and version-control generated
-files. For triggers/complex SQL, add a separately reviewed reversible RunSQL
-operation. `scripts/run_pg_tests.py` targets `0008` in the marker-verified
-disposable DB. VPS2 schema mutation remains forbidden through ordinary rehost;
-see `docs/DATABASE_SCHEMA_WORKFLOW.md` for migration/recovery acceptance.
-
-## Cleanup and rollback
-
-Clean only explicitly enumerated former EVCOWBBE scratch DBs. Confirm service,
-DB owners, absence of DB sessions, per-DB backup and `pg_restore --list` before
-`DROP DATABASE`. Keep `evcowbbe_django_next` and `evcowbbe`. Never terminate
-arbitrary PostgreSQL sessions. Archive old test files only after checking
-systemd and runtime dependencies. Do not delete recovery backups/journal just
-because a new deployment tool exists. Reverting to Go requires explicit
-acknowledgment of Django/Go write divergence and a reviewed recovery plan.
+No actual wallet debit/refund, customer-accepted commercial quote, physical charger command, legal tax inference or live GPS/QR authentication is authorized by the Admin Zone **scenario** preview. A manual Admin coordinate is not a verified location provider. Publish no claim of end-to-end commercial completion without the corresponding real evidence and transaction tests.
