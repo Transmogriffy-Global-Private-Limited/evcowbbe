@@ -34,7 +34,10 @@ for path,item in s['paths'].items():
             assert headers.get('If-Match',{}).get('required') is True,path
         assert any(str(k).startswith('2') for k in op.get('responses',{})),path
         operations.append(oid)
-assert len(operations)==24 and len(set(operations))==24,len(operations)
+assert len(operations)==29 and len(set(operations))==29,len(operations)
+assert {"adminCommercialGroupGet", "adminCommercialGroupMembers",
+        "adminCommercialGroupMemberRemove", "adminCommercialGroupDeactivate",
+        "adminCommercialGroupReactivate"}.issubset(set(operations))
 assert not any(p.startswith('/api/v1/admin/pricing/policies') for p in s['paths'])
 for p in ('/api/v1/app/service-requests/{request_id}/quote','/api/v1/app/quotes/{quote_id}/accept'):
     assert p not in s['paths']
@@ -44,4 +47,4 @@ b=c.get('/openapi.yaml')
 w=c.get('/api/swagger/')
 assert (a.status_code,b.status_code,w.status_code)==(200,200,200), (a.status_code,b.status_code,w.status_code)
 assert json.loads(a.content)==yaml.safe_load(b.content),'JSON/YAML drift'
-print('COMMERCIAL_SWAGGER=PASS; OPERATIONS=24; JSON_YAML=PASS; SWAGGER_UI=200')
+print('COMMERCIAL_SWAGGER=PASS; OPERATIONS=29; JSON_YAML=PASS; SWAGGER_UI=200')

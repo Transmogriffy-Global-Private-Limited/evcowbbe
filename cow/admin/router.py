@@ -9,6 +9,7 @@ from cow.admin.controls import register as register_admin_controls
 from cow.admin.jobs import register_job_routes
 from cow.admin.zones import register as register_zone_routes
 from cow.admin.commercial import register as register_commercial_routes
+from cow.admin.management import register as register_admin_management
 
 
 def build_router(auth_backend, mount_identity, mount_otp) -> Router:
@@ -18,5 +19,6 @@ def build_router(auth_backend, mount_identity, mount_otp) -> Router:
     register_admin_controls(router)
     register_zone_routes(router)
     register_commercial_routes(router)
+    register_admin_management(router)
     mount_otp(router, "admin")
     return router

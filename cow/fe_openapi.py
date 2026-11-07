@@ -84,6 +84,8 @@ TAG_DESCRIPTIONS = {
     "26 | Admin commercial groups": "Pricing group membership and Group-over-Zone commercial precedence.",
     "27 | Admin commercial assignments": "Tariff and GST targeting, replacement, and Zone-channel readiness.",
     "28 | Admin commercial preview": "Nonbinding itemized estimate; no payment, quotation acceptance or HAL command.",
+    "29 | Admin customers": "Bounded customer identity, profile and jobs projections; no Admin customer impersonation.",
+    "30 | Admin drivers": "Driver identity and operational facts; approval or dispatchability not inferred.",
     "22 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
     "23 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
 }
@@ -188,6 +190,10 @@ def _tag(path: str) -> str:
         return "15 | Admin vehicle-charger pairings"
     if path.startswith("/api/v1/admin/rbac"):
         return "16 | Admin RBAC"
+    if path.startswith("/api/v1/admin/customers"):
+        return "29 | Admin customers"
+    if path.startswith("/api/v1/admin/drivers"):
+        return "30 | Admin drivers"
     if path.startswith("/api/v1/admin/commercial/"):
         if path.endswith('/preview'):
             return "28 | Admin commercial preview"
