@@ -10,6 +10,7 @@
 - Fleet/charger/customer master and charging request/job foundations.
 - Pricing engine, versioned policies, Zone radius rules, duty/charger Zone assignments, Zone-specific GST decision registry and composite tariff evaluator.
 - **Sprint 7:** Admin Zone/commercial operations, migration `0009_zone_admin_operations`, and an explicitly non-authoritative scenario preview. See [Sprint 7 operations](docs/SPRINT7_ZONE_ADMIN_OPERATIONS.md).
+- **Commercial machine v1 (Sprint 8):** New reusable tariff/GST library and target assignments at `/api/v1/admin/commercial/*`, with nonbinding itemized preview and additive migration `0010`. Isolated PostgreSQL acceptance passed on 2026-11-07; developer DB migration and local `main` rehost are separate actions. Older `/api/v1/admin/zones/*` configuration remains for compatibility.
 - Not complete/activated: real route/GPS evidence, QR proof, driver dispatch authority, binding customer Zone quotes, payment/ledger settlement, and physical HAL acceptance. Business correctness is not established by Go path parity alone.
 
 ## Structure and ownership

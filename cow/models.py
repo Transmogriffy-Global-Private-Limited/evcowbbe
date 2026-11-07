@@ -636,3 +636,101 @@ class ZoneTariffPayload(models.Model):
     plan = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
     authorized_by = models.ForeignKey("cow.Principal", on_delete=models.PROTECT, related_name="authored_zone_tariff_payloads")
+
+# BEGIN EVCOWBBE COMMERCIAL MACHINE V1 MODELS
+# Add to cow/models.py only via the guarded installer. Old models remain untouched.
+class CommercialPricingGroup(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=400, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT, related_name='commercial_groups_created')
+
+
+class CommercialGroupMembership(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey('cow.CustomerProfile', on_delete=models.PROTECT, related_name='commercial_memberships')
+    group = models.ForeignKey('cow.CommercialPricingGroup', on_delete=models.PROTECT, related_name='customer_memberships')
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT, related_name='commercial_memberships_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(ends_at__isnull=True) | Q(ends_at__gt=F('starts_at')), name='cow_cm_group_window')]
+
+
+class CommercialTariffPayload(models.Model):
+    # Existing PricingPolicy is the ONLY publication/version/timing ledger.
+    policy = models.OneToOneField('cow.PricingPolicy', primary_key=True, on_delete=models.PROTECT, related_name='commercial_payload')
+    channel = models.CharField(max_length=12, choices=[(x,x) for x in ('ROAMING','ON_SITE_QR')])
+    plan = models.JSONField()
+    created_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT, related_name='commercial_tariffs_authored')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class CommercialGSTProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile_key = models.CharField(max_length=64)
+    profile_version = models.PositiveIntegerField()
+    status = models.CharField(max_length=10, choices=[(x,x) for x in ('DRAFT','APPROVED','RETIRED','REVOKED')], default='DRAFT')
+    seller_tax_ref = models.CharField(max_length=200)
+    legal_decision_ref = models.CharField(max_length=200)
+    tax_classes = models.JSONField()
+    created_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT, related_name='commercial_gst_profiles_created')
+    approved_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT, null=True, blank=True, related_name='commercial_gst_profiles_approved')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['profile_key','profile_version'], name='cow_cm_gst_key_revision'),
+            models.CheckConstraint(condition=Q(profile_version__gt=0), name='cow_cm_gst_version_positive'),
+        ]
+
+
+class CommercialTariffAssignment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy = models.ForeignKey('cow.PricingPolicy', on_delete=models.PROTECT, related_name='commercial_target_assignments')
+    target_type = models.CharField(max_length=5, choices=[(x,x) for x in ('ZONE','GROUP')])
+    zone = models.ForeignKey('cow.ServiceZone', null=True, blank=True, on_delete=models.PROTECT, related_name='commercial_tariff_assignments')
+    group = models.ForeignKey('cow.CommercialPricingGroup', null=True, blank=True, on_delete=models.PROTECT, related_name='tariff_assignments')
+    channel = models.CharField(max_length=12, choices=[(x,x) for x in ('ROAMING','ON_SITE_QR')])
+    slot = models.CharField(max_length=9, choices=[(x,x) for x in ('DEFAULT','SCHEDULED')])
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT, related_name='commercial_tariff_assignments_created')
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=(Q(target_type='ZONE',zone__isnull=False,group__isnull=True) | Q(target_type='GROUP',zone__isnull=True,group__isnull=False)), name='cow_cm_tariff_one_target'),
+            models.CheckConstraint(condition=Q(ends_at__isnull=True) | Q(starts_at__isnull=True) | Q(ends_at__gt=F('starts_at')), name='cow_cm_tariff_assignment_window'),
+            models.CheckConstraint(condition=Q(slot='DEFAULT') | Q(slot='SCHEDULED',starts_at__isnull=False,ends_at__isnull=False), name='cow_cm_tariff_schedule_bounded'),
+        ]
+
+
+class CommercialGSTAssignment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    zone = models.ForeignKey('cow.ServiceZone', on_delete=models.PROTECT, related_name='commercial_gst_assignments')
+    channel = models.CharField(max_length=12, choices=[(x,x) for x in ('ROAMING','ON_SITE_QR')])
+    profile = models.ForeignKey('cow.CommercialGSTProfile', on_delete=models.PROTECT, related_name='zone_assignments')
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT, related_name='commercial_gst_assignments_created')
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(ends_at__isnull=True) | Q(starts_at__isnull=True) | Q(ends_at__gt=F('starts_at')), name='cow_cm_gst_assignment_window')]
+
+
+class CommercialZoneChannel(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    zone = models.ForeignKey('cow.ServiceZone', on_delete=models.PROTECT, related_name='commercial_channels')
+    channel = models.CharField(max_length=12, choices=[(x,x) for x in ('ROAMING','ON_SITE_QR')])
+    enabled = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['zone','channel'], name='cow_cm_zone_channel_unique')]
+# END EVCOWBBE COMMERCIAL MACHINE V1 MODELS

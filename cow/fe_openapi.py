@@ -79,6 +79,11 @@ TAG_DESCRIPTIONS = {
     "15 | Admin vehicle-charger pairings": "Assignment/pairing lifecycle, subject to compatibility and concurrency guards.",
     "16 | Admin RBAC": "Admin capabilities, role grants/revokes and explicit per-account overrides. All authorization is checked server-side.",
     **ZONE_TAG_DESCRIPTIONS,
+    "24 | Admin commercial tariffs": "Create, publish, duplicate and reuse immutable tariff versions.",
+    "25 | Admin commercial GST": "Approved seller, supply-group and tax-class configuration; not statutory tax invoicing.",
+    "26 | Admin commercial groups": "Pricing group membership and Group-over-Zone commercial precedence.",
+    "27 | Admin commercial assignments": "Tariff and GST targeting, replacement, and Zone-channel readiness.",
+    "28 | Admin commercial preview": "Nonbinding itemized estimate; no payment, quotation acceptance or HAL command.",
     "22 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
     "23 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
 }
@@ -183,6 +188,16 @@ def _tag(path: str) -> str:
         return "15 | Admin vehicle-charger pairings"
     if path.startswith("/api/v1/admin/rbac"):
         return "16 | Admin RBAC"
+    if path.startswith("/api/v1/admin/commercial/"):
+        if path.endswith('/preview'):
+            return "28 | Admin commercial preview"
+        if '/gst-profiles' in path:
+            return "25 | Admin commercial GST"
+        if '/groups' in path:
+            return "26 | Admin commercial groups"
+        if '/tariff-assignments' in path or '/gst-assignments' in path or '/zones/' in path:
+            return "27 | Admin commercial assignments"
+        return "24 | Admin commercial tariffs"
     if path.startswith("/api/v1/admin/zones"):
         return zone_tag(path)
     if path.startswith("/api/v1/internal/hal/"):
@@ -298,6 +313,63 @@ def _add_customer_etag(path: str, method: str, operation: dict) -> None:
                 "description": "Current quoted resource version; pass it back as If-Match for changes.",
                 "schema": {"type": "string"},
             })
+
+
+def _enrich_commercial_operation(path: str, method: str, operation: dict) -> None:
+    """Annotate actual commercial wire requirements; do not synthesize routes."""
+    if not path.startswith('/api/v1/admin/commercial/'):
+        return
+    if not str(operation.get('operationId', '')).startswith('adminCommercial'):
+        raise ValueError('Unknown commercial operation: ' + path)
+    if not operation.get('security'):
+        raise ValueError('Commercial route lacks Admin bearer security: ' + path)
+    if operation.get('x-fe-schema-detail') != 'declared':
+        raise ValueError('Commercial response is not fully typed: ' + path)
+    preview = path == '/api/v1/admin/commercial/preview'
+    write = method == 'post' and not preview
+    publish = operation.get('operationId') == 'adminCommercialTariffPublish'
+    if method == 'post' and 'application/json' not in operation.get('requestBody', {}).get('content', {}):
+        raise ValueError('Missing commercial JSON body contract: ' + path)
+    params = operation.setdefault('parameters', [])
+    names = {(p.get('in'), p.get('name')) for p in params if isinstance(p, dict)}
+    if write and ('header', 'Idempotency-Key') not in names:
+        params.append({
+            'in': 'header', 'name': 'Idempotency-Key', 'required': True,
+            'description': '16-128 visible ASCII characters excluding comma. Reuse only for the identical logical retry.',
+            'schema': {'type': 'string', 'minLength': 16, 'maxLength': 128},
+            'example': 'commercial-mutation-0001',
+        })
+    if publish and ('header', 'If-Match') not in names:
+        params.append({
+            'in': 'header', 'name': 'If-Match', 'required': True,
+            'description': 'Current quoted tariff state_version; stale version returns HTTP 412.',
+            'schema': {'type': 'string', 'pattern': '^"[1-9][0-9]*"$'},
+            'example': '"1"',
+        })
+    note = ('**Commercial configuration:** Reusable tariffs, GST Profiles, pricing Groups and target assignments. '
+            'Published configuration is not customer acceptance, payment or HAL authority.')
+    if preview:
+        note += ('\n\n**Simulation only:** Itemized GST breakdown is not statutory invoicing; '
+                 'no trusted serviceability or customer commitment is established.')
+    if '/gst-' in path:
+        note += ('\n\n**GST:** Tax classification, supply grouping and seller identity require '
+                 'independent legal review, not GPS or a pricing Group.')
+    operation['description'] = '\n\n'.join(filter(None, [operation.get('description',''), note]))
+    from copy import deepcopy
+    from cow.common.contracts import GO_ERROR_ENVELOPE_SCHEMA
+    error_codes = {'401':'Invalid Admin bearer token', '403':'Capability denied',
+                   '404':'Commercial resource not found', '409':'State or assignment conflict',
+                   '422':'Invalid or ambiguous commercial configuration'}
+    if write:
+        error_codes.update({'400':'Invalid request', '415':'JSON content type required',
+                            '428':'Idempotency-Key or If-Match required'})
+    if publish:
+        error_codes['412'] = 'Stale tariff version'
+    for status,description in error_codes.items():
+        operation.setdefault('responses',{}).setdefault(status,{
+            'description':description,
+            'content': {'application/json':{'schema':deepcopy(GO_ERROR_ENVELOPE_SCHEMA)}},
+        })
 
 
 def _request_example(path: str, operation: dict) -> None:
@@ -534,7 +606,7 @@ def decorate_fe_schema(schema: dict) -> dict:
         info["description"] = (
             str(info.get("description", "")).strip() + "\n\n" + INTRO
         ).strip()
-    if "### Tariff authority: Zone composite only" not in str(info.get("description", "")):
+    if "### Commercial tariff authority (current)" not in str(info.get("description", "")):
         info["description"] = str(info.get("description", "")).rstrip() + "\n\n" + zone_openapi_intro()
     info["x-documentation-role"] = "development-frontend-integration"
     # Same-origin relative URL works on the public host and in local tests.
@@ -571,12 +643,13 @@ def decorate_fe_schema(schema: dict) -> dict:
                 notes.append("**Documentation gap:** The success response is not fully typed in generated OpenAPI. Treat the documented HTTP route as implemented, but do not infer specific payload fields from an open-ended object schema. FE integration needs a typed, source-verified response contract.")
             operation["description"] = "\n\n".join(x for x in (existing, *notes) if x)
             enrich_zone_operation(path, method.lower(), operation)
+            _enrich_commercial_operation(path, method.lower(), operation)
     schema["tags"] = [
         {"name": name, "description": description}
         for name, description in TAG_DESCRIPTIONS.items() if name in used
     ]
     schema["x-fe-documentation-version"] = "1"
-    schema["x-commercial-tariff-mode"] = "zone-composite-only"
+    schema["x-commercial-tariff-mode"] = "reusable-library-with-legacy-zone"
     schema["x-fe-contract-coverage"] = {
         "operations": operation_count,
         "declared_success_shapes": operation_count - len(gap_operations),

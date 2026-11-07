@@ -1,3 +1,5 @@
+> HISTORICAL Sprint 7 Swagger contract: superseded for new authoring by `/api/v1/admin/commercial/*`. The older Zone endpoints remain for compatibility.
+
 # Sprint 7 Swagger: exclusive Zone composite tariff API
 
 **Status:** source-only contract update, applied after Sprint 7 migration 0009. No new migration or database reset. The previously installed 15-file Sprint 7 source remains; this package changes only the Admin API/documentation/tests for the agreed product decision.

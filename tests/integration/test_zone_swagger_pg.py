@@ -13,7 +13,7 @@ pytestmark=[pytest.mark.postgres,pytest.mark.django_db]
 
 def test_zone_only_openapi_documented():
     schema=api.get_openapi_schema()
-    assert schema['x-commercial-tariff-mode']=='zone-composite-only'
+    assert schema['x-commercial-tariff-mode']=='reusable-library-with-legacy-zone'
     assert not any(p.startswith('/api/v1/admin/pricing/policies') for p in schema['paths'])
     assert '/api/v1/app/service-requests/{request_id}/quote' not in schema['paths']
     assert '/api/v1/app/quotes/{quote_id}/accept' not in schema['paths']

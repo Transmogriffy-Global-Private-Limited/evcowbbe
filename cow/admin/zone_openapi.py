@@ -1,4 +1,4 @@
-"""Source-backed OpenAPI enrichment for the exclusive Zone commercial API.
+"""Source-backed OpenAPI enrichment for the legacy Zone composite API.
 
 Documentation never creates an operation, changes authentication, or changes
 runtime HTTP semantics. The schemas themselves live in zone_contracts.py.
@@ -19,7 +19,7 @@ DESCRIPTIONS = {
     TAGS['zones']: 'Versioned service zones. Draft, publish, retire; old versions remain historical.',
     TAGS['assignments']: 'Assign a published Zone to driver duties (roaming) or chargers (on-site QR), with effective intervals and audit.',
     TAGS['gst']: 'Channel-specific tax bindings with recorded legal/seller decision references. Coordinates never decide GST.',
-    TAGS['tariffs']: 'The ONLY supported Admin tariff mode: versioned Zone composite plans, published on the existing PricingPolicy ledger.',
+    TAGS['tariffs']: 'Legacy Zone composite tariffs; use Admin commercial library for new reusable configuration.',
     TAGS['preview']: 'Admin configuration simulation only. No verified customer position, committed quote, debit or charger command.',
 }
 SUMMARY = {
@@ -140,7 +140,7 @@ def enrich_zone_operation(path: str, method: str, operation: dict) -> None:
         raise ValueError(f'Unrecognized Zone operation ID: {name}')
     operation['summary'] = SUMMARY[name]
     operation['tags'] = [zone_tag(path)]
-    mode = '**Commercial mode:** Zone-owned composite tariffs only. The old generic policy editor is unsupported.'
+    mode = '**Compatibility mode:** Legacy Zone-owned composite tariff workflow; use /api/v1/admin/commercial for new tariffs and GST. Generic pricing is retired.'
     note = '**Safety:** Admin simulation is nonbinding; never send its result to wallets, quote acceptance, or HAL.' if path == PREFIX + '/preview' else mode
     if '/gst' in path:
         note += '\n\n**Tax authority:** The approved seller/legal decision must come from an authorized review. The zero rates in examples are placeholders, NOT Indian GST guidance.'
@@ -196,23 +196,4 @@ def enrich_zone_operation(path: str, method: str, operation: dict) -> None:
 
 
 def zone_openapi_intro() -> str:
-    return '''### Tariff authority: Zone composite only
-
-The only supported Admin tariff workflow is `/api/v1/admin/zones/...`, with
-`ROAMING` (assigned driver duty) and `ON_SITE_QR` (assigned charger) channels.
-A Zone tariff combines a single primary charging basis (energy kWh, time minute,
-or session), transport, distance slabs, and optional fees. Its GST binding is a
-separate reviewed, channel-specific legal decision. PricingPolicy remains the
-single publication/version ledger; its generic `rules` array is empty for Zone
-tariffs. The prior `/api/v1/admin/pricing/policies` endpoints are retired
-(HTTP 410) and not included in OpenAPI. Legacy customer quote creation
-and acceptance endpoints are also retired (HTTP 410), not exposed in
-OpenAPI. Only customer service-request intake remains available while the
-Zone-aware binding quote/dispatch/settlement workflow is developed.
-
-Recommended Admin sequence: publish Zone; authorize a duty/charger assignment;
-draft and approve channel GST; draft a composite tariff; fetch its ETag;
-publish using `Idempotency-Key` and `If-Match`; run the nonbinding scenario
-preview. The preview cannot charge, finalize a customer quote or command HAL.
-A full customer commitment/dispatch/settlement contract is not yet implemented.
-'''
+    return "### Commercial tariff authority (current)\n\nThe **current** Admin configuration API is `/api/v1/admin/commercial/*` for reusable\npublished tariff versions, separately approved seller-specific GST Profiles,\nZone/Group tariff assignments and itemized nonbinding fare preview. A pricing\nGroup may override the price, but cannot replace a Zone/channel's required\ndefault tariff or change legal GST. Mutations require `Idempotency-Key`, and\npublishing a tariff version also requires a quoted `If-Match`.\n\nThe prior `/api/v1/admin/zones/*` composite workflow remains operational for\nlegacy configurations; its old data is not automatically converted. The\nretired generic `/api/v1/admin/pricing/policies` and customer quote acceptance\nroutes still return HTTP 410 and are omitted from OpenAPI.\n\nThe commercial preview does not authorize a customer quote, wallet debit,\nstatutory GST tax invoice, dispatch, or physical HAL charging. Seller/tax\nclassification must be independently reviewed; no GST rate inference is made.\n"

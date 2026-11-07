@@ -48,9 +48,9 @@ def main() -> int:
     found_ids=[x[2] for x in found]
     if len(found_ids) != len(SUMMARY) or set(found_ids) != set(SUMMARY) or len(set(found_ids))!=len(found_ids):
         raise RuntimeError('Zone operations incomplete or duplicated: '+str(found))
-    if schema.get('x-commercial-tariff-mode') != 'zone-composite-only':
+    if schema.get('x-commercial-tariff-mode') != 'reusable-library-with-legacy-zone':
         raise RuntimeError('Exclusive tariff mode not declared')
-    print(f'SWAGGER_ZONE_ONLY=PASS; ZONE_OPERATIONS={len(found_ids)}; GENERIC_PRICING_OPERATIONS=0; LEGACY_QUOTE_OPERATIONS=0')
+    print(f'SWAGGER_ZONE_COMPAT=PASS; ZONE_OPERATIONS={len(found_ids)}; GENERIC_PRICING_OPERATIONS=0; LEGACY_QUOTE_OPERATIONS=0')
     return 0
 
 if __name__=='__main__': raise SystemExit(main())
