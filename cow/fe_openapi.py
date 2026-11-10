@@ -267,7 +267,7 @@ def _notes(path: str, method: str) -> list[str]:
     if path.startswith("/api/v1/app/service-requests") or "/api/v1/app/quotes" in path:
         notes.append("**Business state:** The underlying request/quote flow is development-stage and does not itself trigger a charger or payment.")
     if path.startswith("/api/v1/admin/jobs") and path.endswith("/charging/start"):
-        notes.append("**Physical safety:** HTTP 202 means a HAL command was accepted for processing, **not** that a charger started or delivered energy. Confirm later signed physical facts/state before showing charging as active.")
+        notes.append("**Operational admission:** Requires an active verified eligible Driver, an open SERVICING duty, valid vehicle documents, effective vehicle-charger pairing, operational connector/charger, and no unsafe maintenance, session or command conflicts. HTTP 409 means a current safety blocker. HTTP 202 means a durable pending HAL command only, **not** energy delivery, a binding quote, or payment authority. Always wait for signed physical evidence.")
     if path.startswith("/api/v1/internal/hal/"):
         notes.append("**Internal only:** Signed, timestamped, authenticated HAL facts are accepted server-to-server. Never expose the shared signing secret or call this route directly from the browser.")
     if path in {"/health/live", "/health/ready"}:
@@ -640,6 +640,14 @@ def decorate_fe_schema(schema: dict) -> dict:
                 notes.append(TAG_DESCRIPTIONS[tag])
             _add_customer_headers(path, method, operation)
             _add_customer_etag(path, method, operation)
+            if path == "/api/v1/admin/jobs/{job_id}/charging/start" and method.lower() == "post":
+                params = operation.setdefault("parameters", [])
+                if not any(x.get("in") == "header" and x.get("name") == "Idempotency-Key" for x in params):
+                    params.append({
+                        "in": "header", "name": "Idempotency-Key", "required": True,
+                        "description": "16-128 character key; replay only the same logical start request.",
+                        "schema": {"type": "string", "minLength": 16, "maxLength": 128},
+                    })
             _enrich_customer_operation(schema, path, method, operation)
             _request_example(path, operation)
             incomplete = _is_generic_success(operation)

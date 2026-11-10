@@ -130,7 +130,51 @@ class FrontendOpenAPIContract(unittest.TestCase):
                                 if isinstance(medium, dict):
                                     medium.pop("examples", None)
                         self.assertEqual(new_body, old_body)
-                        self.assertEqual(set(new.get("responses", {})), set(old.get("responses", {})))
+                        # Frontend documentation may ADD known Zone/Commercial
+                        # error responses; it must never remove/rewrite the
+                        # raw Ninja contract or invent arbitrary statuses.
+                        original = old.get("responses", {})
+                        enriched = new.get("responses", {})
+                        permitted = set()
+                        op_id = old.get("operationId")
+                        zone = path.startswith("/api/v1/admin/zones")
+                        commercial = path.startswith("/api/v1/admin/commercial/")
+                        if zone or commercial:
+                            permitted = {"401", "403", "404", "409", "422"}
+                            is_write = method == "post" and path not in {
+                                "/api/v1/admin/zones/preview",
+                                "/api/v1/admin/commercial/preview",
+                            }
+                            if is_write:
+                                permitted.update({"400", "415", "428"})
+                            if (zone and op_id in {
+                                "adminZoneTariffPublish", "adminZoneTariffWithdraw"
+                            }) or (commercial and op_id == "adminCommercialTariffPublish"):
+                                permitted.add("412")
+                        self.assertEqual(
+                            set(enriched) - set(original), permitted - set(original)
+                        )
+                        for status, previous in original.items():
+                            current = deepcopy(enriched[status])
+                            if (zone and str(status).startswith("2") and op_id in {
+                                "adminZoneTariffDraft", "adminZoneTariffGet",
+                                "adminZoneTariffPublish", "adminZoneTariffWithdraw",
+                            } and "ETag" not in previous.get("headers", {})):
+                                self.assertIn("ETag", current.get("headers", {}))
+                                self.assertIn("pattern", current["headers"]["ETag"]["schema"])
+                                del current["headers"]["ETag"]
+                                if not current["headers"]:
+                                    del current["headers"]
+                            self.assertEqual(current, previous)
+                        if permitted:
+                            from cow.common.contracts import GO_ERROR_ENVELOPE_SCHEMA
+                            for status in permitted - set(original):
+                                entry = enriched[status]
+                                self.assertTrue(entry.get("description"))
+                                self.assertEqual(
+                                    entry["content"]["application/json"]["schema"],
+                                    GO_ERROR_ENVELOPE_SCHEMA,
+                                )
 
     def test_hal_202_is_never_documented_as_physical_start(self):
         paths = self.client.get("/api/openapi.json").json()["paths"]

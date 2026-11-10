@@ -14,6 +14,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from cow.common.errors import reject
+from cow.services import operational_eligibility as admission
 from cow.models import (
     AuditEvent,
     Charger,
@@ -89,6 +90,8 @@ def _audit(
 
 def create(actor, fields: dict[str, Any]) -> ServiceVehicle:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         vehicle = ServiceVehicle.objects.create(**fields)
         _audit(actor, vehicle, "CREATE", after=vehicle_data(vehicle))
         return vehicle
@@ -104,9 +107,13 @@ def get(vehicle_id, *, lock: bool = False) -> ServiceVehicle:
 
 def patch(actor, vehicle_id, version: int, fields: dict[str, Any]) -> ServiceVehicle:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         vehicle = get(vehicle_id, lock=True)
         if vehicle.version != version:
             reject(412, "RESOURCE_VERSION_MISMATCH", "Asset version changed; reload and retry")
+        if any(k != 'notes' and getattr(vehicle, k) != v for k, v in fields.items()):
+            admission.ensure_quiescent(vehicle_id=vehicle.pk)
         before = vehicle_data(vehicle)
         changed = False
         for name, value in fields.items():
@@ -123,6 +130,8 @@ def patch(actor, vehicle_id, version: int, fields: dict[str, Any]) -> ServiceVeh
 
 def set_active(actor, vehicle_id, version: int, reason: str, active: bool) -> ServiceVehicle:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         vehicle = get(vehicle_id, lock=True)
         if vehicle.version != version:
             reject(412, "RESOURCE_VERSION_MISMATCH", "Asset version changed; reload and retry")
@@ -131,6 +140,7 @@ def set_active(actor, vehicle_id, version: int, reason: str, active: bool) -> Se
         if vehicle.active == active:
             return vehicle
         if not active:
+            admission.ensure_quiescent(vehicle_id=vehicle.pk)
             paired = VehicleChargerPairing.objects.filter(
                 vehicle=vehicle, effective_to__isnull=True
             ).exists()
@@ -161,7 +171,10 @@ def add_maintenance(actor, vehicle_id, starts_at, ends_at, reason: str) -> Vehic
     # The parent lock makes the application path deterministic; 0003's trigger
     # independently enforces the same no-overlap invariant for all DB writers.
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.maintenance')
+        admission.lock_gate()
         vehicle = get(vehicle_id, lock=True)
+        admission.ensure_quiescent(vehicle_id=vehicle.pk)
         if VehicleMaintenancePeriod.objects.filter(
             vehicle=vehicle, starts_at__lt=ends_at, ends_at__gt=starts_at
         ).exists():
@@ -360,6 +373,8 @@ def list_chargers(
 
 def create_charger(actor, fields: dict[str, Any]) -> Charger:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         charger = Charger.objects.create(**fields)
         _audit_asset(actor, "Charger", charger.id, "CREATE", after=charger_data(charger))
         return charger
@@ -367,9 +382,13 @@ def create_charger(actor, fields: dict[str, Any]) -> Charger:
 
 def patch_charger(actor, charger_id, version: int, fields: dict[str, Any]) -> Charger:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         charger = get_charger(charger_id, lock=True)
         if charger.version != version:
             reject(412, "RESOURCE_VERSION_MISMATCH", "Asset version changed; reload and retry")
+        if any(k != 'notes' and getattr(charger, k) != v for k, v in fields.items()):
+            admission.ensure_quiescent(charger_id=charger.pk)
         before = charger_data(charger)
         changed = False
         for name, value in fields.items():
@@ -388,6 +407,8 @@ def patch_charger(actor, charger_id, version: int, fields: dict[str, Any]) -> Ch
 
 def set_charger_active(actor, charger_id, version: int, reason: str, active: bool) -> Charger:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         charger = get_charger(charger_id, lock=True)
         if charger.version != version:
             reject(412, "RESOURCE_VERSION_MISMATCH", "Asset version changed; reload and retry")
@@ -396,6 +417,7 @@ def set_charger_active(actor, charger_id, version: int, reason: str, active: boo
         if charger.active == active:
             return charger
         if not active:
+            admission.ensure_quiescent(charger_id=charger.pk)
             if VehicleChargerPairing.objects.filter(charger=charger, status="ACTIVE").exists():
                 reject(409, "CONFLICT", "Fleet state conflicts with this operation")
         elif ChargerMaintenancePeriod.objects.filter(
@@ -423,7 +445,10 @@ def add_charger_maintenance(
     actor, charger_id, starts_at, ends_at, reason: str
 ) -> ChargerMaintenancePeriod:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.maintenance')
+        admission.lock_gate()
         charger = get_charger(charger_id, lock=True)
+        admission.ensure_quiescent(charger_id=charger.pk)
         if charger.operational_status == "RETIRED":
             reject(409, "CONFLICT", "Fleet state conflicts with this operation")
         if ChargerMaintenancePeriod.objects.filter(
@@ -479,7 +504,10 @@ def list_connectors(charger_id) -> list[ChargerConnector]:
 
 def create_connector(actor, charger_id, fields: dict[str, Any]) -> ChargerConnector:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         charger = get_charger(charger_id, lock=True)
+        admission.ensure_quiescent(charger_id=charger.pk)
         if not charger.active or charger.operational_status != "AVAILABLE":
             reject(409, "CONFLICT", "Fleet state conflicts with this operation")
         if not fields["supports_ac"] and not fields["supports_dc"]:
@@ -499,6 +527,8 @@ def patch_connector(
     actor, charger_id, connector_id, version: int, fields: dict[str, Any]
 ) -> ChargerConnector:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.manage')
+        admission.lock_gate()
         charger = get_charger(charger_id, lock=True)
         if not charger.active:
             reject(409, "CONFLICT", "Fleet state conflicts with this operation")
@@ -515,6 +545,8 @@ def patch_connector(
         next_dc = fields.get("supports_dc", connector.supports_dc)
         if not next_ac and not next_dc:
             reject(422, "VALIDATION_FAILED", "Invalid fleet request")
+        if any(getattr(connector, k) != v for k, v in fields.items()):
+            admission.ensure_quiescent(charger_id=charger.pk)
         before = connector_data(connector)
         changed = False
         for name, value in fields.items():
@@ -551,6 +583,8 @@ def list_pairings(
 
 def create_pairing(actor, vehicle_id, charger_id, reason: str) -> VehicleChargerPairing:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.assign')
+        admission.lock_gate()
         # The global lock order must match end_pairing and future duty claims.
         vehicle = get(vehicle_id, lock=True)
         charger = get_charger(charger_id, lock=True)
@@ -561,6 +595,7 @@ def create_pairing(actor, vehicle_id, charger_id, reason: str) -> VehicleCharger
             or charger.operational_status != "AVAILABLE"
         ):
             reject(409, "CONFLICT", "Fleet state conflicts with this operation")
+        admission.ensure_quiescent(vehicle_id=vehicle.pk, charger_id=charger.pk)
         now = timezone.now()
         if (
             VehicleMaintenancePeriod.objects.filter(
@@ -593,6 +628,8 @@ def create_pairing(actor, vehicle_id, charger_id, reason: str) -> VehicleCharger
 
 def end_pairing(actor, pairing_id, reason: str) -> VehicleChargerPairing:
     with transaction.atomic():
+        actor = admission.fresh_admin(actor, 'fleet.assign')
+        admission.lock_gate()
         pairing = (
             VehicleChargerPairing.objects.select_related("vehicle", "charger")
             .filter(id=pairing_id)
@@ -603,6 +640,7 @@ def end_pairing(actor, pairing_id, reason: str) -> VehicleChargerPairing:
         # Lock the same two master resources before the pairing row.
         get(pairing.vehicle_id, lock=True)
         get_charger(pairing.charger_id, lock=True)
+        admission.ensure_quiescent(vehicle_id=pairing.vehicle_id, charger_id=pairing.charger_id)
         pairing = VehicleChargerPairing.objects.select_for_update().get(id=pairing_id)
         if pairing.status != "ACTIVE":
             reject(409, "CONFLICT", "Fleet state conflicts with this operation")

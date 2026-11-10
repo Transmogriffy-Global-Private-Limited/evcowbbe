@@ -15,6 +15,7 @@ from cow.hal.contract import verify, validate_fact, FactContractError, fingerpri
 from cow.models import (HALFact, HALCommand, Charger, ChargingSession,
                         MeterObservation, ServiceJob, JobEvent)
 from cow.services.jobs import transition_locked
+from cow.services import operational_eligibility as admission
 
 
 def accept_signed_fact(body: bytes, epoch_text: str, signature: str):
@@ -36,6 +37,9 @@ def ingest_fact(fact):
     dig = fingerprint(fact)
     event_id = UUID(fact["event_id"])
     with transaction.atomic():
+        # Physical facts are authoritative evidence, even when a NEW start
+        # would currently be denied. Serialize facts and fleet changes.
+        admission.lock_gate()
         # Advisory lock serializes same event ID, allowing integrity conflict distinction.
         from django.db import connection
         with connection.cursor() as cursor:

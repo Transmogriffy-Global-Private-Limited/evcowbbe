@@ -7,7 +7,9 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone as django_tz
 from cow.hal.contract import canonical, make_command, sign
-from cow.models import HALCommand
+from cow.models import HALCommand, AuditEvent
+from cow.common.errors import DomainError
+from cow.services import operational_eligibility as admission
 
 
 def send_operation_once(command_id):
@@ -18,9 +20,28 @@ def send_operation_once(command_id):
     if not settings.COW_HAL_BASE_URL or len(settings.COW_HAL_SHARED_SECRET) < 32:
         return "DISCONNECTED"
     with transaction.atomic():
+        admission.lock_gate()
         command = HALCommand.objects.select_for_update().select_related("charger").get(pk=command_id)
         if command.state != "PENDING":
             return command.state
+        if command.action == "StartCharging":
+            try:
+                admission.assert_start_admissible(
+                    command.job_id, command.charger_id,
+                    command.params["connector_number"], existing_command_id=command.pk,
+                )
+            except (DomainError, KeyError, TypeError, ValueError) as exc:
+                # Never send a stale, unadmitted PENDING command. A rejected
+                # pre-send command cannot have been delivered by this worker.
+                code = exc.code if isinstance(exc, DomainError) else "INVALID_COMMAND_PARAMS"
+                command.state = "REJECTED"
+                command.outcome_at = django_tz.now()
+                command.save(update_fields=["state", "outcome_at", "updated_at"])
+                AuditEvent.objects.create(
+                    actor=None, target_type="HALCommand", target_id=command.pk,
+                    action="COMMAND_PRESEND_REJECTED", details={"reason_code": code},
+                )
+                return "REJECTED"
         command.state = "DELIVERY_ATTEMPTED"
         command.attempted_at = django_tz.now()
         command.save(update_fields=["state","attempted_at","updated_at"])
@@ -39,5 +60,9 @@ def send_operation_once(command_id):
             state="OUTCOME_UNKNOWN"
     except (httpx.RequestError,ValueError):
         state="OUTCOME_UNKNOWN"
-    HALCommand.objects.filter(pk=command_id,state="DELIVERY_ATTEMPTED").update(state=state)
+    with transaction.atomic():
+        admission.lock_gate()
+        # A signed HAL fact may have advanced the state during HTTP IO.
+        # Never overwrite that fact-driven update.
+        HALCommand.objects.filter(pk=command_id,state="DELIVERY_ATTEMPTED").update(state=state)
     return state
