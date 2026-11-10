@@ -86,6 +86,8 @@ TAG_DESCRIPTIONS = {
     "28 | Admin commercial preview": "Nonbinding itemized estimate; no payment, quotation acceptance or HAL command.",
     "29 | Admin customers": "Bounded customer identity, profile and jobs projections; no Admin customer impersonation.",
     "30 | Admin drivers": "Driver identity and operational facts; approval or dispatchability not inferred.",
+    "31 | Driver recruitment": "Driver application and private document submission, review history, and correction workflow.",
+    "32 | Admin Driver recruitment": "Private document review, recruitment policy and auditable onboarding; not duty authorization.",
     "22 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
     "23 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
 }
@@ -168,6 +170,8 @@ def _tag(path: str) -> str:
         p = f"/api/v1/{plane}/"
         if path.startswith(p) and path[len(p):] in AUTH_ACTIONS:
             return label
+    if path.startswith("/api/v1/driver/application"):
+        return "31 | Driver recruitment"
     if path.startswith("/api/v1/app/profile"):
         return "06 | Customer profile"
     if path.startswith("/api/v1/app/vehicles"):
@@ -192,6 +196,8 @@ def _tag(path: str) -> str:
         return "16 | Admin RBAC"
     if path.startswith("/api/v1/admin/customers"):
         return "29 | Admin customers"
+    if path.startswith("/api/v1/admin/driver-application"):
+        return "32 | Admin Driver recruitment"
     if path.startswith("/api/v1/admin/drivers"):
         return "30 | Admin drivers"
     if path.startswith("/api/v1/admin/commercial/"):
@@ -252,6 +258,8 @@ def _notes(path: str, method: str) -> list[str]:
         notes.append("**Permissions:** Authorizations and role changes are enforced server-side; a visible FE control never grants permission.")
     if "/v1/admin/vehicles" in path or "/v1/admin/chargers" in path or "/v1/admin/pairings" in path:
         notes.append("**Fleet:** Use the resource's current ETag and a unique idempotency key for mutations where declared. Historical and availability views are separate from physical charger state.")
+    if path.startswith("/api/v1/driver/application") or path.startswith("/api/v1/admin/driver-application"):
+        notes.append("**Recruitment:** Versioned application, secure document IDs and audited review. JSON mutations require Idempotency-Key; versioned writes additionally require quoted If-Match. Upload uses multipart and private storage. Approval alone never grants charging duty eligibility.")
     if path.endswith("/history"):
         notes.append("**Audit:** This view may require an additional `audit.read` capability.")
     if "/v1/app/vehicles" in path:

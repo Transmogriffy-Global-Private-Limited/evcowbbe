@@ -734,3 +734,74 @@ class CommercialZoneChannel(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['zone','channel'], name='cow_cm_zone_channel_unique')]
 # END EVCOWBBE COMMERCIAL MACHINE V1 MODELS
+
+# Sprint 9 C1: recruitment evidence is separate from operational DriverProfile.
+class DriverRecruitmentPolicy(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy_key = models.CharField(max_length=64, default="DEFAULT")
+    version = models.PositiveIntegerField()
+    required_document_types = models.JSONField(default=list)
+    scan_required = models.BooleanField(default=True)
+    legal_decision_ref = models.CharField(max_length=200)
+    active = models.BooleanField(default=False)
+    created_by = models.ForeignKey(Principal, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["policy_key", "version"], name="cow_driver_policy_version_unique"),
+            models.UniqueConstraint(fields=["policy_key"], condition=Q(active=True), name="cow_driver_one_active_policy"),
+            models.CheckConstraint(condition=Q(version__gte=1), name="cow_driver_policy_positive_version"),
+        ]
+
+
+class DriverApplication(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    principal = models.OneToOneField(Principal, on_delete=models.PROTECT)
+    state = models.CharField(max_length=24, default="DRAFT")
+    version = models.PositiveIntegerField(default=1)
+    legal_name = models.CharField(max_length=160, default="", blank=True)
+    contact_phone = models.CharField(max_length=32, default="", blank=True)
+    policy = models.ForeignKey(DriverRecruitmentPolicy, null=True, on_delete=models.PROTECT)
+    submitted_at = models.DateTimeField(null=True)
+    reviewed_at = models.DateTimeField(null=True)
+
+
+class DriverDocument(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    application = models.ForeignKey(DriverApplication, on_delete=models.PROTECT, related_name="documents")
+    document_type = models.CharField(max_length=64)
+    storage_key = models.CharField(max_length=100, unique=True)
+    storage_provider = models.CharField(max_length=24, default="LOCAL")
+    content_type = models.CharField(max_length=80)
+    original_filename = models.CharField(max_length=255)
+    size_bytes = models.PositiveIntegerField()
+    sha256 = models.CharField(max_length=64)
+    expires_on = models.DateField(null=True)
+    replaces = models.ForeignKey("self", on_delete=models.PROTECT, null=True)
+    review_status = models.CharField(max_length=20, default="PENDING")
+    scan_status = models.CharField(max_length=24, default="NOT_SCANNED")
+    uploaded_by = models.ForeignKey(Principal, on_delete=models.PROTECT)
+
+    class Meta:
+        indexes = [models.Index(fields=["application", "document_type", "created_at"], name="cow_driver_doc_latest_idx")]
+
+
+class DriverDocumentReview(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(DriverDocument, on_delete=models.PROTECT, related_name="reviews")
+    actor = models.ForeignKey(Principal, on_delete=models.PROTECT)
+    decision = models.CharField(max_length=20)
+    reason = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class DriverApplicationHistory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    application = models.ForeignKey(DriverApplication, on_delete=models.PROTECT, related_name="history")
+    actor = models.ForeignKey(Principal, on_delete=models.PROTECT)
+    from_state = models.CharField(max_length=24)
+    to_state = models.CharField(max_length=24)
+    reason = models.CharField(max_length=500)
+    event_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    delivery_state = models.CharField(max_length=24, default="NOT_CONFIGURED")
+    created_at = models.DateTimeField(auto_now_add=True)
