@@ -81,8 +81,8 @@ def customer_detail(actor, customer_id):
         reject(404, "CUSTOMER_NOT_FOUND", "Customer not found")
     profile = CustomerProfile.objects.filter(principal=principal).first()
     result = _customer(principal, profile)
-    result["saved_vehicle_count"] = CustomerVehicle.objects.filter(owner=principal, active=True).count()
-    result["saved_address_count"] = CustomerAddress.objects.filter(owner=principal, active=True).count()
+    result["saved_vehicle_count"] = CustomerVehicle.objects.filter(owner=principal, active=True, saved=True).count()
+    result["saved_address_count"] = CustomerAddress.objects.filter(owner=principal, active=True, saved=True).count()
     return result
 
 
