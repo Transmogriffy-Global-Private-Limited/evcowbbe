@@ -1049,6 +1049,34 @@ def acquire_payment_creation_claim(
         return ("CLAIMED", my_claim_token, format_payment_order(order, key_id=key_id))
 
 
+def reserve_payment_provider_dispatch(actor: Principal, receipt: str, claim_token: str) -> None:
+    """One-shot durable dispatch gate. EVCOWBBE_FINANCIAL_EDGE_REPAIR_20261112.
+
+    After this transition, a retry may RECONCILE but MUST NEVER automatically
+    issue another POST /orders for the same receipt. This deliberately favors
+    financial safety over availability after a crash between commit and HTTP.
+    """
+    if not claim_token:
+        reject(409, "STALE_CLAIM", "Provider creation requires an active claim")
+    with transaction.atomic():
+        order = PaymentOrder.objects.select_for_update().filter(
+            customer=actor, receipt=receipt
+        ).first()
+        if not order or order.state != "PENDING" or not order.provider_order_id.startswith("intent_"):
+            reject(409, "INVALID_PAYMENT_INTENT", "No pending unconfirmed intent")
+        if order.claim_token != claim_token or not order.claim_expires_at or order.claim_expires_at <= timezone.now():
+            reject(409, "STALE_CLAIM", "Payment creation claim expired or changed")
+        if order.details.get("provider_create_dispatched") is True:
+            reject(409, "PROVIDER_CREATION_ALREADY_DISPATCHED", "Previous gateway create may have succeeded; reconcile or escalate")
+        order.details = {
+            **order.details,
+            "provider_create_dispatched": True,
+            "provider_create_dispatched_at": timezone.now().isoformat(),
+            "state": "PROVIDER_CREATE_DISPATCHED",
+        }
+        order.save(update_fields=["details", "updated_at"])
+
+
 def create_payment_intent(
     actor: Principal,
     amount_paise: int,
@@ -1111,13 +1139,15 @@ def confirm_payment_intent(
             )
 
         # Order is currently unconfirmed (intent_...): check claim token
-        if claim_token and order.claim_token and order.claim_token != claim_token:
+        if not claim_token or not order.claim_token or order.claim_token != claim_token:
             reject(
                 409,
                 "STALE_CLAIM",
                 "Payment order creation claim is stale or has been superseded by another worker",
             )
 
+        if not isinstance(provider_order_id, str) or not provider_order_id.startswith("order_"):
+            reject(422, "INVALID_PROVIDER_ORDER", "Invalid provider order identity")
         # Valid initial confirmation: transition from intent to confirmed order
         order.provider_order_id = provider_order_id
         order.claim_token = ""
@@ -1150,8 +1180,10 @@ def mark_payment_intent_uncertain(
             customer=actor, receipt=receipt
         ).first()
         if order:
-            if claim_token and order.claim_token and order.claim_token != claim_token:
-                return  # Another worker already reclaimed, do not touch
+            if not claim_token or not order.claim_token or order.claim_token != claim_token:
+                reject(409, "STALE_CLAIM", "Failure handler no longer owns the claim")
+            if order.state != "PENDING" or not order.provider_order_id.startswith("intent_"):
+                reject(409, "STALE_CLAIM", "Cannot mark a confirmed or completed order uncertain")
 
             # Sanitize error reason: do not store full stack traces or credentials
             safe_reason = error_reason.split("\n")[0][:200]

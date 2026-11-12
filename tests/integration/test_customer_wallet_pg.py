@@ -247,37 +247,53 @@ def test_duplicate_payment_id_across_different_orders():
 
 
 def test_concurrent_order_creation_exclusive_claim_prevents_duplicate_provider_orders():
-    """Simultaneous requests with the same idempotency key permit exactly one external creation."""
+    """Exercise the SERVICE concurrently using distinct PostgreSQL connections."""
+    import threading
+    from django.db import close_old_connections
     customer = create_customer_principal()
     key = "concurrent_creation_key_12345678"
+    entered_gateway = threading.Event()
+    release_gateway = threading.Event()
+    results: list[tuple[str, object]] = []
+    calls: list[str] = []
+
+    def mocked_gateway(key_id, secret, amount_paise, currency, receipt):
+        calls.append(receipt)
+        entered_gateway.set()
+        assert release_gateway.wait(timeout=15), "Test timed out waiting to release gateway"
+        return "order_single_created"
+
+    def worker():
+        close_old_connections()
+        try:
+            return ("OK", service.create_wallet_recharge_order(customer, {"amount_paise": 50000, "currency": "INR"}, key))
+        except Exception as exc:
+            return ("ERROR", exc)
+        finally:
+            close_old_connections()
+
+    with patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key", "rzp_secret")), \
+         patch("cow.users.service.reconcile_razorpay_order_by_receipt", return_value=(ReconciliationOutcome.CONFIRMED_ABSENT, None)), \
+         patch("cow.users.service.call_razorpay_create_order", side_effect=mocked_gateway):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(worker)
+            assert entered_gateway.wait(timeout=15), "First worker never entered gateway"
+            second = pool.submit(worker)
+            results.append(second.result(timeout=15))
+            release_gateway.set()
+            results.append(first.result(timeout=15))
+
+    assert len(calls) == 1, f"Expected one provider POST, got {calls}"
+    ok = [v for s, v in results if s == "OK"]
+    errs = [v for s, v in results if s == "ERROR"]
+    assert len(ok) == 1 and ok[0].status_code == 201, results
+    assert len(errs) == 1 and isinstance(errs[0], DomainError), results
+    assert errs[0].code == "ORDER_CREATION_IN_PROGRESS"
     receipt = compute_order_receipt(customer, key)
+    order = PaymentOrder.objects.get(customer=customer, receipt=receipt)
+    assert order.provider_order_id == "order_single_created"
 
-    with patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key", "rzp_sec")):
-        with patch("cow.users.service.reconcile_razorpay_order_by_receipt", return_value=(ReconciliationOutcome.CONFIRMED_ABSENT, None)):
-            with patch("cow.users.service.call_razorpay_create_order", return_value="order_razorpay_single") as mock_create:
-                # Worker 1 acquires claim and completes creation
-                status1, claim1, order1 = repo.acquire_payment_creation_claim(
-                    customer, receipt, 50000, "INR", idempotency_key=key, lease_seconds=30
-                )
-                assert status1 == "CLAIMED"
-                assert claim1 is not None
 
-                # Worker 2 attempts claim while Worker 1 lease is active
-                status2, claim2, order2 = repo.acquire_payment_creation_claim(
-                    customer, receipt, 50000, "INR", idempotency_key=key, lease_seconds=30
-                )
-                assert status2 == "IN_PROGRESS"
-
-                # Worker 1 confirms order
-                confirmed = repo.confirm_payment_intent(customer, receipt, "order_razorpay_single", "rzp_key", claim_token=claim1)
-                assert confirmed["order_id"] == "order_razorpay_single"
-
-                # Subsequent request finds CONFIRMED
-                status3, claim3, order3 = repo.acquire_payment_creation_claim(
-                    customer, receipt, 50000, "INR", idempotency_key=key, lease_seconds=30
-                )
-                assert status3 == "CONFIRMED"
-                assert order3["order_id"] == "order_razorpay_single"
 
 
 def test_provider_success_with_local_failure_recovery():
@@ -337,25 +353,25 @@ def test_inconclusive_reconciliation_prevents_duplicate_creation():
 
 
 def test_stale_worker_claim_rejected_on_confirmation():
-    """A worker whose claim expired cannot confirm an order if another claim was acquired."""
+    """Expire old claim using a deterministic DB update; no sleeps or clocks guessed."""
+    from datetime import timedelta
+    from django.utils import timezone
     customer = create_customer_principal()
     receipt = f"rc_stale_{uuid4().hex[:12]}"
-
-    # Worker 1 acquires claim
-    s1, claim1, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR", lease_seconds=1)
-
-    # Worker 2 reclaims after expiry
-    s2, claim2, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR", lease_seconds=30)
-    assert s2 == "CLAIMED"
-    assert claim1 != claim2
-
-    # Worker 2 confirms order
+    status1, claim1, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR", lease_seconds=30)
+    assert status1 == "CLAIMED"
+    PaymentOrder.objects.filter(customer=customer, receipt=receipt).update(
+        claim_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    status2, claim2, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR", lease_seconds=30)
+    assert status2 == "CLAIMED" and claim2 != claim1
     repo.confirm_payment_intent(customer, receipt, "order_worker_2", claim_token=claim2)
-
-    # Stale Worker 1 attempts confirmation with claim1 -> rejected
-    with pytest.raises(DomainError) as exc_info:
+    with pytest.raises(DomainError) as exc:
         repo.confirm_payment_intent(customer, receipt, "order_worker_1", claim_token=claim1)
-    assert exc_info.value.status_code == 409
+    assert exc.value.status_code == 409
+    assert PaymentOrder.objects.get(customer=customer, receipt=receipt).provider_order_id == "order_worker_2"
+
+
 
 
 def test_confirmed_provider_order_id_is_immutable():
@@ -475,3 +491,51 @@ def test_support_ticket_reopening_on_customer_reply():
     assert ticket_closed.version == 2
     assert CustomerSupportMessage.objects.filter(ticket=ticket_closed).count() == 1
     assert close_reply["status"] == "OPEN"
+
+def test_provider_create_dispatch_is_one_shot_even_after_lease_expiry():
+    """A dispatched POST must never be repeated after lease reclamation."""
+    from datetime import timedelta
+    from django.utils import timezone
+    customer = create_customer_principal()
+    receipt = compute_order_receipt(customer, "unique-dispatch-key-12345678")
+    status, claim1, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR")
+    assert status == "CLAIMED"
+    repo.reserve_payment_provider_dispatch(customer, receipt, claim1)
+    with pytest.raises(DomainError) as error:
+        repo.reserve_payment_provider_dispatch(customer, receipt, claim1)
+    assert error.value.code == "PROVIDER_CREATION_ALREADY_DISPATCHED"
+    PaymentOrder.objects.filter(customer=customer, receipt=receipt).update(
+        claim_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    status2, claim2, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR")
+    assert status2 == "CLAIMED" and claim2 != claim1
+    with pytest.raises(DomainError) as second:
+        repo.reserve_payment_provider_dispatch(customer, receipt, claim2)
+    assert second.value.code == "PROVIDER_CREATION_ALREADY_DISPATCHED"
+
+
+def test_late_error_handler_cannot_corrupt_confirmed_payment_intent():
+    customer = create_customer_principal()
+    receipt = compute_order_receipt(customer, "late-handler-key-123456789")
+    _, claim, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR")
+    repo.reserve_payment_provider_dispatch(customer, receipt, claim)
+    repo.confirm_payment_intent(customer, receipt, "order_confirmed_test", claim_token=claim)
+    with pytest.raises(DomainError) as exc:
+        repo.mark_payment_intent_uncertain(customer, receipt, "late timeout", claim_token=claim)
+    assert exc.value.code == "STALE_CLAIM"
+    order = PaymentOrder.objects.get(customer=customer, receipt=receipt)
+    assert order.provider_order_id == "order_confirmed_test"
+    assert order.details["state"] == "GATEWAY_CONFIRMED"
+
+
+def test_initial_payment_confirmation_requires_current_claim():
+    customer = create_customer_principal()
+    receipt = compute_order_receipt(customer, "confirm-token-key-12345678")
+    _, claim, _ = repo.acquire_payment_creation_claim(customer, receipt, 50000, "INR")
+    with pytest.raises(DomainError) as missing:
+        repo.confirm_payment_intent(customer, receipt, "order_without_claim")
+    assert missing.value.code == "STALE_CLAIM"
+    with pytest.raises(DomainError) as wrong:
+        repo.confirm_payment_intent(customer, receipt, "order_wrong_claim", claim_token="wrong")
+    assert wrong.value.code == "STALE_CLAIM"
+    repo.confirm_payment_intent(customer, receipt, "order_right_claim", claim_token=claim)

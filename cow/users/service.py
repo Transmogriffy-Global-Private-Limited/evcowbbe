@@ -525,8 +525,11 @@ def call_razorpay_create_order(key_id: str, secret: str, amount_paise: int, curr
         with urllib.request.urlopen(req, timeout=10) as response:
             res_data = json.loads(response.read().decode("utf-8"))
             order_id = res_data.get("id")
-            if not order_id:
-                reject(502, "PAYMENT_GATEWAY_ERROR", "Razorpay did not return an order ID")
+            if not isinstance(order_id, str) or not order_id.startswith("order_"):
+                reject(502, "PAYMENT_GATEWAY_ERROR", "Razorpay did not return a valid order ID")
+            if (res_data.get("receipt") != receipt or res_data.get("amount") != amount_paise
+                    or res_data.get("currency") != currency):
+                reject(502, "PAYMENT_GATEWAY_ERROR", "Provider order identity or terms do not match request")
             return order_id
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8", errors="replace")
@@ -585,89 +588,67 @@ def reconcile_razorpay_order_by_receipt(
     expected_amount_paise: int,
     expected_currency: str,
 ) -> tuple[ReconciliationOutcome, str | None]:
-    """Reconcile order status against Razorpay using deterministic receipt lookup.
-    
-    Outcomes:
-    - (FOUND, order_id): Exact matching order found with verified receipt, amount, and currency.
-    - (CONFIRMED_ABSENT, None): Complete search confirmed no order exists for this receipt.
-    - (UNKNOWN, None): Inconclusive (network timeout, HTTP error, malformed JSON, or incomplete search).
+    """Fetch complete receipt-filtered pages; fail closed on incomplete search.
+
+    EVCOWBBE_FINANCIAL_EDGE_REPAIR_20261112. Razorpay `count` is per-page,
+    not total records. A full page requires following skip pagination.
+    Absence is not proof of provider write non-occurrence; the durable dispatch
+    gate separately forbids a second POST once one may have been dispatched.
     """
     if not key_id or not secret or not receipt:
         return (ReconciliationOutcome.UNKNOWN, None)
-
     import base64
     import json
-    import urllib.error
     import urllib.parse
     import urllib.request
 
-    query = urllib.parse.urlencode({"receipt": receipt, "count": 10})
-    url = f"https://api.razorpay.com/v1/orders?{query}"
-    auth_str = f"{key_id}:{secret}"
-    b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("ascii")
-    headers = {
-        "Authorization": f"Basic {b64_auth}",
-    }
-    req = urllib.request.Request(url, headers=headers, method="GET")
-
-    try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            if response.status != 200:
+    auth = base64.b64encode(f"{key_id}:{secret}".encode("utf-8")).decode("ascii")
+    page_size = 100
+    # Bounded work. Beyond this limit escalate instead of guessing absence.
+    max_pages = 20
+    found: set[str] = set()
+    for page in range(max_pages):
+        query = urllib.parse.urlencode({"receipt": receipt, "count": page_size, "skip": page * page_size})
+        req = urllib.request.Request(
+            f"https://api.razorpay.com/v1/orders?{query}",
+            headers={"Authorization": f"Basic {auth}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status != 200:
+                    return (ReconciliationOutcome.UNKNOWN, None)
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return (ReconciliationOutcome.UNKNOWN, None)
+        if not isinstance(data, dict) or data.get("entity") != "collection":
+            return (ReconciliationOutcome.UNKNOWN, None)
+        items = data.get("items")
+        count = data.get("count")
+        if not isinstance(items, list) or isinstance(count, bool) or not isinstance(count, int):
+            return (ReconciliationOutcome.UNKNOWN, None)
+        if count != len(items) or len(items) > page_size:
+            return (ReconciliationOutcome.UNKNOWN, None)
+        for item in items:
+            if not isinstance(item, dict):
                 return (ReconciliationOutcome.UNKNOWN, None)
-
-            raw_body = response.read().decode("utf-8")
-            try:
-                res_data = json.loads(raw_body)
-            except Exception:
+            # Razorpay's receipt filter can be a substring match.
+            if item.get("receipt") != receipt:
+                continue
+            oid = item.get("id")
+            if not isinstance(oid, str) or not oid.startswith("order_"):
                 return (ReconciliationOutcome.UNKNOWN, None)
+            if item.get("amount") != expected_amount_paise or item.get("currency") != expected_currency:
+                reject(409, "PAYMENT_ORDER_CONFLICT", "Provider order for receipt conflicts with expected amount/currency")
+            found.add(oid)
+            if len(found) > 1:
+                reject(409, "MULTIPLE_PROVIDER_ORDERS", "Multiple provider orders use one receipt; manual reconciliation required")
+        if len(items) < page_size:
+            return ((ReconciliationOutcome.FOUND, next(iter(found))) if found
+                    else (ReconciliationOutcome.CONFIRMED_ABSENT, None))
+    return (ReconciliationOutcome.UNKNOWN, None)
 
-            if not isinstance(res_data, dict):
-                return (ReconciliationOutcome.UNKNOWN, None)
 
-            items = res_data.get("items")
-            if items is None or not isinstance(items, list):
-                return (ReconciliationOutcome.UNKNOWN, None)
-
-            total_count = res_data.get("count", len(items))
-
-            matching_orders = []
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("receipt") == receipt:
-                    item_id = item.get("id")
-                    item_amount = item.get("amount")
-                    item_currency = item.get("currency")
-
-                    if not item_id:
-                        continue
-
-                    # Verify amount and currency
-                    if item_amount != expected_amount_paise or item_currency != expected_currency:
-                        reject(
-                            409,
-                            "PAYMENT_ORDER_CONFLICT",
-                            f"Gateway order '{item_id}' exists for receipt with conflicting parameters",
-                        )
-                    matching_orders.append(item_id)
-
-            if matching_orders:
-                return (ReconciliationOutcome.FOUND, matching_orders[0])
-
-            # Incomplete search check: if count > len(items), pagination was incomplete
-            if isinstance(total_count, int) and total_count > len(items):
-                return (ReconciliationOutcome.UNKNOWN, None)
-
-            # Absence is confirmed only when lookup succeeded completely with 0 matching items
-            return (ReconciliationOutcome.CONFIRMED_ABSENT, None)
-
-    except DomainError:
-        raise
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
-        # Network errors, timeouts, or gateway 5xx are inconclusive (UNKNOWN), NEVER confirmed absence
-        return (ReconciliationOutcome.UNKNOWN, None)
-    except Exception:
-        return (ReconciliationOutcome.UNKNOWN, None)
 
 
 def compute_order_receipt(actor: Principal, key: str) -> str:
@@ -758,8 +739,10 @@ def create_wallet_recharge_order(actor: Principal, raw_payload: dict[str, Any], 
             "Payment gateway reconciliation is inconclusive; please retry shortly",
         )
 
-    # recon_status == ReconciliationOutcome.CONFIRMED_ABSENT:
-    # Guaranteed safe to create the order with Razorpay
+    # Search absence does NOT prove an earlier dispatched POST never happened.
+    # Reserve the once-only provider dispatch in a committed DB transaction.
+    # This also verifies the claim is current and has not expired.
+    repo.reserve_payment_provider_dispatch(actor, receipt, claim_token)
     try:
         provider_order_id = call_razorpay_create_order(
             key_id=key_id,

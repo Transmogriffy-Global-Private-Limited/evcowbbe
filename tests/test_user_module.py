@@ -497,8 +497,12 @@ class UserServiceWorkflowsTest(unittest.TestCase):
             "state": "PENDING",
         }
 
-        resp = service.create_wallet_recharge_order(
-            self.actor, {"amount_paise": 50000, "currency": "INR"}, self.key
+        with patch("cow.users.service.repo.reserve_payment_provider_dispatch") as mock_dispatch:
+            resp = service.create_wallet_recharge_order(
+                self.actor, {"amount_paise": 50000, "currency": "INR"}, self.key
+            )
+        mock_dispatch.assert_called_once_with(
+            self.actor, compute_order_receipt(self.actor, self.key), "claim_token_abc"
         )
 
         self.assertEqual(resp.status_code, 201)
