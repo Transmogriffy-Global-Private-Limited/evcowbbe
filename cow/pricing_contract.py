@@ -1,7 +1,12 @@
 """Pure strict validation for the Admin pricing draft contract (not a billing engine)."""
 
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
 from decimal import Decimal
 from typing import Annotated, Literal
 
