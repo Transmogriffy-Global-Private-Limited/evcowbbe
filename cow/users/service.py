@@ -365,11 +365,13 @@ def get_job_rating(actor: Principal, job_id: UUID) -> dict[str, Any]:
     return repo.get_rating_for_job(actor, job_id)
 
 
-def upsert_job_rating(actor: Principal, job_id: UUID, raw_payload: dict[str, Any], key: str) -> JsonResponse:
+def upsert_job_rating(
+    actor: Principal, job_id: UUID, raw_payload: dict[str, Any], version: int | None, key: str
+) -> JsonResponse:
     payload = parse_payload(RatingCreatePayload, raw_payload)
 
     def op():
-        res = repo.upsert_rating_for_job(actor, job_id, payload.rating, payload.comment)
+        res = repo.upsert_rating_for_job(actor, job_id, payload.rating, payload.comment, version=version)
         return 200, {"data": res}
 
     return execute_idempotent(
@@ -415,12 +417,14 @@ def list_support_tickets(actor: Principal, limit: int = 50) -> list[dict[str, An
     return repo.list_support_tickets(actor, limit)
 
 
-def reply_support_ticket(actor: Principal, ticket_id: UUID, raw_payload: dict[str, Any], key: str) -> JsonResponse:
+def reply_support_ticket(
+    actor: Principal, ticket_id: UUID, raw_payload: dict[str, Any], version: int | None, key: str
+) -> JsonResponse:
     payload = parse_payload(SupportReplyPayload, raw_payload)
 
     def op():
-        res = repo.reply_support_ticket(actor, ticket_id, payload.message)
-        return 201, {"data": res}
+        res = repo.reply_support_ticket(actor, ticket_id, payload.message, version=version)
+        return 200, {"data": res}
 
     return execute_idempotent(
         actor,
@@ -479,7 +483,6 @@ def get_razorpay_credentials() -> tuple[str, str]:
     key_id = os.environ.get("RAZORPAY_KEY_ID", "").strip()
     secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
     if not key_id or not secret:
-        # Check .env if available
         try:
             from scripts.dev import env_file
             env_file()
@@ -491,9 +494,15 @@ def get_razorpay_credentials() -> tuple[str, str]:
 
 
 def call_razorpay_create_order(key_id: str, secret: str, amount_paise: int, currency: str, receipt: str) -> str:
-    """Attempt Razorpay API order creation, falling back to simulated order if offline/testing."""
+    """Create Razorpay payment order via official Orders API.
+
+    Simulation is strictly isolated to explicit RAZORPAY_TEST_SIMULATION=1 environment.
+    """
+    is_simulation = os.environ.get("RAZORPAY_TEST_SIMULATION") == "1"
     if not key_id or not secret:
-        return f"order_{uuid4().hex[:16]}"
+        if is_simulation:
+            return f"order_test_{uuid4().hex[:14]}"
+        reject(500, "CONFIGURATION_ERROR", "Payment gateway credentials are not configured")
 
     import base64
     import json
@@ -515,11 +524,54 @@ def call_razorpay_create_order(key_id: str, secret: str, amount_paise: int, curr
     }
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            return res_data.get("id", f"order_{uuid4().hex[:16]}")
-    except (urllib.error.URLError, OSError):
-        return f"order_{uuid4().hex[:16]}"
+            order_id = res_data.get("id")
+            if not order_id:
+                reject(502, "PAYMENT_GATEWAY_ERROR", "Razorpay did not return an order ID")
+            return order_id
+    except urllib.error.HTTPError as e:
+        if is_simulation:
+            return f"order_test_{uuid4().hex[:14]}"
+        err_msg = e.read().decode("utf-8", errors="replace")
+        reject(502, "PAYMENT_GATEWAY_ERROR", f"Payment provider rejected order: {err_msg}")
+    except (urllib.error.URLError, OSError) as e:
+        if is_simulation:
+            return f"order_test_{uuid4().hex[:14]}"
+        reject(504, "GATEWAY_TIMEOUT", f"Payment gateway connection timed out or unreachable: {e}")
+
+
+def fetch_razorpay_payment(key_id: str, secret: str, payment_id: str) -> dict[str, Any]:
+    """Fetch authoritative payment status from Razorpay."""
+    if os.environ.get("RAZORPAY_TEST_SIMULATION") == "1":
+        return {
+            "id": payment_id,
+            "status": "captured",
+            "simulated": True,
+        }
+    if not key_id or not secret:
+        reject(500, "CONFIGURATION_ERROR", "Payment gateway credentials are not configured")
+
+    import base64
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = f"https://api.razorpay.com/v1/payments/{payment_id}"
+    auth_str = f"{key_id}:{secret}"
+    b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("ascii")
+    headers = {
+        "Authorization": f"Basic {b64_auth}",
+    }
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8", errors="replace")
+        reject(502, "PAYMENT_GATEWAY_ERROR", f"Unable to fetch payment details from provider: {err_msg}")
+    except (urllib.error.URLError, OSError) as e:
+        reject(504, "GATEWAY_TIMEOUT", f"Payment gateway connection timed out: {e}")
 
 
 def get_wallet(actor: Principal) -> tuple[dict[str, Any], int]:
@@ -561,11 +613,14 @@ def create_wallet_recharge_order(actor: Principal, raw_payload: dict[str, Any], 
 
 
 def verify_wallet_recharge(actor: Principal, raw_payload: dict[str, Any]) -> dict[str, Any]:
-    """Verify payment signature from Razorpay and credit wallet."""
+    """Verify payment signature and authoritative captured status from Razorpay before crediting."""
     payload = parse_payload(WalletRechargeVerifyPayload, raw_payload)
-    _, secret = get_razorpay_credentials()
+    key_id, secret = get_razorpay_credentials()
     if not secret:
         reject(500, "CONFIGURATION_ERROR", "Razorpay key secret is not configured")
+
+    # Authoritative payment evidence from Razorpay
+    payment_evidence = fetch_razorpay_payment(key_id, secret, payload.razorpay_payment_id)
 
     return repo.verify_and_credit_recharge(
         actor=actor,
@@ -573,5 +628,6 @@ def verify_wallet_recharge(actor: Principal, raw_payload: dict[str, Any]) -> dic
         payment_id=payload.razorpay_payment_id,
         signature=payload.razorpay_signature,
         secret=secret,
+        payment_evidence=payment_evidence,
     )
 

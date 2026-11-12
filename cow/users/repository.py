@@ -22,7 +22,12 @@ from cow.models import (
     AuditEvent,
     ChargingSession,
     CustomerAddress,
+    CustomerJobRating,
+    CustomerNotification,
+    CustomerNotificationPreference,
     CustomerProfile,
+    CustomerSupportMessage,
+    CustomerSupportTicket,
     CustomerVehicle,
     MeterObservation,
     PaymentOrder,
@@ -39,6 +44,7 @@ from cow.users.contracts import (
     merged_address,
     merged_vehicle,
 )
+from cow.users.schemas import format_paise_to_inr_str
 
 VEHICLE_FIELDS = tuple(VehicleFields.model_fields)
 ADDRESS_FIELDS = tuple(AddressFields.model_fields)
@@ -357,12 +363,20 @@ def list_service_requests(actor: Principal, limit: int = 50) -> list[dict[str, A
 # ============================================================================
 
 def get_job_model(actor: Principal, job_id: UUID, *, lock: bool = False) -> ServiceJob:
-    query = ServiceJob.objects.select_related("request", "accepted_quote", "driver_duty").filter(
-        id=job_id, request__customer=actor
-    )
     if lock:
-        query = query.select_for_update()
-    job = query.first()
+        # Lock ServiceJob row independently without nullable joins to avoid PostgreSQL outer join lock error
+        job = (
+            ServiceJob.objects.select_for_update(of=("self",))
+            .select_related("request", "accepted_quote")
+            .filter(id=job_id, request__customer=actor)
+            .first()
+        )
+    else:
+        job = (
+            ServiceJob.objects.select_related("request", "accepted_quote", "driver_duty")
+            .filter(id=job_id, request__customer=actor)
+            .first()
+        )
     if not job:
         reject(404, "NOT_FOUND", "Job not found")
     return job
@@ -404,23 +418,25 @@ def cancel_job(actor: Principal, job_id: UUID, version: int, reason: str | None 
 def get_job_live(actor: Principal, job_id: UUID) -> dict[str, Any]:
     job = get_job_model(actor, job_id)
     now = timezone.now()
-    session = ChargingSession.objects.filter(job=job).order_by("-created_at").first()
+    session = ChargingSession.objects.filter(job=job).order_by("-started_at").first()
     latest_meter = None
-    if session:
-        obs = MeterObservation.objects.filter(charger=session.charger, connector_number=session.connector_number).order_by("-created_at").first()
-        if obs:
-            latest_meter = {"meter_wh": obs.meter_wh, "observed_at": obs.observed_at.isoformat()}
     charging_status = None
     if session:
+        obs = MeterObservation.objects.filter(session=session).order_by("-observed_at").first()
+        if obs:
+            latest_meter = {"energy_wh": obs.energy_wh, "observed_at": obs.observed_at.isoformat()}
         charging_status = {
+            "session_id": str(session.id),
             "session_state": session.state,
             "started_at": session.started_at.isoformat() if session.started_at else None,
+            "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+            "meter_start_wh": session.meter_start_wh,
+            "last_meter_wh": session.last_meter_wh,
             "latest_meter": latest_meter,
         }
+    # Do NOT fabricate ETA: return null unless reliable location/route data is integrated
     driver_location = None
     eta_minutes = None
-    if job.state in {"ASSIGNED", "ACCEPTED", "EN_ROUTE"}:
-        eta_minutes = 15  # authoritatively estimated when driver is en route
     return {
         "job_id": str(job.id),
         "state": job.state,
@@ -502,312 +518,256 @@ def promote_address_from_job(actor: Principal, job_id: UUID, label: str | None =
 
 def get_rating_for_job(actor: Principal, job_id: UUID) -> dict[str, Any]:
     job = get_job_model(actor, job_id)
-    event = AuditEvent.objects.filter(
-        actor=actor,
-        action="JOB_RATING",
-        target_type="ServiceJob",
-        target_id=job.id,
-    ).order_by("-created_at").first()
-    if not event:
+    rating_obj = CustomerJobRating.objects.filter(job=job, customer=actor).first()
+    if not rating_obj:
         reject(404, "NOT_FOUND", "No rating found for this job")
-    details = event.details
     return {
         "job_id": str(job.id),
-        "rating": details.get("rating", 5),
-        "comment": details.get("comment"),
-        "created_at": event.created_at.isoformat(),
+        "rating": rating_obj.rating,
+        "comment": rating_obj.comment or None,
+        "version": rating_obj.version,
+        "created_at": rating_obj.created_at.isoformat(),
+        "updated_at": rating_obj.updated_at.isoformat() if rating_obj.updated_at else None,
     }
 
 
-def upsert_rating_for_job(actor: Principal, job_id: UUID, rating: int, comment: str | None = None) -> dict[str, Any]:
-    job = get_job_model(actor, job_id)
-    if job.state != "COMPLETED":
-        reject(409, "INVALID_JOB_STATE", f"Job in state {job.state} cannot be rated; only COMPLETED jobs can be rated")
+def upsert_rating_for_job(
+    actor: Principal, job_id: UUID, rating: int, comment: str | None = None, version: int | None = None
+) -> dict[str, Any]:
     with transaction.atomic():
-        audit(
-            actor,
-            job,
-            "JOB_RATING",
-            details={"rating": rating, "comment": comment or ""},
-        )
+        job = get_job_model(actor, job_id)
+        if job.state != "COMPLETED":
+            reject(409, "INVALID_JOB_STATE", f"Job in state {job.state} cannot be rated; only COMPLETED jobs can be rated")
+        rating_obj = CustomerJobRating.objects.select_for_update().filter(job=job, customer=actor).first()
+        if rating_obj:
+            if version is not None:
+                assert_version(rating_obj, version)
+            rating_obj.rating = rating
+            rating_obj.comment = comment or ""
+            rating_obj.version += 1
+            rating_obj.save(update_fields=["rating", "comment", "version", "updated_at"])
+            audit(actor, rating_obj, "JOB_RATING_UPDATED", details={"rating": rating, "version": rating_obj.version})
+        else:
+            rating_obj = CustomerJobRating.objects.create(
+                job=job,
+                customer=actor,
+                rating=rating,
+                comment=comment or "",
+                version=1,
+            )
+            audit(actor, rating_obj, "JOB_RATING_CREATED", details={"rating": rating})
         return {
             "job_id": str(job.id),
-            "rating": rating,
-            "comment": comment,
-            "created_at": timezone.now().isoformat(),
+            "rating": rating_obj.rating,
+            "comment": rating_obj.comment or None,
+            "version": rating_obj.version,
+            "created_at": rating_obj.created_at.isoformat(),
+            "updated_at": rating_obj.updated_at.isoformat(),
         }
 
 
 def list_ratings(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
-    events = AuditEvent.objects.filter(
-        actor=actor,
-        action="JOB_RATING",
-        target_type="ServiceJob",
-    ).order_by("-created_at")[:limit]
-    seen_jobs = set()
-    results = []
-    for event in events:
-        job_id_str = str(event.target_id)
-        if job_id_str in seen_jobs:
-            continue
-        seen_jobs.add(job_id_str)
-        details = event.details
-        results.append({
-            "job_id": job_id_str,
-            "rating": details.get("rating", 5),
-            "comment": details.get("comment"),
-            "created_at": event.created_at.isoformat(),
-        })
-    return results
+    ratings = CustomerJobRating.objects.filter(customer=actor).order_by("-updated_at")[:limit]
+    return [
+        {
+            "job_id": str(r.job_id),
+            "rating": r.rating,
+            "comment": r.comment or None,
+            "version": r.version,
+            "created_at": r.created_at.isoformat(),
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in ratings
+    ]
 
 
 # ============================================================================
 # Customer Support Tickets
 # ============================================================================
 
-def create_support_ticket(actor: Principal, category: str, subject: str, message: str, job_id: UUID | None = None) -> dict[str, Any]:
-    if job_id:
-        # Validate that the job exists and is owned by the actor
-        get_job_model(actor, job_id)
-    ticket_id = uuid4()
-    now = timezone.now()
-    initial_message = {
-        "id": str(uuid4()),
-        "author": "CUSTOMER",
-        "message": message,
-        "created_at": now.isoformat(),
-    }
-    with transaction.atomic():
-        AuditEvent.objects.create(
-            actor=actor,
-            target_type="SupportTicket",
-            target_id=ticket_id,
-            action="SUPPORT_TICKET_CREATE",
-            details={
-                "category": category,
-                "subject": subject,
-                "job_id": str(job_id) if job_id else None,
-                "status": "OPEN",
-                "messages": [initial_message],
-                "updated_at": now.isoformat(),
-            },
-        )
+def format_support_ticket(ticket: CustomerSupportTicket) -> dict[str, Any]:
+    messages = [
+        {
+            "id": str(m.id),
+            "author": "CUSTOMER" if m.sender_id == ticket.customer_id else "SUPPORT",
+            "message": m.message,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in ticket.messages.all().order_by("created_at")
+    ]
     return {
-        "id": str(ticket_id),
+        "id": str(ticket.id),
         "channel": "CUSTOMER_PLATFORM",
-        "status": "OPEN",
-        "category": category,
-        "subject": subject,
-        "job_id": str(job_id) if job_id else None,
-        "messages": [initial_message],
-        "created_at": now.isoformat(),
-        "updated_at": now.isoformat(),
+        "status": ticket.status,
+        "category": ticket.category,
+        "subject": ticket.subject,
+        "job_id": str(ticket.job_id) if ticket.job_id else None,
+        "version": ticket.version,
+        "messages": messages,
+        "created_at": ticket.created_at.isoformat(),
+        "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else ticket.created_at.isoformat(),
     }
+
+
+def create_support_ticket(
+    actor: Principal,
+    category: str,
+    subject: str,
+    message: str,
+    job_id: UUID | None = None,
+) -> dict[str, Any]:
+    job = None
+    if job_id:
+        job = get_job_model(actor, job_id)
+    with transaction.atomic():
+        ticket = CustomerSupportTicket.objects.create(
+            customer=actor,
+            job=job,
+            subject=subject,
+            category=category,
+            status="OPEN",
+            version=1,
+        )
+        CustomerSupportMessage.objects.create(
+            ticket=ticket,
+            sender=actor,
+            message=message,
+        )
+        audit(actor, ticket, "SUPPORT_TICKET_CREATED", details={"category": category, "subject": subject})
+        return format_support_ticket(ticket)
 
 
 def get_support_ticket(actor: Principal, ticket_id: UUID) -> dict[str, Any]:
-    event = AuditEvent.objects.filter(
-        actor=actor,
-        target_type="SupportTicket",
-        target_id=ticket_id,
-    ).order_by("-created_at").first()
-    if not event:
+    ticket = CustomerSupportTicket.objects.prefetch_related("messages").filter(
+        id=ticket_id, customer=actor
+    ).first()
+    if not ticket:
         reject(404, "NOT_FOUND", "Support ticket not found")
-    details = event.details
-    return {
-        "id": str(ticket_id),
-        "channel": "CUSTOMER_PLATFORM",
-        "status": details.get("status", "OPEN"),
-        "category": details.get("category", "General"),
-        "subject": details.get("subject", ""),
-        "job_id": details.get("job_id"),
-        "messages": details.get("messages", []),
-        "created_at": event.created_at.isoformat(),
-        "updated_at": details.get("updated_at", event.created_at.isoformat()),
-    }
+    return format_support_ticket(ticket)
 
 
 def list_support_tickets(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
-    events = AuditEvent.objects.filter(
-        actor=actor,
-        target_type="SupportTicket",
-        action="SUPPORT_TICKET_CREATE",
-    ).order_by("-created_at")[:limit]
-    results = []
-    for ev in events:
-        # Fetch latest state from most recent event for this ticket
-        latest = AuditEvent.objects.filter(
-            actor=actor,
-            target_type="SupportTicket",
-            target_id=ev.target_id,
-        ).order_by("-created_at").first() or ev
-        d = latest.details
-        results.append({
-            "id": str(ev.target_id),
-            "channel": "CUSTOMER_PLATFORM",
-            "status": d.get("status", "OPEN"),
-            "category": d.get("category", "General"),
-            "subject": d.get("subject", ""),
-            "job_id": d.get("job_id"),
-            "messages": d.get("messages", []),
-            "created_at": ev.created_at.isoformat(),
-            "updated_at": d.get("updated_at", ev.created_at.isoformat()),
-        })
-    return results
+    tickets = (
+        CustomerSupportTicket.objects.prefetch_related("messages")
+        .filter(customer=actor)
+        .order_by("-updated_at")[:limit]
+    )
+    return [format_support_ticket(t) for t in tickets]
 
 
-def reply_support_ticket(actor: Principal, ticket_id: UUID, message: str) -> dict[str, Any]:
-    current = get_support_ticket(actor, ticket_id)
-    now = timezone.now()
-    new_message = {
-        "id": str(uuid4()),
-        "author": "CUSTOMER",
-        "message": message,
-        "created_at": now.isoformat(),
-    }
-    messages = current.get("messages", []) + [new_message]
-    # If ticket was RESOLVED or CLOSED, replying reopens it to OPEN per section 13.2
-    new_status = "OPEN"
+def reply_support_ticket(
+    actor: Principal,
+    ticket_id: UUID,
+    message: str,
+    version: int | None = None,
+) -> dict[str, Any]:
     with transaction.atomic():
-        AuditEvent.objects.create(
-            actor=actor,
-            target_type="SupportTicket",
-            target_id=ticket_id,
-            action="SUPPORT_TICKET_REPLY",
-            details={
-                "category": current.get("category"),
-                "subject": current.get("subject"),
-                "job_id": current.get("job_id"),
-                "status": new_status,
-                "messages": messages,
-                "updated_at": now.isoformat(),
-            },
+        ticket = (
+            CustomerSupportTicket.objects.select_for_update()
+            .prefetch_related("messages")
+            .filter(id=ticket_id, customer=actor)
+            .first()
         )
-    return {
-        "id": str(ticket_id),
-        "channel": "CUSTOMER_PLATFORM",
-        "status": new_status,
-        "category": current.get("category"),
-        "subject": current.get("subject"),
-        "job_id": current.get("job_id"),
-        "messages": messages,
-        "created_at": current.get("created_at"),
-        "updated_at": now.isoformat(),
-    }
+        if not ticket:
+            reject(404, "NOT_FOUND", "Support ticket not found")
+        if ticket.status == "CLOSED":
+            reject(409, "TICKET_CLOSED", "Cannot reply to a closed support ticket")
+        if version is not None:
+            assert_version(ticket, version)
+        CustomerSupportMessage.objects.create(
+            ticket=ticket,
+            sender=actor,
+            message=message,
+        )
+        ticket.status = "OPEN"
+        ticket.version += 1
+        ticket.save(update_fields=["status", "version", "updated_at"])
+        audit(actor, ticket, "SUPPORT_TICKET_REPLIED", details={"version": ticket.version})
+        return format_support_ticket(ticket)
 
 
 # ============================================================================
 # Notifications & Preferences
 # ============================================================================
 
-def list_notifications(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
-    events = AuditEvent.objects.filter(
-        actor=actor,
-        action="NOTIFICATION_SENT",
-    ).order_by("-created_at")[:limit]
-    results = []
-    for ev in events:
-        d = ev.details
-        results.append({
-            "id": str(ev.id),
-            "title": d.get("title", "Notification"),
-            "body": d.get("body", ""),
-            "category": d.get("category", "SERVICE"),
-            "is_read": d.get("is_read", False),
-            "created_at": ev.created_at.isoformat(),
-        })
-    return results
-
-
-def get_unread_notification_count(actor: Principal) -> int:
-    events = AuditEvent.objects.filter(
-        actor=actor,
-        action="NOTIFICATION_SENT",
-    )
-    unread = [ev for ev in events if not ev.details.get("is_read", False)]
-    return len(unread)
-
-
-def mark_notification_read(actor: Principal, notification_id: UUID) -> dict[str, Any]:
-    event = AuditEvent.objects.filter(
-        id=notification_id,
-        actor=actor,
-        action="NOTIFICATION_SENT",
-    ).first()
-    if not event:
-        reject(404, "NOT_FOUND", "Notification not found")
-    details = event.details
-    details["is_read"] = True
-    event.save(update_fields=["details"])
+def format_notification(n: CustomerNotification) -> dict[str, Any]:
     return {
-        "id": str(event.id),
-        "title": details.get("title", "Notification"),
-        "body": details.get("body", ""),
-        "category": details.get("category", "SERVICE"),
-        "is_read": True,
-        "created_at": event.created_at.isoformat(),
+        "id": str(n.id),
+        "title": n.title,
+        "message": n.message,
+        "notification_type": n.notification_type,
+        "is_read": n.is_read,
+        "read_at": n.read_at.isoformat() if n.read_at else None,
+        "created_at": n.created_at.isoformat(),
+        "data": n.data,
     }
 
 
+def list_notifications(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    notifs = CustomerNotification.objects.filter(customer=actor).order_by("-created_at")[:limit]
+    return [format_notification(n) for n in notifs]
+
+
+def get_unread_notification_count(actor: Principal) -> int:
+    return CustomerNotification.objects.filter(customer=actor, is_read=False).count()
+
+
+def mark_notification_read(actor: Principal, notification_id: UUID) -> dict[str, Any]:
+    with transaction.atomic():
+        notif = CustomerNotification.objects.select_for_update().filter(
+            id=notification_id, customer=actor
+        ).first()
+        if not notif:
+            reject(404, "NOT_FOUND", "Notification not found")
+        if not notif.is_read:
+            notif.is_read = True
+            notif.read_at = timezone.now()
+            notif.save(update_fields=["is_read", "read_at", "updated_at"])
+        return format_notification(notif)
+
+
 def mark_all_notifications_read(actor: Principal) -> list[dict[str, Any]]:
-    events = AuditEvent.objects.filter(
-        actor=actor,
-        action="NOTIFICATION_SENT",
-    )
-    results = []
-    for event in events:
-        details = event.details
-        if not details.get("is_read", False):
-            details["is_read"] = True
-            event.save(update_fields=["details"])
-        results.append({
-            "id": str(event.id),
-            "title": details.get("title", "Notification"),
-            "body": details.get("body", ""),
-            "category": details.get("category", "SERVICE"),
-            "is_read": True,
-            "created_at": event.created_at.isoformat(),
-        })
-    return results
+    now = timezone.now()
+    with transaction.atomic():
+        unread = list(CustomerNotification.objects.select_for_update().filter(customer=actor, is_read=False))
+        if unread:
+            CustomerNotification.objects.filter(id__in=[n.id for n in unread]).update(
+                is_read=True, read_at=now, updated_at=now
+            )
+        all_notifs = CustomerNotification.objects.filter(customer=actor).order_by("-created_at")[:50]
+        return [format_notification(n) for n in all_notifs]
 
 
 def get_notification_preferences(actor: Principal) -> dict[str, Any]:
-    event = AuditEvent.objects.filter(
-        actor=actor,
-        action="PREFERENCES_UPDATE",
-    ).order_by("-created_at").first()
-    if event:
-        d = event.details
-        return {
-            "push_enabled": d.get("push_enabled", True),
-            "email_enabled": d.get("email_enabled", True),
-            "sms_enabled": d.get("sms_enabled", True),
-            "service_updates": d.get("service_updates", True),
-            "promotions": d.get("promotions", False),
-        }
+    pref, _ = CustomerNotificationPreference.objects.get_or_create(customer=actor)
     return {
-        "push_enabled": True,
-        "email_enabled": True,
-        "sms_enabled": True,
-        "service_updates": True,
-        "promotions": False,
+        "push_enabled": pref.push_enabled,
+        "email_enabled": pref.email_enabled,
+        "sms_enabled": pref.sms_enabled,
+        "service_updates": pref.service_updates,
+        "promotions": pref.promotions,
     }
 
 
 def update_notification_preferences(actor: Principal, patch_dict: dict[str, Any]) -> dict[str, Any]:
-    current = get_notification_preferences(actor)
-    for k, v in patch_dict.items():
-        if v is not None:
-            current[k] = v
     with transaction.atomic():
-        AuditEvent.objects.create(
-            actor=actor,
-            target_type="NotificationPreferences",
-            target_id=actor.id,
-            action="PREFERENCES_UPDATE",
-            details=current,
-        )
-    return current
+        pref, _ = CustomerNotificationPreference.objects.select_for_update().get_or_create(customer=actor)
+        allowed = {"push_enabled", "email_enabled", "sms_enabled", "service_updates", "promotions"}
+        fields_to_update = []
+        for k, v in patch_dict.items():
+            if k in allowed and v is not None:
+                setattr(pref, k, v)
+                fields_to_update.append(k)
+        if fields_to_update:
+            fields_to_update.append("updated_at")
+            pref.save(update_fields=fields_to_update)
+        return {
+            "push_enabled": pref.push_enabled,
+            "email_enabled": pref.email_enabled,
+            "sms_enabled": pref.sms_enabled,
+            "service_updates": pref.service_updates,
+            "promotions": pref.promotions,
+        }
 
 
 # ============================================================================
@@ -825,7 +785,6 @@ def create_realtime_ticket(actor: Principal, subscriptions: list[str], resume_af
                 job_uuid = UUID(job_id_str)
             except ValueError:
                 reject(422, "INVALID_SUBSCRIPTION", f"Invalid job UUID in subscription: {sub}")
-            # Ensure job exists and is owned by actor
             get_job_model(actor, job_uuid)
             continue
         if sub.startswith("support:"):
@@ -838,15 +797,8 @@ def create_realtime_ticket(actor: Principal, subscriptions: list[str], resume_af
             continue
         reject(422, "INVALID_SUBSCRIPTION", f"Subscription topic not permitted: {sub}")
 
-    # Generate 256-bit cryptographically secure token
-    ticket = secrets.token_urlsafe(32)
-    expires_at = timezone.now() + timedelta(seconds=60)
-    stream_url = f"/api/v1/app/realtime/stream?ticket={ticket}"
-    return {
-        "ticket": ticket,
-        "expires_at": expires_at.isoformat(),
-        "stream_url": stream_url,
-    }
+    # Realtime SSE streaming transport is not yet commissioned in this backend deployment
+    reject(501, "REALTIME_STREAM_NOT_CONFIGURED", "Realtime SSE streaming transport is not commissioned in this deployment")
 
 
 # ============================================================================
@@ -856,8 +808,8 @@ def create_realtime_ticket(actor: Principal, subscriptions: list[str], resume_af
 def format_wallet(w: WalletAccount) -> dict[str, Any]:
     return {
         "balance_paise": w.balance_paise,
-        "balance_inr": round(w.balance_paise / 100.0, 2),
-        "currency": w.currency,
+        "balance_inr": format_paise_to_inr_str(w.balance_paise),
+        "currency": "INR",
         "version": w.version,
         "updated_at": w.updated_at.isoformat() if w.updated_at else None,
     }
@@ -868,9 +820,9 @@ def format_wallet_transaction(tx: WalletTransaction) -> dict[str, Any]:
         "id": str(tx.id),
         "transaction_type": tx.transaction_type,
         "amount_paise": tx.amount_paise,
-        "amount_inr": round(tx.amount_paise / 100.0, 2),
+        "amount_inr": format_paise_to_inr_str(tx.amount_paise),
         "balance_after_paise": tx.balance_after_paise,
-        "balance_after_inr": round(tx.balance_after_paise / 100.0, 2),
+        "balance_after_inr": format_paise_to_inr_str(tx.balance_after_paise),
         "reference_id": tx.reference_id,
         "created_at": tx.created_at.isoformat() if tx.created_at else None,
     }
@@ -904,6 +856,10 @@ def create_payment_order(
     receipt: str = "",
 ) -> dict[str, Any]:
     """Record an intent/order for payment top-up."""
+    if currency != "INR":
+        reject(422, "UNSUPPORTED_CURRENCY", "Only INR currency is supported")
+    if not (100 <= amount_paise <= 10000000):
+        reject(422, "INVALID_AMOUNT", "Amount must be between 100 paise (₹1) and 10000000 paise (₹100,000)")
     order = PaymentOrder.objects.create(
         customer=actor,
         provider="RAZORPAY",
@@ -924,7 +880,7 @@ def create_payment_order(
         "provider_order_id": order.provider_order_id,
         "provider": "RAZORPAY",
         "amount_paise": order.amount_paise,
-        "amount_inr": round(order.amount_paise / 100.0, 2),
+        "amount_inr": format_paise_to_inr_str(order.amount_paise),
         "currency": order.currency,
         "key_id": key_id,
         "state": order.state,
@@ -937,12 +893,9 @@ def verify_and_credit_recharge(
     payment_id: str,
     signature: str,
     secret: str,
+    payment_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Verify Razorpay payment signature and idempotently credit wallet."""
-    order = PaymentOrder.objects.filter(provider_order_id=order_id, customer=actor).first()
-    if not order:
-        reject(404, "NOT_FOUND", "Payment order not found")
-
+    """Verify payment signature and atomically credit wallet under row-level lock."""
     import hashlib
     import hmac
 
@@ -955,31 +908,51 @@ def verify_and_credit_recharge(
     if not hmac.compare_digest(expected.lower(), signature.lower()):
         reject(400, "PAYMENT_SIGNATURE_INVALID", "Razorpay payment signature verification failed")
 
-    # Idempotent replay: if already captured with the exact same payment ID, return current state
-    if order.state == "CAPTURED":
-        if order.provider_payment_id == payment_id:
-            wallet, _ = WalletAccount.objects.get_or_create(customer=actor)
-            return {
-                "status": "CAPTURED",
-                "credited_paise": order.amount_paise,
-                "credited_inr": round(order.amount_paise / 100.0, 2),
-                "balance_paise": wallet.balance_paise,
-                "balance_inr": round(wallet.balance_paise / 100.0, 2),
-                "currency": wallet.currency,
-                "version": wallet.version,
-            }
-        reject(409, "PAYMENT_CONFLICT", "Order already captured with a different payment ID")
-
-    if order.state == "FAILED":
-        reject(400, "PAYMENT_ORDER_FAILED", "Payment order is marked as failed")
-
-    # Atomic credit with row-level lock on wallet
     with transaction.atomic():
+        # Lock PaymentOrder inside transaction FIRST
+        order = PaymentOrder.objects.select_for_update().filter(
+            provider_order_id=order_id, customer=actor
+        ).first()
+        if not order:
+            reject(404, "NOT_FOUND", "Payment order not found")
+
+        # Idempotent replay: if already captured with the exact same payment ID, return current state
+        if order.state == "CAPTURED":
+            if order.provider_payment_id == payment_id:
+                wallet, _ = WalletAccount.objects.get_or_create(customer=actor)
+                return {
+                    "status": "CAPTURED",
+                    "credited_paise": order.amount_paise,
+                    "credited_inr": format_paise_to_inr_str(order.amount_paise),
+                    "balance_paise": wallet.balance_paise,
+                    "balance_inr": format_paise_to_inr_str(wallet.balance_paise),
+                    "currency": wallet.currency,
+                    "version": wallet.version,
+                }
+            reject(409, "PAYMENT_CONFLICT", "Order already captured with a different payment ID")
+
+        if order.state != "PENDING":
+            reject(400, "INVALID_ORDER_STATE", f"Payment order is in state {order.state}")
+
+        # Check if this payment_id has already been credited across any order
         if PaymentOrder.objects.filter(
             provider="RAZORPAY", provider_payment_id=payment_id, state="CAPTURED"
         ).exists():
             reject(409, "DUPLICATE_PAYMENT", "Payment ID has already been credited")
 
+        # Validate payment evidence if supplied
+        if payment_evidence:
+            ev_status = payment_evidence.get("status")
+            if ev_status and ev_status != "captured":
+                reject(400, "PAYMENT_NOT_CAPTURED", f"Payment status is {ev_status}, not captured")
+            ev_amount = payment_evidence.get("amount")
+            if ev_amount is not None and ev_amount != order.amount_paise:
+                reject(400, "PAYMENT_AMOUNT_MISMATCH", f"Payment amount {ev_amount} does not match order {order.amount_paise}")
+            ev_currency = payment_evidence.get("currency")
+            if ev_currency and ev_currency != order.currency:
+                reject(400, "PAYMENT_CURRENCY_MISMATCH", f"Payment currency {ev_currency} does not match order {order.currency}")
+
+        # Lock the customer's wallet before updating balance
         wallet, _ = WalletAccount.objects.select_for_update().get_or_create(
             customer=actor,
             defaults={"balance_paise": 0, "currency": "INR", "version": 1},
@@ -988,19 +961,22 @@ def verify_and_credit_recharge(
         wallet.version += 1
         wallet.save(update_fields=["balance_paise", "version", "updated_at"])
 
+        # Append immutable ledger transaction
         WalletTransaction.objects.create(
             wallet=wallet,
             transaction_type="CREDIT_TOPUP",
             amount_paise=order.amount_paise,
             balance_after_paise=wallet.balance_paise,
             reference_id=payment_id,
-            details={"provider_order_id": order_id, "provider": "RAZORPAY"},
+            details=payment_evidence or {"provider_order_id": order_id, "provider": "RAZORPAY"},
         )
 
+        # Transition order to CAPTURED
         order.state = "CAPTURED"
         order.provider_payment_id = payment_id
         order.provider_signature = signature
-        order.save(update_fields=["state", "provider_payment_id", "provider_signature", "updated_at"])
+        order.details = payment_evidence or {}
+        order.save(update_fields=["state", "provider_payment_id", "provider_signature", "details", "updated_at"])
 
         audit(
             actor,
@@ -1017,10 +993,11 @@ def verify_and_credit_recharge(
     return {
         "status": "CAPTURED",
         "credited_paise": order.amount_paise,
-        "credited_inr": round(order.amount_paise / 100.0, 2),
+        "credited_inr": format_paise_to_inr_str(order.amount_paise),
         "balance_paise": wallet.balance_paise,
-        "balance_inr": round(wallet.balance_paise / 100.0, 2),
+        "balance_inr": format_paise_to_inr_str(wallet.balance_paise),
         "currency": wallet.currency,
         "version": wallet.version,
     }
+
 

@@ -7,7 +7,7 @@ Tickets, Notifications, and Realtime SSE Tickets.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel as Schema, ConfigDict, Field
@@ -297,7 +297,9 @@ class RatingData(Schema):
     job_id: str
     rating: int
     comment: str | None = None
+    version: int = 1
     created_at: str
+    updated_at: str | None = None
 
 
 class RatingEnvelope(Schema):
@@ -343,6 +345,7 @@ class SupportTicketData(Schema):
     category: str
     subject: str
     job_id: str | None = None
+    version: int = 1
     messages: list[SupportTicketReplyData] = Field(default_factory=list)
     created_at: str
     updated_at: str
@@ -437,6 +440,15 @@ class RealtimeTicketEnvelope(Schema):
     data: RealtimeTicketData
 
 
+def format_paise_to_inr_str(paise: int) -> str:
+    """Format integer paise to exact 2-decimal INR string without floating-point math."""
+    sign = "-" if paise < 0 else ""
+    p = abs(paise)
+    rupees = p // 100
+    sub = p % 100
+    return f"{sign}{rupees}.{sub:02d}"
+
+
 # ============================================================================
 # Wallet & Payment Recharge Schemas
 # ============================================================================
@@ -444,8 +456,8 @@ class RealtimeTicketEnvelope(Schema):
 class WalletAccountData(Schema):
     model_config = ConfigDict(extra="forbid")
     balance_paise: int
-    balance_inr: float
-    currency: str = "INR"
+    balance_inr: str
+    currency: Literal["INR"] = "INR"
     version: int
     updated_at: str | None = None
 
@@ -460,9 +472,9 @@ class WalletTransactionData(Schema):
     id: str
     transaction_type: str
     amount_paise: int
-    amount_inr: float
+    amount_inr: str
     balance_after_paise: int
-    balance_after_inr: float
+    balance_after_inr: str
     reference_id: str = ""
     created_at: str | None = None
 
@@ -474,18 +486,18 @@ class WalletTransactionListEnvelope(Schema):
 
 class WalletRechargeOrderPayload(Schema):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    amount_paise: int = Field(gt=0, le=10000000)
-    currency: str = Field(default="INR", max_length=3)
+    amount_paise: int = Field(ge=100, le=10000000)
+    currency: Literal["INR"] = "INR"
 
 
 class WalletRechargeOrderData(Schema):
     model_config = ConfigDict(extra="forbid")
     order_id: str
     provider_order_id: str
-    provider: str = "RAZORPAY"
+    provider: Literal["RAZORPAY"] = "RAZORPAY"
     amount_paise: int
-    amount_inr: float
-    currency: str = "INR"
+    amount_inr: str
+    currency: Literal["INR"] = "INR"
     key_id: str
     state: str = "PENDING"
 
@@ -506,10 +518,10 @@ class WalletRechargeVerifyData(Schema):
     model_config = ConfigDict(extra="forbid")
     status: str
     credited_paise: int
-    credited_inr: float
+    credited_inr: str
     balance_paise: int
-    balance_inr: float
-    currency: str = "INR"
+    balance_inr: str
+    currency: Literal["INR"] = "INR"
     version: int
 
 

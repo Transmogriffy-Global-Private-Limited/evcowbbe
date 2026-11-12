@@ -147,7 +147,10 @@ def register_user_feature_routes(router: Router) -> None:
     def put_job_rating(request, job_id: UUID, payload: RatingCreatePayload = REQUIRED_BODY):
         service.ensure_json(request)
         key = service.get_idempotency_key(request, required=False)
-        return service.upsert_job_rating(request.auth, job_id, payload.model_dump(), key)
+        version = None
+        if "If-Match" in request.headers:
+            version = service.get_version_etag(request)
+        return service.upsert_job_rating(request.auth, job_id, payload.model_dump(), version, key)
 
     # ========================================================================
     # Customer Support Tickets
@@ -186,7 +189,10 @@ def register_user_feature_routes(router: Router) -> None:
     def reply_support_ticket(request, ticket_id: UUID, payload: SupportReplyPayload = REQUIRED_BODY):
         service.ensure_json(request)
         key = service.get_idempotency_key(request, required=False)
-        return service.reply_support_ticket(request.auth, ticket_id, payload.model_dump(), key)
+        version = None
+        if "If-Match" in request.headers:
+            version = service.get_version_etag(request)
+        return service.reply_support_ticket(request.auth, ticket_id, payload.model_dump(), version, key)
 
     # ========================================================================
     # Notifications & Preferences

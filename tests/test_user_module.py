@@ -5,16 +5,27 @@ repository behavior, and complete router registration.
 """
 
 import ast
+import os
 import re
 import unittest
 from pathlib import Path
 from uuid import uuid4
 
+ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    from scripts.dev import env_file
+    env_file()
+except Exception:
+    pass
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+import django
+django.setup()
+
 from pydantic import ValidationError
 
 from cow.users import contracts, schemas
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 class UserSchemasTest(unittest.TestCase):
@@ -170,20 +181,20 @@ class UserSchemasTest(unittest.TestCase):
     def test_wallet_schemas(self):
         w = schemas.WalletAccountData(
             balance_paise=50000,
-            balance_inr=500.0,
+            balance_inr="500.00",
             currency="INR",
             version=1,
         )
         self.assertEqual(w.balance_paise, 50000)
-        self.assertEqual(w.balance_inr, 500.0)
+        self.assertEqual(w.balance_inr, "500.00")
 
         tx = schemas.WalletTransactionData(
             id=str(uuid4()),
             transaction_type="CREDIT_TOPUP",
             amount_paise=50000,
-            amount_inr=500.0,
+            amount_inr="500.00",
             balance_after_paise=50000,
-            balance_after_inr=500.0,
+            balance_after_inr="500.00",
             reference_id="pay_12345",
         )
         self.assertEqual(tx.transaction_type, "CREDIT_TOPUP")
@@ -192,11 +203,19 @@ class UserSchemasTest(unittest.TestCase):
         self.assertEqual(order_req.amount_paise, 10000)
         self.assertEqual(order_req.currency, "INR")
 
+        # Amount boundaries: minimum 100 paise (₹1) and max 10000000 paise (₹100,000)
         with self.assertRaises(ValidationError):
             schemas.WalletRechargeOrderPayload(amount_paise=0)
 
         with self.assertRaises(ValidationError):
-            schemas.WalletRechargeOrderPayload(amount_paise=-50)
+            schemas.WalletRechargeOrderPayload(amount_paise=99)
+
+        with self.assertRaises(ValidationError):
+            schemas.WalletRechargeOrderPayload(amount_paise=10000001)
+
+        # Unsupported currency rejected
+        with self.assertRaises(ValidationError):
+            schemas.WalletRechargeOrderPayload(amount_paise=5000, currency="USD")
 
         verify_req = schemas.WalletRechargeVerifyPayload(
             razorpay_order_id="order_123",
@@ -204,6 +223,16 @@ class UserSchemasTest(unittest.TestCase):
             razorpay_signature="abcde12345",
         )
         self.assertEqual(verify_req.razorpay_order_id, "order_123")
+
+    def test_paise_to_inr_string_exact_formatting(self):
+        self.assertEqual(schemas.format_paise_to_inr_str(0), "0.00")
+        self.assertEqual(schemas.format_paise_to_inr_str(5), "0.05")
+        self.assertEqual(schemas.format_paise_to_inr_str(99), "0.99")
+        self.assertEqual(schemas.format_paise_to_inr_str(100), "1.00")
+        self.assertEqual(schemas.format_paise_to_inr_str(50000), "500.00")
+        self.assertEqual(schemas.format_paise_to_inr_str(1234567), "12345.67")
+        self.assertEqual(schemas.format_paise_to_inr_str(-250), "-2.50")
+
 
 
 class UserModuleStructureTest(unittest.TestCase):
@@ -274,13 +303,83 @@ class UserModuleStructureTest(unittest.TestCase):
         for op in expected_extended:
             self.assertIn(f'operation_id="{op}"', router_src)
 
-    def test_wallet_models_declared(self):
+    def test_all_user_models_declared(self):
         models_src = (ROOT / "cow/models.py").read_text(encoding="utf-8")
         self.assertIn("class WalletAccount(Timestamped):", models_src)
         self.assertIn("class WalletTransaction(Timestamped):", models_src)
         self.assertIn("class PaymentOrder(Timestamped):", models_src)
+        self.assertIn("class CustomerJobRating(Timestamped):", models_src)
+        self.assertIn("class CustomerSupportTicket(Timestamped):", models_src)
+        self.assertIn("class CustomerSupportMessage(Timestamped):", models_src)
+        self.assertIn("class CustomerNotification(Timestamped):", models_src)
+        self.assertIn("class CustomerNotificationPreference(Timestamped):", models_src)
         self.assertIn("cow_wallet_balance_nonnegative", models_src)
         self.assertIn("cow_pay_provider_payment_unique", models_src)
+        self.assertIn("cow_job_rating_range_1_to_5", models_src)
+
+    def test_no_created_at_on_audit_event_in_repository(self):
+        repo_src = (ROOT / "cow/users/repository.py").read_text(encoding="utf-8")
+        # Ensure AuditEvent is never queried or ordered by .created_at (which does not exist)
+        self.assertNotIn("AuditEvent.objects.filter", repo_src.replace("occurred_at", ""))
+        self.assertNotIn('order_by("-created_at")', repo_src.split("AuditEvent")[1].split("def ")[0] if "AuditEvent" in repo_src else "")
+
+    def test_job_lock_avoids_outer_join_in_repository(self):
+        repo_src = (ROOT / "cow/users/repository.py").read_text(encoding="utf-8")
+        # When lock=True, select_for_update(of=("self",)) is used without driver_duty outer join
+        self.assertIn('select_for_update(of=("self",))', repo_src)
+
+    def test_meter_observation_query_uses_actual_model_fields(self):
+        repo_src = (ROOT / "cow/users/repository.py").read_text(encoding="utf-8")
+        # MeterObservation has session, energy_wh, observed_at
+        self.assertIn("MeterObservation.objects.filter(session=session)", repo_src)
+        self.assertIn("obs.energy_wh", repo_src)
+        self.assertNotIn("obs.meter_wh", repo_src)
+
+    def test_live_job_eta_not_fabricated(self):
+        repo_src = (ROOT / "cow/users/repository.py").read_text(encoding="utf-8")
+        self.assertIn("eta_minutes = None", repo_src)
+        self.assertNotIn("eta_minutes = 15", repo_src)
+
+    def test_razorpay_order_fails_safely_without_simulation(self):
+        import os
+        from cow.common.errors import DomainError
+        from cow.users import service
+
+        old_sim = os.environ.pop("RAZORPAY_TEST_SIMULATION", None)
+        old_key = os.environ.pop("RAZORPAY_KEY_ID", None)
+        old_sec = os.environ.pop("RAZORPAY_KEY_SECRET", None)
+        try:
+            with self.assertRaises(DomainError) as ctx:
+                service.call_razorpay_create_order("", "", 50000, "INR", "rcpt_1")
+            self.assertEqual(ctx.exception.code, "CONFIGURATION_ERROR")
+            self.assertEqual(ctx.exception.status_code, 500)
+        finally:
+            if old_sim: os.environ["RAZORPAY_TEST_SIMULATION"] = old_sim
+            if old_key: os.environ["RAZORPAY_KEY_ID"] = old_key
+            if old_sec: os.environ["RAZORPAY_KEY_SECRET"] = old_sec
+
+    def test_razorpay_order_simulation_mode_isolated(self):
+        import os
+        from cow.users import service
+
+        os.environ["RAZORPAY_TEST_SIMULATION"] = "1"
+        try:
+            order_id = service.call_razorpay_create_order("", "", 50000, "INR", "rcpt_1")
+            self.assertTrue(order_id.startswith("order_test_"))
+        finally:
+            os.environ.pop("RAZORPAY_TEST_SIMULATION", None)
+
+    def test_realtime_ticket_fails_closed_when_not_configured(self):
+        from cow.common.errors import DomainError
+        from cow.users import repository as repo
+
+        class DummyPrincipal:
+            id = uuid4()
+
+        with self.assertRaises(DomainError) as ctx:
+            repo.create_realtime_ticket(DummyPrincipal(), ["self"])
+        self.assertEqual(ctx.exception.code, "REALTIME_STREAM_NOT_CONFIGURED")
+        self.assertEqual(ctx.exception.status_code, 501)
 
     def test_razorpay_signature_hmac_logic(self):
         import hashlib
@@ -301,6 +400,75 @@ class UserModuleStructureTest(unittest.TestCase):
         tampered_sig = hmac.new(secret.encode("utf-8"), tampered_data, hashlib.sha256).hexdigest()
         self.assertFalse(hmac.compare_digest(valid_sig, tampered_sig))
 
+
+class UserHTTPBehaviorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import django
+        from django.test import Client
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+        django.setup()
+        cls.client = Client()
+
+    def test_unauthenticated_wallet_requests_rejected(self):
+        res = self.client.get("/api/v1/app/wallet")
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.json()["error"]["code"], "INVALID_CREDENTIALS")
+
+        res_post = self.client.post("/api/v1/app/wallet/recharge/order", data=b"{}", content_type="application/json")
+        self.assertEqual(res_post.status_code, 401)
+        self.assertEqual(res_post.json()["error"]["code"], "INVALID_CREDENTIALS")
+
+    def test_unsupported_media_type_rejected(self):
+        # Authenticated or public, non-json is rejected
+        res = self.client.post("/api/v1/app/auth/login", data=b"email=a&password=b", content_type="application/x-www-form-urlencoded")
+        self.assertEqual(res.status_code, 415)
+        self.assertEqual(res.json()["error"]["code"], "UNSUPPORTED_MEDIA_TYPE")
+
+
+class UserPaymentAndStateLogicTest(unittest.TestCase):
+    def test_verify_recharge_rejects_tampered_signature(self):
+        from cow.common.errors import DomainError
+        from cow.users import repository as repo
+
+        class DummyPrincipal:
+            id = uuid4()
+
+        with self.assertRaises(DomainError) as ctx:
+            repo.verify_and_credit_recharge(
+                actor=DummyPrincipal(),
+                order_id="order_1",
+                payment_id="pay_1",
+                signature="invalid_signature",
+                secret="test_secret",
+            )
+        self.assertEqual(ctx.exception.code, "PAYMENT_SIGNATURE_INVALID")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_create_payment_order_validates_currency_and_bounds(self):
+        from cow.common.errors import DomainError
+        from cow.users import repository as repo
+
+        class DummyPrincipal:
+            id = uuid4()
+
+        # Reject currency other than INR
+        with self.assertRaises(DomainError) as ctx:
+            repo.create_payment_order(DummyPrincipal(), 5000, "USD", "order_1", "key_1")
+        self.assertEqual(ctx.exception.code, "UNSUPPORTED_CURRENCY")
+        self.assertEqual(ctx.exception.status_code, 422)
+
+        # Reject out of bounds amount (< 100 paise)
+        with self.assertRaises(DomainError) as ctx:
+            repo.create_payment_order(DummyPrincipal(), 50, "INR", "order_1", "key_1")
+        self.assertEqual(ctx.exception.code, "INVALID_AMOUNT")
+        self.assertEqual(ctx.exception.status_code, 422)
+
+        # Reject out of bounds amount (> 10000000 paise)
+        with self.assertRaises(DomainError) as ctx:
+            repo.create_payment_order(DummyPrincipal(), 20000000, "INR", "order_1", "key_1")
+        self.assertEqual(ctx.exception.code, "INVALID_AMOUNT")
+        self.assertEqual(ctx.exception.status_code, 422)
 
 
 if __name__ == "__main__":

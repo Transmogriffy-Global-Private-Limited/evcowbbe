@@ -877,3 +877,78 @@ class PaymentOrder(Timestamped):
             )
         ]
 
+
+class CustomerJobRating(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.OneToOneField(ServiceJob, on_delete=models.PROTECT, related_name="rating")
+    customer = models.ForeignKey(Principal, on_delete=models.PROTECT, related_name="job_ratings")
+    rating = models.PositiveSmallIntegerField()
+    comment = models.CharField(max_length=500, blank=True, default="")
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(rating__gte=1, rating__lte=5),
+                name="cow_job_rating_range_1_to_5",
+            )
+        ]
+
+
+class CustomerSupportTicket(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey(Principal, on_delete=models.PROTECT, related_name="support_tickets")
+    job = models.ForeignKey(ServiceJob, on_delete=models.PROTECT, null=True, blank=True, related_name="support_tickets")
+    subject = models.CharField(max_length=200)
+    category = models.CharField(max_length=50, default="GENERAL")
+    status = models.CharField(
+        max_length=20,
+        choices=[(x, x) for x in ("OPEN", "PENDING_SUPPORT", "RESOLVED", "CLOSED")],
+        default="OPEN",
+    )
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["customer", "created_at"], name="cow_supp_ticket_cust_idx"),
+        ]
+
+
+class CustomerSupportMessage(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ticket = models.ForeignKey(CustomerSupportTicket, on_delete=models.PROTECT, related_name="messages")
+    sender = models.ForeignKey(Principal, on_delete=models.PROTECT)
+    message = models.TextField(max_length=2000)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["ticket", "created_at"], name="cow_supp_msg_tkt_idx"),
+        ]
+
+
+class CustomerNotification(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey(Principal, on_delete=models.PROTECT, related_name="notifications")
+    title = models.CharField(max_length=160)
+    message = models.CharField(max_length=500)
+    notification_type = models.CharField(max_length=40, default="INFO")
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    data = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["customer", "is_read", "created_at"], name="cow_notif_cust_read_idx"),
+        ]
+
+
+class CustomerNotificationPreference(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.OneToOneField(Principal, on_delete=models.PROTECT, related_name="notification_preferences")
+    push_enabled = models.BooleanField(default=True)
+    email_enabled = models.BooleanField(default=True)
+    sms_enabled = models.BooleanField(default=True)
+    service_updates = models.BooleanField(default=True)
+    promotions = models.BooleanField(default=False)
+
+
