@@ -84,8 +84,8 @@ def test_idempotency_repeat_and_conflicting_request():
 
 def test_duty_claim_unique_postgres_partial_index():
     p1,p2=principal("driver"),principal("driver")
-    d1=DriverProfile.objects.create(principal=p1,eligibility="ACTIVE")
-    d2=DriverProfile.objects.create(principal=p2,eligibility="ACTIVE")
+    d1=DriverProfile.objects.create(principal=p1,eligibility="PENDING")
+    d2=DriverProfile.objects.create(principal=p2,eligibility="PENDING")
     vehicle=ServiceVehicle.objects.create(asset_tag="vehicle-one",make="Example",model="Truck")
     charger1=Charger.objects.create(asset_tag="charger-one",hal_identity="physical-one",manufacturer="X",model="Y",rated_power_w=30000)
     charger2=Charger.objects.create(asset_tag="charger-two",hal_identity="physical-two",manufacturer="X",model="Y",rated_power_w=30000)

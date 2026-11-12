@@ -19,6 +19,7 @@ from cow.hal.client import send_operation_once
 from cow.models import (
     Account, AdminRole, AuditEvent, Charger, ChargerConnector, ChargingSession,
     DriverProfile, DutySession, HALCommand, Principal, PricingPolicy,
+    DriverRecruitmentPolicy, DriverApplication, DriverDocument, DriverDocumentReview,
     Quote, ServiceJob, ServiceRequest, ServiceVehicle, VehicleChargerPairing,
 )
 from cow.services import auth, fleet
@@ -44,9 +45,31 @@ def setup_operational_job():
     customer = identity("app")
     today = timezone.localdate(timezone=__import__("zoneinfo").ZoneInfo("Asia/Kolkata"))
     driver = DriverProfile.objects.create(
-        principal=driver_principal, eligibility="ACTIVE",
+        principal=driver_principal, eligibility="PENDING",
         licence_valid_until=today + timedelta(days=30),
     )
+    # Stage B predates C1. Its physical admission fixture now needs genuine
+    # synthetic C1 evidence; production must never bypass the new proof guard.
+    policy = DriverRecruitmentPolicy.objects.create(
+        policy_key="DEFAULT", version=1, required_document_types=["DRIVING_LICENCE"],
+        scan_required=False, legal_decision_ref="STAGE_B_SYNTHETIC_FIXTURE",
+        active=True, created_by=admin,
+    )
+    application = DriverApplication.objects.create(
+        principal=driver_principal, state="ACTIVE", policy=policy,
+    )
+    document = DriverDocument.objects.create(
+        application=application, document_type="DRIVING_LICENCE",
+        storage_key=uuid4().hex, content_type="application/pdf", original_filename="fixture.pdf",
+        size_bytes=12, sha256="f" * 64, expires_on=today + timedelta(days=30),
+        uploaded_by=driver_principal, review_status="ACCEPTED", scan_status="NOT_SCANNED",
+    )
+    DriverDocumentReview.objects.create(
+        document=document, actor=admin, decision="ACCEPTED", reason="Verified test fixture",
+    )
+    from cow.services import driver_operational as operational_c2
+    operational_c2.decide(admin, driver_principal.pk, 1, "clear",
+                          "Verified Stage B synthetic operational clearance")
     vehicle = ServiceVehicle.objects.create(
         asset_tag="SB-V-" + uuid4().hex[:12], make="Fixture", model="EV Van",
         registration_valid_until=today + timedelta(days=30),

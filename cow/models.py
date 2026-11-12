@@ -373,6 +373,17 @@ class DriverProfile(Timestamped):
     principal = models.OneToOneField(Principal, on_delete=models.PROTECT)
     eligibility = models.CharField(max_length=24, default="PENDING")
     licence_valid_until = models.DateField(null=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(eligibility__in=["PENDING", "ACTIVE", "SUSPENDED", "OFFBOARDED"]),
+                name="cow_driver_oper_eligibility_valid",
+            ),
+            models.CheckConstraint(condition=Q(version__gte=1),
+                                   name="cow_driver_oper_version_positive"),
+        ]
 
 class DutySession(Timestamped):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -805,3 +816,30 @@ class DriverApplicationHistory(models.Model):
     event_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     delivery_state = models.CharField(max_length=24, default="NOT_CONFIGURED")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class DriverOperationalDecision(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    driver = models.ForeignKey(
+        DriverProfile, on_delete=models.PROTECT, related_name="operational_decisions"
+    )
+    actor = models.ForeignKey(Principal, on_delete=models.PROTECT)
+    action = models.CharField(max_length=16)
+    from_status = models.CharField(max_length=24)
+    to_status = models.CharField(max_length=24)
+    reason = models.CharField(max_length=500)
+    result_version = models.PositiveIntegerField()
+    application = models.ForeignKey(DriverApplication, on_delete=models.PROTECT, null=True)
+    application_version = models.PositiveIntegerField(null=True)
+    policy = models.ForeignKey(DriverRecruitmentPolicy, on_delete=models.PROTECT, null=True)
+    licence_valid_until = models.DateField(null=True)
+    evidence_digest = models.CharField(max_length=64, null=True)
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["driver", "-occurred_at", "-id"],
+                                name="cow_driver_oper_history_idx")]
+        constraints = [models.UniqueConstraint(
+            fields=["driver", "result_version"],
+            name="cow_driver_oper_one_decision_version",
+        )]

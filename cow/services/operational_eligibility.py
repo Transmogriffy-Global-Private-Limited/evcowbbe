@@ -138,13 +138,13 @@ def assert_start_admissible(job_id, charger_id, connector_number: int, *,
     driver = DriverProfile.objects.select_for_update().select_related(
         "principal", "principal__account"
     ).filter(pk=duty.driver_id).first()
-    if driver is None or driver.principal.plane != "driver" or (
-        driver.principal.status != "ACTIVE" or not driver.principal.account.email_verified
-        or driver.eligibility != "ACTIVE"
-    ):
-        reject(409, "DRIVER_NOT_ELIGIBLE", "Driver eligibility is not verified active")
-    if driver.licence_valid_until is None or driver.licence_valid_until < timezone.localdate(timezone=ZoneInfo("Asia/Kolkata")):
-        reject(409, "DRIVER_NOT_ELIGIBLE", "Driver licence missing or expired")
+    if driver is None:
+        reject(409, "DRIVER_NOT_ELIGIBLE", "Driver profile missing")
+    # Stored ACTIVE and licence date are insufficient: C1 evidence must still
+    # be currently valid. This is a pure DB guard under the Stage B gate.
+    from cow.services import driver_operational
+    if driver_operational.effective_issues(driver):
+        reject(409, "DRIVER_NOT_ELIGIBLE", "Driver operational clearance is not current")
 
     vehicle = ServiceVehicle.objects.select_for_update().filter(pk=duty.vehicle_id).first()
     charger = Charger.objects.select_for_update().filter(pk=charger_id).first()

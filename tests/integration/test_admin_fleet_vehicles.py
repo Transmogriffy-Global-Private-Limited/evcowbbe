@@ -193,7 +193,7 @@ def test_deactivation_rejects_current_pairing_and_active_duty_claim():
     driver_principal = Principal.objects.create(
         account=driver_account, plane="driver", status="ACTIVE"
     )
-    driver = DriverProfile.objects.create(principal=driver_principal, eligibility="APPROVED")
+    driver = DriverProfile.objects.create(principal=driver_principal, eligibility="PENDING")
     DutySession.objects.create(
         driver=driver,
         vehicle=vehicle,

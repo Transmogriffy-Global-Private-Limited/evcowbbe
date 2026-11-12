@@ -48,6 +48,9 @@ EXPECTED_CONSTRAINTS = {
     "cow_pairing_time_range",
     "cow_pairing_lifecycle",
     "cow_charger_maintenance_range",
+    "cow_driver_oper_eligibility_valid",
+    "cow_driver_oper_version_positive",
+    "cow_driver_oper_one_decision_version",
 }
 EXPECTED_TRIGGERS = {
     "cow_zone_identity_guard",
@@ -74,6 +77,9 @@ EXPECTED_TRIGGERS = {
     "cow_customer_vehicle_guard",
     "cow_customer_address_guard",
     "cow_customer_profile_guard",
+    "cow_driver_c2_profile_insert_guard",
+    "cow_driver_c2_profile_guard",
+    "cow_driver_c2_history_guard",
 }
 EXPECTED_FUNCTIONS = {
     "cow_zone_identity_guard",
@@ -93,6 +99,9 @@ EXPECTED_FUNCTIONS = {
     "cow_admin_pricing_guard",
     "cow_customer_master_guard",
     "cow_customer_profile_guard",
+    "cow_driver_c2_profile_initial_guard",
+    "cow_driver_c2_profile_decision_required",
+    "cow_driver_c2_history_immutable",
 }
 EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_default_address",
@@ -129,9 +138,12 @@ EXPECTED_INDEXES = (
         "cow_charger_zone_valid_window",
         "cow_zone_gst_ver_positive",
         "cow_zone_gst_valid_window",
+        "cow_driver_oper_eligibility_valid",
+        "cow_driver_oper_version_positive",
     }
     | EXPECTED_PARTIAL_UNIQUE_INDEXES
-    | {"cow_vehicle_maint_window", "cow_charger_maint_window"}
+    | {"cow_vehicle_maint_window", "cow_charger_maint_window",
+       "cow_driver_oper_history_idx"}
 )
 
 
@@ -260,5 +272,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0009_zone_admin_operations",
         "0010_commercial_machine_registry",
         "0011_driver_recruitment_c1",
+        "0012_driver_operational_c2",
     )
     assert after == before
