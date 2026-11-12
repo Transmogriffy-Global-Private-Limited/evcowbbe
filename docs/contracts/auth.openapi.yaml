@@ -3,7 +3,7 @@ info:
   title: EVCOWBBE | Charger on Wheels API
   version: 0.4.0
   description: |
-    Implemented EVCOWBBE authentication, Admin RBAC, Admin Fleet inventory/asset-management and Admin pricing-policy publication (82 operations). Customer app, driver and administrator are distinct authorization planes. Fleet master data is not live duty/claim or HAL evidence; pricing policy publication does not authorize a customer quote or a final charge until independently approved tax decisions and authoritative job/HAL facts are integrated. No booking, dispatch, payment, or driver-approval business handlers are in this release.
+    Implemented EVCOWBBE authentication, Admin RBAC, Admin Fleet inventory/asset-management and Admin pricing-policy publication (82 operations). Customer app, driver and administrator are distinct authorization planes. Fleet master data is not live duty/claim or HAL evidence; pricing policy publication does not authorize a customer quote or a final charge until independently approved tax decisions and authoritative job/HAL facts are integrated. Customer wallet balance and recharge order/verification endpoints are available; booking, dispatch, and driver-approval business handlers remain under development.
 
     All successful API responses contain a `data` envelope; failures contain an `error` object with `code`, `message`, `request_id` and `details`. JSON mutations (POST, PUT, DELETE where implemented) require `Content-Type: application/json`, even logout operations whose body is ignored. Strict JSON decoding rejects unknown fields, multiple JSON values and bodies above 32 KiB on decoded routes. Responses include `X-Request-ID` and `Cache-Control: no-store`.
 
@@ -6867,7 +6867,8 @@ x-user-apis-Abhranil:
         operationId: app_realtime_tickets_create
         summary: Request single-use SSE streaming ticket
         description: Issues short-lived (60s) single-use cryptographically random
-          token for authorized topic subscriptions.
+          token for authorized topic subscriptions. Realtime SSE streaming transport is not
+          yet enabled or configured in this release; requests currently return HTTP 501 REALTIME_STREAM_NOT_CONFIGURED.
         security:
         - BearerAuth: []
         requestBody:
@@ -6918,6 +6919,8 @@ x-user-apis-Abhranil:
             $ref: '#/components/responses/FleetValidation'
           '500':
             $ref: '#/components/responses/Internal'
+          '501':
+            description: Realtime streaming transport not configured
     /api/v1/app/wallet:
       get:
         tags:
@@ -7052,7 +7055,10 @@ x-user-apis-Abhranil:
           in: header
           schema:
             type: string
-          required: false
+            minLength: 16
+            maxLength: 128
+          required: true
+          description: Client-provided idempotency key (16 to 128 characters)
         requestBody:
           required: true
           content:
@@ -7064,9 +7070,10 @@ x-user-apis-Abhranil:
                 properties:
                   amount_paise:
                     type: integer
-                    minimum: 1
+                    minimum: 100
                     maximum: 10000000
                     example: 50000
+                    description: Recharge amount in paise (min 100 paise = ₹1.00, max 10000000 paise = ₹100,000)
                   currency:
                     type: string
                     default: INR
@@ -7136,7 +7143,10 @@ x-user-apis-Abhranil:
           in: header
           schema:
             type: string
-          required: false
+            minLength: 16
+            maxLength: 128
+          required: true
+          description: Client-provided idempotency key (16 to 128 characters)
         requestBody:
           required: true
           content:
@@ -7148,9 +7158,10 @@ x-user-apis-Abhranil:
                 properties:
                   amount_paise:
                     type: integer
-                    minimum: 1
+                    minimum: 100
                     maximum: 10000000
                     example: 50000
+                    description: Recharge amount in paise (min 100 paise = ₹1.00, max 10000000 paise = ₹100,000)
                   currency:
                     type: string
                     default: INR

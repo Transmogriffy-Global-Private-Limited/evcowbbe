@@ -6,6 +6,7 @@ boundaries for all Customer-facing operations.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from typing import Any, Callable
@@ -14,7 +15,7 @@ from uuid import UUID, uuid4
 from django.http import JsonResponse
 from pydantic import ValidationError as PydanticValidationError
 
-from cow.common.errors import reject
+from cow.common.errors import DomainError, reject
 from cow.models import Principal
 from cow.services import idempotency
 from cow.users import repository as repo
@@ -570,41 +571,131 @@ def list_wallet_transactions(actor: Principal, limit: int = 50) -> list[dict[str
     return repo.list_wallet_transactions(actor, limit=limit)
 
 
+def reconcile_razorpay_order_by_receipt(
+    key_id: str,
+    secret: str,
+    receipt: str,
+    expected_amount_paise: int,
+    expected_currency: str,
+) -> str | None:
+    """Check if Razorpay already created an order for this receipt (order reconciliation)."""
+    if not key_id or not secret or not receipt:
+        return None
+
+    import base64
+    import json
+    import urllib.parse
+    import urllib.request
+
+    query = urllib.parse.urlencode({"receipt": receipt})
+    url = f"https://api.razorpay.com/v1/orders?{query}"
+    auth_str = f"{key_id}:{secret}"
+    b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("ascii")
+    headers = {
+        "Authorization": f"Basic {b64_auth}",
+    }
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            items = res_data.get("items", [])
+            if items and isinstance(items, list):
+                for item in items:
+                    if item.get("receipt") == receipt:
+                        if item.get("amount") == expected_amount_paise and item.get("currency") == expected_currency:
+                            return item.get("id")
+                        else:
+                            reject(409, "PAYMENT_ORDER_CONFLICT", "Gateway order exists with conflicting parameters")
+    except DomainError:
+        raise
+    except Exception:
+        # Gateway reconciliation query failure - return None to fall back to creation/retry
+        return None
+    return None
+
+
+def compute_order_receipt(actor: Principal, key: str) -> str:
+    """Generate a deterministic, collision-resistant receipt digest bounded to 40 chars."""
+    actor_id_str = actor.id.hex if hasattr(actor, "id") and hasattr(actor.id, "hex") else str(actor.id)
+    digest = hashlib.sha256(f"{actor_id_str}:{key}".encode("utf-8")).hexdigest()[:32]
+    return f"rc_{digest}"  # 35 characters, collision-resistant, <= 40 chars for Razorpay API
+
+
 def create_wallet_recharge_order(actor: Principal, raw_payload: dict[str, Any], key: str) -> JsonResponse:
-    """Create a new Razorpay payment order for wallet recharge."""
+    """Create a new Razorpay payment order for wallet recharge with durable intent and order recovery.
+    
+    1. Generates collision-resistant receipt from SHA-256 digest of actor ID and idempotency key.
+    2. Recovers existing order if already completed or checks for parameter conflicts.
+    3. Persists durable local payment intent in DB before calling Razorpay, without holding open transactions across HTTP calls.
+    4. Reconciles uncertain outcomes against Razorpay orders before creating new gateway orders.
+    5. Confirms local intent record with authoritative gateway order ID.
+    """
+    if not key or not (16 <= len(key) <= 128):
+        reject(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required (16-128 chars)")
+
     payload = parse_payload(WalletRechargeOrderPayload, raw_payload)
-    p = payload.model_dump(mode="json")
     key_id, secret = get_razorpay_credentials()
+    if not key_id or not secret:
+        reject(500, "CONFIGURATION_ERROR", "Payment gateway credentials are not configured")
 
-    def op():
-        # Stable deterministic receipt per (actor, idempotency key), bounded to 40 chars for Razorpay API
-        actor_part = actor.id.hex[:8] if hasattr(actor, "id") and hasattr(actor.id, "hex") else str(actor.id)[:8]
-        clean_key = re.sub(r"[^a-zA-Z0-9_-]", "", key)[:16]
-        receipt = f"rc_{actor_part}_{clean_key}"[:40]
+    receipt = compute_order_receipt(actor, key)
 
-        # Order recovery: check if order was already recorded locally for this receipt
-        existing = repo.get_payment_order_by_receipt(actor, receipt, key_id=key_id)
-        if existing:
-            return 201, {"data": existing}
+    # Step 1: Check existing local order / durable intent (in short DB transaction)
+    existing = repo.get_payment_order_by_receipt(
+        actor=actor,
+        receipt=receipt,
+        expected_amount_paise=payload.amount_paise,
+        expected_currency=payload.currency,
+        key_id=key_id,
+    )
 
-        provider_order_id = call_razorpay_create_order(
-            key_id=key_id,
-            secret=secret,
-            amount_paise=payload.amount_paise,
-            currency=payload.currency,
-            receipt=receipt,
-        )
-        data = repo.create_payment_order(
+    if existing and not existing.get("is_intent"):
+        # Order already successfully confirmed with Razorpay
+        return as_response(201, existing)
+
+    # If no local record exists, persist a durable intent in DB *before* external network call
+    if not existing:
+        repo.create_payment_intent(
             actor=actor,
             amount_paise=payload.amount_paise,
             currency=payload.currency,
-            provider_order_id=provider_order_id,
-            key_id=key_id,
             receipt=receipt,
+            key_id=key_id,
+            idempotency_key=key,
         )
-        return 201, {"data": data}
 
-    return execute_idempotent(actor, "wallet-recharge-order", key, p, op)
+    # Step 2: Outside DB transaction, reconcile or create order with Razorpay
+    # First attempt reconciliation in case a previous attempt created it on Razorpay before local write or timeout
+    provider_order_id = reconcile_razorpay_order_by_receipt(
+        key_id=key_id,
+        secret=secret,
+        receipt=receipt,
+        expected_amount_paise=payload.amount_paise,
+        expected_currency=payload.currency,
+    )
+
+    if not provider_order_id:
+        try:
+            provider_order_id = call_razorpay_create_order(
+                key_id=key_id,
+                secret=secret,
+                amount_paise=payload.amount_paise,
+                currency=payload.currency,
+                receipt=receipt,
+            )
+        except Exception as e:
+            # Mark durable intent as uncertain locally so subsequent retries reconcile
+            repo.mark_payment_intent_uncertain(actor, receipt, str(e))
+            raise
+
+    # Step 3: Confirm the durable intent locally with the authoritative provider order ID
+    data = repo.confirm_payment_intent(
+        actor=actor,
+        receipt=receipt,
+        provider_order_id=provider_order_id,
+        key_id=key_id,
+    )
+    return as_response(201, data)
 
 
 def verify_wallet_recharge(actor: Principal, raw_payload: dict[str, Any]) -> dict[str, Any]:

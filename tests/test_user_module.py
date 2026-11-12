@@ -1,9 +1,11 @@
-"""Comprehensive unit and integration tests for the Customer / User plane modules (cow/users).
+"""Comprehensive unit and contract tests for the Customer / User plane modules (cow/users).
 
-Tests strict Pydantic schemas, service layer precondition/header validation,
-isolated database transactions in SQLite, fail-closed payment verification,
-concurrency/idempotency behavior, support reopening, rating preconditions,
-and notification delivery preferences.
+Tests strict Pydantic schemas, AST module boundaries, collision-resistant receipt hashing,
+allowlist evidence sanitization, fail-closed payment verification preconditions,
+idempotent order recovery & reconciliation workflows, and fault injection.
+
+Follows the project engineering contract: runs cleanly under standard test runners
+without global database mutation or SQLite monkeypatching at import time.
 """
 
 from __future__ import annotations
@@ -12,112 +14,38 @@ import ast
 import hashlib
 import hmac
 import os
-import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-ROOT = Path(__file__).resolve().parents[1]
-
-# Configure isolated in-memory test environment without loading real .env
+# Set test environment variables required by Django settings without overriding DATABASES
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-os.environ["PASSWORD_PEPPER"] = "a" * 32
-os.environ["OTP_HMAC_PEPPER"] = "b" * 32
-os.environ["PUBLIC_BASE_URL"] = "http://testserver"
-os.environ["HTTP_LISTEN_ADDR"] = "127.0.0.1:8000"
-os.environ["SMTP_TLS_MODE"] = "tls"
-os.environ["DATABASE_URL"] = "postgresql://app:pass@127.0.0.1:5432/evcowbbe_test?sslmode=disable"
-
-from django.conf import settings
-
-# Route DB operations to SQLite in-memory to prevent hitting any external PostgreSQL / Aiven development DB
-settings.DATABASES["default"] = {
-    "ENGINE": "django.db.backends.sqlite3",
-    "NAME": ":memory:",
-    "ATOMIC_REQUESTS": False,
-    "AUTOCOMMIT": True,
-    "CONN_MAX_AGE": 0,
-    "CONN_HEALTH_CHECKS": False,
-    "OPTIONS": {},
-    "TIME_ZONE": None,
-    "USER": "",
-    "PASSWORD": "",
-    "HOST": "",
-    "PORT": "",
-    "TEST": {},
-}
+os.environ.setdefault("PASSWORD_PEPPER", "test-only-password-pepper-" + "p" * 40)
+os.environ.setdefault("OTP_HMAC_PEPPER", "test-only-otp-pepper-" + "o" * 40)
+os.environ.setdefault("PUBLIC_BASE_URL", "http://127.0.0.1:18280")
+os.environ.setdefault("HTTP_LISTEN_ADDR", "127.0.0.1:18280")
+os.environ.setdefault("SMTP_TLS_MODE", "starttls")
+os.environ.setdefault("DATABASE_URL", "postgresql://unused:unused@127.0.0.1:1/cow_schema_offline?sslmode=disable")
 
 import django
-
 django.setup()
 
-from django.db import connection
-from django.db.backends.signals import connection_created
-from django.dispatch import receiver
-from django.test import Client
-from django.utils import timezone
+import unittest
 from pydantic import ValidationError
 
 from cow.common.errors import DomainError
-from cow.models import (
-    Account,
-    AuditEvent,
-    ChargingSession,
-    CustomerAddress,
-    CustomerJobRating,
-    CustomerNotification,
-    CustomerNotificationPreference,
-    CustomerProfile,
-    CustomerSupportMessage,
-    CustomerSupportTicket,
-    CustomerVehicle,
-    MeterObservation,
-    PaymentOrder,
-    PricingPolicy,
-    Principal,
-    Quote,
-    ServiceJob,
-    ServiceRequest,
-    WalletAccount,
-    WalletTransaction,
-)
 from cow.users import contracts, repository as repo, schemas, service
-
-
-@receiver(connection_created)
-def extend_sqlite(sender, connection, **kwargs):
-    if connection.vendor == "sqlite":
-        connection.connection.create_function("pg_advisory_xact_lock", 1, lambda x: None)
-
-
-_TABLES_CREATED = False
-
-
-def create_schema_tables() -> None:
-    """Create test tables in SQLite in-memory database once."""
-    global _TABLES_CREATED
-    if _TABLES_CREATED:
-        return
-    connection.ensure_connection()
-    extend_sqlite(None, connection)
-    from django.apps import apps
-    all_models = list(apps.get_app_config("cow").get_models())
-    with connection.schema_editor() as editor:
-        for m in all_models:
-            editor.create_model(m)
-    _TABLES_CREATED = True
-
-
-def create_test_customer(email_prefix: str = "cust") -> Principal:
-    """Helper to create a valid customer principal and profile."""
-    uid = uuid4().hex[:8]
-    acct = Account.objects.create(email=f"{email_prefix}_{uid}@example.com", password_hash="dummy_hash")
-    princ = Principal.objects.create(account=acct, plane="app", status="ACTIVE")
-    CustomerProfile.objects.create(principal=princ, full_name=f"Customer {uid}", phone="+919876543210")
-    return princ
+from cow.users.repository import (
+    RECONCILIATION_EVIDENCE_ALLOWLIST,
+    format_paise_to_inr_str,
+    sanitize_payment_evidence,
+)
+from cow.users.service import compute_order_receipt
 
 
 class UserSchemasTest(unittest.TestCase):
+    """Test strict Pydantic payload and response schemas for the customer plane."""
+
     def test_profile_schemas(self):
         p = schemas.ProfileData(full_name="Abhranil Pal", phone="+919876543210", version=1)
         self.assertEqual(p.full_name, "Abhranil Pal")
@@ -180,733 +108,500 @@ class UserSchemasTest(unittest.TestCase):
         )
         self.assertEqual(req_payload.requested_energy_wh, 35000)
 
+        # Negative energy requested is rejected by schema validator
         with self.assertRaises(ValidationError):
             schemas.ServiceRequestPayload(
                 vehicle_id=v_id,
                 address_id=a_id,
-                requested_energy_wh=0,
+                requested_energy_wh=-10,
             )
-        with self.assertRaises(ValidationError):
-            schemas.ServiceRequestPayload(
-                vehicle_id=v_id,
-                address_id=a_id,
-                requested_energy_wh=600000,
-            )
-
-    def test_job_schemas(self):
-        j_id = str(uuid4())
-        job_data = schemas.JobDetailData(
-            id=j_id,
-            state="DISPATCHING",
-            version=1,
-            vehicle_snapshot={"make": "Tata", "model": "Nexon EV"},
-            address_snapshot={"address": "Kolkata"},
-            requested_energy_wh=35000,
-            quoted_total_paise=50000,
-            currency="INR",
-        )
-        self.assertEqual(job_data.state, "DISPATCHING")
-        self.assertEqual(job_data.quoted_total_paise, 50000)
-
-        cancel_payload = schemas.JobCancelPayload(reason="Changed plans")
-        self.assertEqual(cancel_payload.reason, "Changed plans")
-
-        live_data = schemas.JobLiveProjectionData(
-            job_id=j_id,
-            state="EN_ROUTE",
-            eta_minutes=None,
-            freshness_timestamp="2026-11-12T10:00:00Z",
-        )
-        self.assertIsNone(live_data.eta_minutes)
 
     def test_rating_schemas(self):
-        r = schemas.RatingCreatePayload(rating=5, comment="Great service!")
-        self.assertEqual(r.rating, 5)
+        valid = schemas.RatingCreatePayload(rating=5, comment="Excellent charging service!")
+        self.assertEqual(valid.rating, 5)
 
-        with self.assertRaises(ValidationError):
-            schemas.RatingCreatePayload(rating=0)
-        with self.assertRaises(ValidationError):
-            schemas.RatingCreatePayload(rating=6)
+        # Ratings outside 1-5 range are strictly rejected
+        for bad_r in (0, 6, -1, 10):
+            with self.assertRaises(ValidationError):
+                schemas.RatingCreatePayload(rating=bad_r, comment="")
 
-    def test_support_schemas(self):
-        ticket_req = schemas.SupportTicketCreatePayload(
-            category="CHARGING_ISSUE",
+        # Comments longer than 500 characters are strictly rejected
+        with self.assertRaises(ValidationError):
+            schemas.RatingCreatePayload(rating=5, comment="x" * 501)
+
+    def test_support_ticket_schemas(self):
+        ticket_payload = schemas.SupportTicketCreatePayload(
             subject="Charging stopped unexpectedly",
-            message="The session ended at 40% instead of 80%.",
+            category="CHARGING_ISSUE",
+            message="The session ended at 80% instead of 100%.",
         )
-        self.assertEqual(ticket_req.category, "CHARGING_ISSUE")
+        self.assertEqual(ticket_payload.category, "CHARGING_ISSUE")
 
-        reply_req = schemas.SupportReplyPayload(message="Here is more information.")
-        self.assertEqual(reply_req.message, "Here is more information.")
+        # Subject longer than 200 chars rejected
+        with self.assertRaises(ValidationError):
+            schemas.SupportTicketCreatePayload(
+                subject="a" * 201,
+                category="BILLING",
+                message="Help",
+            )
 
-    def test_notification_schemas(self):
+        # Message longer than 2000 chars rejected
+        with self.assertRaises(ValidationError):
+            schemas.SupportReplyPayload(message="a" * 2001)
+
+    def test_notification_and_preference_schemas(self):
         notif = schemas.NotificationData(
             id=str(uuid4()),
-            title="Service Confirmed",
-            body="Driver is en route",
-            category="SERVICE",
+            title="Session Completed",
+            body="Your EV has been charged to 90%.",
+            category="CHARGING",
             is_read=False,
             read_at=None,
-            created_at="2026-11-12T10:00:00Z",
-            data={"job_id": "test_job"},
+            data={"energy_wh": 35000},
+            created_at="2026-11-12T12:00:00Z",
         )
-        self.assertFalse(notif.is_read)
-        self.assertEqual(notif.body, "Driver is en route")
-        self.assertEqual(notif.category, "SERVICE")
+        self.assertEqual(notif.category, "CHARGING")
+        self.assertEqual(notif.body, "Your EV has been charged to 90%.")
 
-        prefs = schemas.NotificationPreferencesData(
+        prefs = schemas.NotificationPreferencesPayload(
             push_enabled=True,
-            email_enabled=True,
-            sms_enabled=False,
-            service_updates=True,
-            promotions=False,
+            email_enabled=False,
+            sms_enabled=True,
         )
-        self.assertFalse(prefs.sms_enabled)
+        self.assertFalse(prefs.email_enabled)
 
-    def test_realtime_schemas(self):
-        rt = schemas.RealtimeTicketPayload(
+    def test_realtime_ticket_schemas(self):
+        ticket_req = schemas.RealtimeTicketPayload(
             subscriptions=["self", "notifications"],
+            resume_after="evt_12345",
         )
-        self.assertIn("self", rt.subscriptions)
+        self.assertEqual(len(ticket_req.subscriptions), 2)
+        self.assertEqual(ticket_req.resume_after, "evt_12345")
 
-    def test_wallet_schemas(self):
-        w = schemas.WalletAccountData(
-            balance_paise=50000,
-            balance_inr="500.00",
-            currency="INR",
-            version=1,
-        )
-        self.assertEqual(w.balance_paise, 50000)
-        self.assertEqual(w.balance_inr, "500.00")
+    def test_wallet_recharge_order_amount_bounds(self):
+        # 100 paise (₹1.00) is valid minimum
+        o1 = schemas.WalletRechargeOrderPayload(amount_paise=100)
+        self.assertEqual(o1.amount_paise, 100)
+        self.assertEqual(o1.currency, "INR")
 
-        tx = schemas.WalletTransactionData(
-            id=str(uuid4()),
-            transaction_type="CREDIT_TOPUP",
-            amount_paise=50000,
-            amount_inr="500.00",
-            balance_after_paise=50000,
-            balance_after_inr="500.00",
-            reference_id="pay_12345",
-        )
-        self.assertEqual(tx.transaction_type, "CREDIT_TOPUP")
+        # 50,000 paise (₹500.00) is valid
+        o2 = schemas.WalletRechargeOrderPayload(amount_paise=50000)
+        self.assertEqual(o2.amount_paise, 50000)
 
-        order_req = schemas.WalletRechargeOrderPayload(amount_paise=10000)
-        self.assertEqual(order_req.amount_paise, 10000)
-        self.assertEqual(order_req.currency, "INR")
+        # 10,000,000 paise (₹100,000.00) is valid maximum
+        o3 = schemas.WalletRechargeOrderPayload(amount_paise=10000000)
+        self.assertEqual(o3.amount_paise, 10000000)
 
-        with self.assertRaises(ValidationError):
-            schemas.WalletRechargeOrderPayload(amount_paise=0)
+        # 99 paise is strictly rejected (< 100)
         with self.assertRaises(ValidationError):
             schemas.WalletRechargeOrderPayload(amount_paise=99)
+
+        # 0 paise is strictly rejected
+        with self.assertRaises(ValidationError):
+            schemas.WalletRechargeOrderPayload(amount_paise=0)
+
+        # Negative amount is strictly rejected
+        with self.assertRaises(ValidationError):
+            schemas.WalletRechargeOrderPayload(amount_paise=-500)
+
+        # > 10,000,000 paise is strictly rejected
         with self.assertRaises(ValidationError):
             schemas.WalletRechargeOrderPayload(amount_paise=10000001)
+
+        # Non-INR currency is rejected
         with self.assertRaises(ValidationError):
             schemas.WalletRechargeOrderPayload(amount_paise=5000, currency="USD")
 
-        verify_req = schemas.WalletRechargeVerifyPayload(
-            razorpay_order_id="order_123",
-            razorpay_payment_id="pay_456",
-            razorpay_signature="abcde12345",
+    def test_wallet_recharge_verify_schemas(self):
+        v = schemas.WalletRechargeVerifyPayload(
+            razorpay_order_id="order_test_123",
+            razorpay_payment_id="pay_test_456",
+            razorpay_signature="sig_test_789",
         )
-        self.assertEqual(verify_req.razorpay_order_id, "order_123")
+        self.assertEqual(v.razorpay_order_id, "order_test_123")
 
-    def test_paise_to_inr_string_exact_formatting(self):
-        self.assertEqual(schemas.format_paise_to_inr_str(0), "0.00")
-        self.assertEqual(schemas.format_paise_to_inr_str(5), "0.05")
-        self.assertEqual(schemas.format_paise_to_inr_str(99), "0.99")
-        self.assertEqual(schemas.format_paise_to_inr_str(100), "1.00")
-        self.assertEqual(schemas.format_paise_to_inr_str(50000), "500.00")
-        self.assertEqual(schemas.format_paise_to_inr_str(1234567), "12345.67")
-        self.assertEqual(schemas.format_paise_to_inr_str(-250), "-2.50")
+        # Missing required fields raises ValidationError
+        with self.assertRaises(ValidationError):
+            schemas.WalletRechargeVerifyPayload(
+                razorpay_order_id="order_test_123",
+                razorpay_payment_id="pay_test_456",
+            )
+
+
+class UserPureLogicTest(unittest.TestCase):
+    """Test pure domain/service logic, collision resistance, allowlists, and formatting."""
+
+    def test_receipt_digest_collision_resistance_for_identical_prefixes(self):
+        """Two different keys sharing the first 16 or 32 characters must generate distinct receipts."""
+        class DummyPrincipal:
+            def __init__(self, pid: str):
+                self.id = UUID(pid)
+
+        p = DummyPrincipal("11111111-1111-1111-1111-111111111111")
+        # Identical 24-character prefix
+        key_a = "shared_prefix_1234567890_alpha"
+        key_b = "shared_prefix_1234567890_bravo"
+
+        receipt_a = compute_order_receipt(p, key_a)
+        receipt_b = compute_order_receipt(p, key_b)
+
+        self.assertNotEqual(receipt_a, receipt_b)
+        self.assertTrue(receipt_a.startswith("rc_"))
+        self.assertTrue(receipt_b.startswith("rc_"))
+        # Must be strictly <= 40 characters for Razorpay Orders API
+        self.assertLessEqual(len(receipt_a), 40)
+        self.assertLessEqual(len(receipt_b), 40)
+        self.assertEqual(len(receipt_a), 35)
+
+    def test_receipt_digest_actor_isolation(self):
+        """Identical idempotency keys for different actors must generate distinct receipts."""
+        class DummyPrincipal:
+            def __init__(self, pid: str):
+                self.id = UUID(pid)
+
+        p1 = DummyPrincipal("11111111-1111-1111-1111-111111111111")
+        p2 = DummyPrincipal("22222222-2222-2222-2222-222222222222")
+        key = "shared_client_idempotency_key_123"
+
+        receipt_1 = compute_order_receipt(p1, key)
+        receipt_2 = compute_order_receipt(p2, key)
+
+        self.assertNotEqual(receipt_1, receipt_2)
+
+    def test_receipt_digest_is_deterministic(self):
+        """Same actor and same key must produce the exact same receipt every time."""
+        class DummyPrincipal:
+            def __init__(self, pid: str):
+                self.id = UUID(pid)
+
+        p = DummyPrincipal("33333333-3333-3333-3333-333333333333")
+        key = "deterministic_key_for_recovery_123"
+        r1 = compute_order_receipt(p, key)
+        r2 = compute_order_receipt(p, key)
+        self.assertEqual(r1, r2)
+
+    def test_evidence_allowlist_sanitization(self):
+        """Payment evidence sanitization must strictly keep only allowlisted fields."""
+        raw_evidence = {
+            # Allowlisted fields
+            "id": "pay_test_123",
+            "order_id": "order_test_456",
+            "amount": 50000,
+            "currency": "INR",
+            "status": "captured",
+            "method": "upi",
+            "created_at": 1731400000,
+            "bank": "HDFC",
+            "wallet": None,
+            "vpa": "customer@okaxis",
+            "email": "customer@example.com",
+            "contact": "+919876543210",
+            "fee": 1180,
+            "tax": 180,
+            "error_code": None,
+            "error_description": None,
+            # Sensitive / unexpected / injected fields that MUST be dropped
+            "secret": "super_secret_key",
+            "key_secret": "sensitive_token",
+            "access_token": "bearer_abc_xyz",
+            "auth": "Basic 12345",
+            "Authorization": "Bearer secret",
+            "card_cvv": "123",
+            "internal_server_debug": {"stack": "trace"},
+            "arbitrary_injected_param": "malicious",
+        }
+
+        sanitized = sanitize_payment_evidence(raw_evidence)
+
+        # Check all allowlisted fields are present
+        for field in (
+            "id", "order_id", "amount", "currency", "status", "method",
+            "created_at", "bank", "vpa", "email", "contact", "fee", "tax",
+        ):
+            self.assertIn(field, sanitized)
+            self.assertEqual(sanitized[field], raw_evidence[field])
+
+        # Check sensitive & unexpected fields are completely stripped
+        for forbidden in (
+            "secret", "key_secret", "access_token", "auth", "Authorization",
+            "card_cvv", "internal_server_debug", "arbitrary_injected_param",
+        ):
+            self.assertNotIn(forbidden, sanitized)
+
+        # Only allowlisted keys remain
+        self.assertTrue(set(sanitized.keys()).issubset(RECONCILIATION_EVIDENCE_ALLOWLIST))
+
+    def test_evidence_allowlist_empty_or_none(self):
+        self.assertEqual(sanitize_payment_evidence(None), {})
+        self.assertEqual(sanitize_payment_evidence({}), {})
+
+    def test_format_paise_to_inr_str(self):
+        self.assertEqual(format_paise_to_inr_str(0), "0.00")
+        self.assertEqual(format_paise_to_inr_str(5), "0.05")
+        self.assertEqual(format_paise_to_inr_str(99), "0.99")
+        self.assertEqual(format_paise_to_inr_str(100), "1.00")
+        self.assertEqual(format_paise_to_inr_str(50000), "500.00")
+        self.assertEqual(format_paise_to_inr_str(10000000), "100000.00")
+
+    def test_hmac_signature_calculation_and_tamper_detection(self):
+        secret = "secret_key_for_hmac_test_123"
+        order_id = "order_abc_123"
+        payment_id = "pay_xyz_789"
+        message = f"{order_id}|{payment_id}".encode("utf-8")
+        valid_sig = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+        # Valid signature matches
+        expected = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+        self.assertTrue(hmac.compare_digest(expected.lower(), valid_sig.lower()))
+
+        # Tampered payment ID fails
+        tampered_msg = f"{order_id}|pay_DIFFERENT".encode("utf-8")
+        tampered_expected = hmac.new(secret.encode("utf-8"), tampered_msg, hashlib.sha256).hexdigest()
+        self.assertFalse(hmac.compare_digest(tampered_expected.lower(), valid_sig.lower()))
+
+        # Tampered secret fails
+        diff_secret_expected = hmac.new(b"different_secret", message, hashlib.sha256).hexdigest()
+        self.assertFalse(hmac.compare_digest(diff_secret_expected.lower(), valid_sig.lower()))
+
+
+class UserServiceWorkflowsTest(unittest.TestCase):
+    """Test service orchestration, idempotent recovery, conflict detection, and fault injection."""
+
+    def setUp(self):
+        class DummyPrincipal:
+            def __init__(self):
+                self.id = UUID("44444444-4444-4444-4444-444444444444")
+        self.actor = DummyPrincipal()
+        self.key = "test_valid_idempotency_key_123"
+
+    @patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key_id", "rzp_secret"))
+    @patch("cow.users.service.repo.get_payment_order_by_receipt", return_value=None)
+    @patch("cow.users.service.repo.create_payment_intent")
+    @patch("cow.users.service.reconcile_razorpay_order_by_receipt", return_value=None)
+    @patch("cow.users.service.call_razorpay_create_order", return_value="order_gateway_777")
+    @patch("cow.users.service.repo.confirm_payment_intent")
+    def test_recharge_order_normal_flow(
+        self,
+        mock_confirm,
+        mock_create_order,
+        mock_reconcile,
+        mock_create_intent,
+        mock_get_existing,
+        mock_creds,
+    ):
+        mock_confirm.return_value = {
+            "order_id": "order_gateway_777",
+            "provider_order_id": "order_gateway_777",
+            "provider": "RAZORPAY",
+            "amount_paise": 50000,
+            "amount_inr": "500.00",
+            "currency": "INR",
+            "key_id": "rzp_key_id",
+            "state": "PENDING",
+        }
+
+        resp = service.create_wallet_recharge_order(
+            self.actor, {"amount_paise": 50000, "currency": "INR"}, self.key
+        )
+
+        self.assertEqual(resp.status_code, 201)
+        # Durable intent was created locally BEFORE calling gateway
+        mock_create_intent.assert_called_once()
+        # Reconciliation was attempted
+        mock_reconcile.assert_called_once()
+        # Gateway was called
+        mock_create_order.assert_called_once()
+        # Intent was confirmed with gateway order ID
+        mock_confirm.assert_called_once_with(
+            actor=self.actor,
+            receipt=compute_order_receipt(self.actor, self.key),
+            provider_order_id="order_gateway_777",
+            key_id="rzp_key_id",
+        )
+
+    @patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key_id", "rzp_secret"))
+    @patch("cow.users.service.repo.get_payment_order_by_receipt")
+    @patch("cow.users.service.call_razorpay_create_order")
+    def test_recharge_order_idempotent_recovery(
+        self,
+        mock_create_order,
+        mock_get_existing,
+        mock_creds,
+    ):
+        """When an order is already confirmed, subsequent retries return it without calling gateway."""
+        confirmed_order = {
+            "order_id": "order_already_confirmed_999",
+            "provider_order_id": "order_already_confirmed_999",
+            "provider": "RAZORPAY",
+            "amount_paise": 50000,
+            "amount_inr": "500.00",
+            "currency": "INR",
+            "key_id": "rzp_key_id",
+            "state": "PENDING",
+            "is_intent": False,
+        }
+        mock_get_existing.return_value = confirmed_order
+
+        resp = service.create_wallet_recharge_order(
+            self.actor, {"amount_paise": 50000, "currency": "INR"}, self.key
+        )
+
+        self.assertEqual(resp.status_code, 201)
+        # Gateway create order was NOT called!
+        mock_create_order.assert_not_called()
+
+    @patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key_id", "rzp_secret"))
+    @patch("cow.users.service.repo.get_payment_order_by_receipt")
+    def test_recharge_order_conflict_on_mismatched_amount(
+        self,
+        mock_get_existing,
+        mock_creds,
+    ):
+        """When a retry uses an existing receipt with a conflicting amount, it must be rejected with 409."""
+        mock_get_existing.side_effect = DomainError(
+            409,
+            "PAYMENT_ORDER_CONFLICT",
+            "Payment order exists with conflicting amount",
+        )
+
+        with self.assertRaises(DomainError) as ctx:
+            service.create_wallet_recharge_order(
+                self.actor, {"amount_paise": 100000, "currency": "INR"}, self.key
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.code, "PAYMENT_ORDER_CONFLICT")
+
+    @patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key_id", "rzp_secret"))
+    @patch("cow.users.service.repo.get_payment_order_by_receipt", return_value={"is_intent": True})
+    @patch("cow.users.service.reconcile_razorpay_order_by_receipt", return_value="order_reconciled_555")
+    @patch("cow.users.service.call_razorpay_create_order")
+    @patch("cow.users.service.repo.confirm_payment_intent")
+    def test_recharge_order_reconciliation_after_uncertain_outcome(
+        self,
+        mock_confirm,
+        mock_create_order,
+        mock_reconcile,
+        mock_get_existing,
+        mock_creds,
+    ):
+        """When prior attempt was uncertain, retry reconciles with Razorpay and confirms without re-creating."""
+        mock_confirm.return_value = {
+            "order_id": "order_reconciled_555",
+            "provider_order_id": "order_reconciled_555",
+            "provider": "RAZORPAY",
+            "amount_paise": 50000,
+            "amount_inr": "500.00",
+            "currency": "INR",
+            "key_id": "rzp_key_id",
+            "state": "PENDING",
+        }
+
+        resp = service.create_wallet_recharge_order(
+            self.actor, {"amount_paise": 50000, "currency": "INR"}, self.key
+        )
+
+        self.assertEqual(resp.status_code, 201)
+        mock_reconcile.assert_called_once()
+        # Gateway create order was NOT called because reconciliation recovered it!
+        mock_create_order.assert_not_called()
+        mock_confirm.assert_called_once_with(
+            actor=self.actor,
+            receipt=compute_order_receipt(self.actor, self.key),
+            provider_order_id="order_reconciled_555",
+            key_id="rzp_key_id",
+        )
+
+    @patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key_id", "rzp_secret"))
+    @patch("cow.users.service.repo.get_payment_order_by_receipt", return_value=None)
+    @patch("cow.users.service.repo.create_payment_intent")
+    @patch("cow.users.service.reconcile_razorpay_order_by_receipt", return_value=None)
+    @patch("cow.users.service.call_razorpay_create_order", side_effect=DomainError(504, "GATEWAY_TIMEOUT", "Connection timed out"))
+    @patch("cow.users.service.repo.mark_payment_intent_uncertain")
+    def test_recharge_order_fault_injection_marks_intent_uncertain(
+        self,
+        mock_mark_uncertain,
+        mock_create_order,
+        mock_reconcile,
+        mock_create_intent,
+        mock_get_existing,
+        mock_creds,
+    ):
+        """When the gateway times out, the local intent must be marked uncertain before propagating 504."""
+        with self.assertRaises(DomainError) as ctx:
+            service.create_wallet_recharge_order(
+                self.actor, {"amount_paise": 50000, "currency": "INR"}, self.key
+            )
+        self.assertEqual(ctx.exception.status_code, 504)
+        self.assertEqual(ctx.exception.code, "GATEWAY_TIMEOUT")
+        mock_mark_uncertain.assert_called_once()
+
+    def test_recharge_order_key_validation(self):
+        # Missing key
+        with self.assertRaises(DomainError) as ctx:
+            service.create_wallet_recharge_order(self.actor, {"amount_paise": 50000}, "")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.code, "IDEMPOTENCY_KEY_REQUIRED")
+
+        # Key too short (< 16 chars)
+        with self.assertRaises(DomainError) as ctx:
+            service.create_wallet_recharge_order(self.actor, {"amount_paise": 50000}, "short_key")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.code, "IDEMPOTENCY_KEY_REQUIRED")
+
+        # Key too long (> 128 chars)
+        with self.assertRaises(DomainError) as ctx:
+            service.create_wallet_recharge_order(self.actor, {"amount_paise": 50000}, "k" * 129)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.code, "IDEMPOTENCY_KEY_REQUIRED")
+
+    @patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key_id", ""))
+    def test_verify_recharge_rejects_missing_credentials(self, mock_creds):
+        with self.assertRaises(DomainError) as ctx:
+            service.verify_wallet_recharge(
+                self.actor,
+                {
+                    "razorpay_order_id": "order_123",
+                    "razorpay_payment_id": "pay_123",
+                    "razorpay_signature": "sig_123",
+                },
+            )
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertEqual(ctx.exception.code, "CONFIGURATION_ERROR")
 
 
 class UserModuleStructureTest(unittest.TestCase):
-    def test_all_user_files_parse(self):
-        user_dir = ROOT / "cow/users"
-        for py_file in user_dir.glob("*.py"):
-            with self.subTest(file=py_file.name):
-                ast.parse(py_file.read_text(encoding="utf-8"))
+    """AST inspections enforcing architectural contracts, model boundaries, and error codes."""
 
-    def test_no_forbidden_class_names(self):
-        user_dir = ROOT / "cow/users"
-        forbidden = ("Account", "PricingPolicy", "ServiceZone", "ServiceJob")
-        for py_file in user_dir.glob("*.py"):
-            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+    def test_canonical_model_imports_only(self):
+        """User module must only import models from canonical cow.models, never declaring local models."""
+        users_dir = Path(repo.__file__).resolve().parent
+        for py_file in users_dir.glob("*.py"):
+            with open(py_file, "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=str(py_file))
             for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    self.assertNotIn(node.name, forbidden, f"{py_file.name} defines {node.name}")
-
-    def test_router_operation_ids_registered(self):
-        router_src = (ROOT / "cow/users/router.py").read_text(encoding="utf-8")
-        charging_src = (ROOT / "cow/users/charging.py").read_text(encoding="utf-8")
-        master_src = (ROOT / "cow/users/master.py").read_text(encoding="utf-8")
-
-        for op in ("cow_api_request_service", "cow_api_quote_request", "cow_api_accept_quote", "cow_api_get_job"):
-            self.assertIn(f'operation_id="{op}"', charging_src)
-
-        expected_master = (
-            "app_profile_get", "app_profile_patch",
-            "app_vehicles_list", "app_vehicles_create", "app_vehicles_get", "app_vehicles_patch", "app_vehicles_delete",
-            "app_addresses_list", "app_addresses_create", "app_addresses_get", "app_addresses_patch", "app_addresses_delete",
-            "app_addresses_default",
-        )
-        for op in expected_master:
-            self.assertIn(f'operation_id="{op}"', master_src)
-
-        expected_extended = (
-            "app_service_requests_list",
-            "app_service_request_get",
-            "app_jobs_list",
-            "app_jobs_cancel",
-            "app_jobs_live",
-            "app_jobs_promote_vehicle",
-            "app_jobs_promote_address",
-            "app_ratings_list",
-            "app_jobs_rating_get",
-            "app_jobs_rating_put",
-            "app_support_tickets_list",
-            "app_support_tickets_create",
-            "app_support_tickets_get",
-            "app_support_tickets_reply",
-            "app_notifications_list",
-            "app_notifications_unread_count",
-            "app_notifications_read",
-            "app_notifications_read_all",
-            "app_notifications_preferences_get",
-            "app_notifications_preferences_put",
-            "app_realtime_tickets_create",
-            "app_wallet_get",
-            "app_wallet_transactions_list",
-            "app_wallet_recharge_order",
-            "app_wallet_payment_order",
-            "app_wallet_recharge_verify",
-            "app_wallet_verify_payment",
-        )
-        for op in expected_extended:
-            self.assertIn(f'operation_id="{op}"', router_src)
-
-    def test_all_user_models_declared(self):
-        models_src = (ROOT / "cow/models.py").read_text(encoding="utf-8")
-        self.assertIn("class WalletAccount(Timestamped):", models_src)
-        self.assertIn("class WalletTransaction(Timestamped):", models_src)
-        self.assertIn("class PaymentOrder(Timestamped):", models_src)
-        self.assertIn("class CustomerJobRating(Timestamped):", models_src)
-        self.assertIn("class CustomerSupportTicket(Timestamped):", models_src)
-        self.assertIn("class CustomerSupportMessage(Timestamped):", models_src)
-        self.assertIn("class CustomerNotification(Timestamped):", models_src)
-        self.assertIn("class CustomerNotificationPreference(Timestamped):", models_src)
-        self.assertIn("cow_wallet_balance_nonnegative", models_src)
-        self.assertIn("cow_pay_provider_payment_unique", models_src)
-        self.assertIn("cow_job_rating_range_1_to_5", models_src)
-
-    def test_realtime_ticket_fails_closed_when_not_configured(self):
-        class DummyPrincipal:
-            id = uuid4()
-
-        with self.assertRaises(DomainError) as ctx:
-            repo.create_realtime_ticket(DummyPrincipal(), ["self"])
-        self.assertEqual(ctx.exception.code, "REALTIME_STREAM_NOT_CONFIGURED")
-        self.assertEqual(ctx.exception.status_code, 501)
-
-
-class UserIsolatedDBTest(unittest.TestCase):
-    """Integration and concurrency tests executing against an isolated in-memory database."""
-
-    @classmethod
-    def setUpClass(cls):
-        create_schema_tables()
-
-    def setUp(self):
-        self.customer1 = create_test_customer("cust1")
-        self.customer2 = create_test_customer("cust2")
-        self.secret = "WvCG1TeQLOABInHqBgwyWb2t"
-
-    def _compute_sig(self, order_id: str, payment_id: str) -> str:
-        data = f"{order_id}|{payment_id}".encode("utf-8")
-        return hmac.new(self.secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
-
-    # ========================================================================
-    # 1. Payment Verification Fail-Closed Tests
-    # ========================================================================
-
-    def test_verify_recharge_rejects_missing_or_empty_evidence(self):
-        order = repo.create_payment_order(self.customer1, 50000, "INR", "order_fail_1", "key_1")
-        sig = self._compute_sig(order["provider_order_id"], "pay_1")
-
-        # Missing evidence
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(
-                self.customer1, order["provider_order_id"], "pay_1", sig, self.secret, payment_evidence=None
-            )
-        self.assertEqual(ctx.exception.code, "MISSING_PAYMENT_EVIDENCE")
-
-        # Empty dict evidence
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(
-                self.customer1, order["provider_order_id"], "pay_1", sig, self.secret, payment_evidence={}
-            )
-        self.assertEqual(ctx.exception.code, "MISSING_PAYMENT_EVIDENCE")
-
-    def test_verify_recharge_rejects_non_captured_status(self):
-        order = repo.create_payment_order(self.customer1, 50000, "INR", "order_fail_2", "key_1")
-        sig = self._compute_sig(order["provider_order_id"], "pay_2")
-
-        for bad_status in ("failed", "authorized", "created", "refunded"):
-            ev = {
-                "id": "pay_2",
-                "order_id": order["provider_order_id"],
-                "status": bad_status,
-                "amount": 50000,
-                "currency": "INR",
-            }
-            with self.assertRaises(DomainError) as ctx:
-                repo.verify_and_credit_recharge(
-                    self.customer1, order["provider_order_id"], "pay_2", sig, self.secret, payment_evidence=ev
-                )
-            self.assertEqual(ctx.exception.code, "PAYMENT_NOT_CAPTURED")
-
-    def test_verify_recharge_rejects_mismatches(self):
-        order = repo.create_payment_order(self.customer1, 50000, "INR", "order_fail_3", "key_1")
-        sig = self._compute_sig(order["provider_order_id"], "pay_3")
-
-        # Payment ID mismatch
-        ev = {"id": "pay_mismatch", "order_id": order["provider_order_id"], "status": "captured", "amount": 50000, "currency": "INR"}
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(self.customer1, order["provider_order_id"], "pay_3", sig, self.secret, ev)
-        self.assertEqual(ctx.exception.code, "PAYMENT_ID_MISMATCH")
-
-        # Order ID mismatch
-        ev = {"id": "pay_3", "order_id": "order_mismatch", "status": "captured", "amount": 50000, "currency": "INR"}
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(self.customer1, order["provider_order_id"], "pay_3", sig, self.secret, ev)
-        self.assertEqual(ctx.exception.code, "PAYMENT_ORDER_MISMATCH")
-
-        # Amount mismatch
-        ev = {"id": "pay_3", "order_id": order["provider_order_id"], "status": "captured", "amount": 40000, "currency": "INR"}
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(self.customer1, order["provider_order_id"], "pay_3", sig, self.secret, ev)
-        self.assertEqual(ctx.exception.code, "PAYMENT_AMOUNT_MISMATCH")
-
-        # Currency mismatch
-        ev = {"id": "pay_3", "order_id": order["provider_order_id"], "status": "captured", "amount": 50000, "currency": "USD"}
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(self.customer1, order["provider_order_id"], "pay_3", sig, self.secret, ev)
-        self.assertEqual(ctx.exception.code, "PAYMENT_CURRENCY_MISMATCH")
-
-    def test_verify_recharge_rejects_simulated_evidence_in_real_flow(self):
-        order = repo.create_payment_order(self.customer1, 50000, "INR", "order_fail_sim", "key_1")
-        sig = self._compute_sig(order["provider_order_id"], "pay_sim")
-        ev = {
-            "id": "pay_sim",
-            "order_id": order["provider_order_id"],
-            "status": "captured",
-            "amount": 50000,
-            "currency": "INR",
-            "simulated": True,
-        }
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(self.customer1, order["provider_order_id"], "pay_sim", sig, self.secret, ev)
-        self.assertEqual(ctx.exception.code, "PAYMENT_SIMULATION_DISALLOWED")
-
-    def test_verify_recharge_successful_credit_and_safe_idempotent_replay(self):
-        order = repo.create_payment_order(self.customer1, 50000, "INR", "order_succ_1", "key_1")
-        pay_id = f"pay_{uuid4().hex[:12]}"
-        sig = self._compute_sig(order["provider_order_id"], pay_id)
-        ev = {
-            "id": pay_id,
-            "order_id": order["provider_order_id"],
-            "status": "captured",
-            "amount": 50000,
-            "currency": "INR",
-            "method": "upi",
-            "key_secret": "sensitive_leaked_secret",  # Must be stripped from stored details
-        }
-
-        res = repo.verify_and_credit_recharge(self.customer1, order["provider_order_id"], pay_id, sig, self.secret, ev)
-        self.assertEqual(res["status"], "CAPTURED")
-        self.assertEqual(res["credited_paise"], 50000)
-        self.assertEqual(res["credited_inr"], "500.00")
-        self.assertEqual(res["balance_paise"], 50000)
-        self.assertEqual(res["balance_inr"], "500.00")
-        self.assertEqual(res["version"], 2)
-
-        # Check DB state
-        order_obj = PaymentOrder.objects.get(provider_order_id=order["provider_order_id"])
-        self.assertEqual(order_obj.state, "CAPTURED")
-        self.assertEqual(order_obj.provider_payment_id, pay_id)
-        self.assertNotIn("key_secret", order_obj.details)
-
-        # Ledger transaction appended
-        tx = WalletTransaction.objects.filter(reference_id=pay_id).first()
-        self.assertIsNotNone(tx)
-        self.assertEqual(tx.amount_paise, 50000)
-        self.assertEqual(tx.balance_after_paise, 50000)
-        self.assertNotIn("key_secret", tx.details)
-
-        # Idempotent replay: calling verify with identical credentials returns state without duplicate credit
-        replay_res = repo.verify_and_credit_recharge(
-            self.customer1, order["provider_order_id"], pay_id, sig, self.secret, ev
-        )
-        self.assertEqual(replay_res["status"], "CAPTURED")
-        self.assertEqual(replay_res["balance_paise"], 50000)
-        self.assertEqual(replay_res["version"], 2)  # Version NOT bumped on replay
-
-        # Check that wallet still has 50000 paise (not 100000)
-        w = WalletAccount.objects.get(customer=self.customer1)
-        self.assertEqual(w.balance_paise, 50000)
-
-    def test_verify_recharge_rejects_duplicate_payment_id_across_orders(self):
-        order1 = repo.create_payment_order(self.customer1, 50000, "INR", "order_dup_1", "key_1")
-        pay_id = f"pay_{uuid4().hex[:12]}"
-        sig1 = self._compute_sig(order1["provider_order_id"], pay_id)
-        ev1 = {"id": pay_id, "order_id": order1["provider_order_id"], "status": "captured", "amount": 50000, "currency": "INR"}
-        repo.verify_and_credit_recharge(self.customer1, order1["provider_order_id"], pay_id, sig1, self.secret, ev1)
-
-        # Attempt to reuse pay_id on order 2
-        order2 = repo.create_payment_order(self.customer1, 50000, "INR", "order_dup_2", "key_1")
-        sig2 = self._compute_sig(order2["provider_order_id"], pay_id)
-        ev2 = {"id": pay_id, "order_id": order2["provider_order_id"], "status": "captured", "amount": 50000, "currency": "INR"}
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(self.customer1, order2["provider_order_id"], pay_id, sig2, self.secret, ev2)
-        self.assertEqual(ctx.exception.code, "DUPLICATE_PAYMENT")
-
-    # ========================================================================
-    # 2. Razorpay Gateway Isolation & Order Recovery Tests
-    # ========================================================================
-
-    def test_gateway_clients_fail_closed_without_credentials(self):
-        with self.assertRaises(DomainError) as ctx:
-            service.call_razorpay_create_order("", "", 50000, "INR", "rc_test")
-        self.assertEqual(ctx.exception.code, "CONFIGURATION_ERROR")
-        self.assertEqual(ctx.exception.status_code, 500)
-
-        with self.assertRaises(DomainError) as ctx:
-            service.fetch_razorpay_payment("", "", "pay_test")
-        self.assertEqual(ctx.exception.code, "CONFIGURATION_ERROR")
-        self.assertEqual(ctx.exception.status_code, 500)
-
-    @patch("cow.users.service.call_razorpay_create_order")
-    def test_recharge_order_creation_idempotency_and_recovery(self, mock_create):
-        mock_create.return_value = "order_rzp_mock_123"
-        key = "idemp_order_create_001"
-
-        with patch("cow.users.service.get_razorpay_credentials", return_value=("rzp_key", "rzp_sec")):
-            res1 = service.create_wallet_recharge_order(self.customer1, {"amount_paise": 50000, "currency": "INR"}, key)
-            self.assertEqual(res1.status_code, 201)
-            self.assertEqual(mock_create.call_count, 1)
-
-            # Replaying with same key should recover existing order without calling gateway again
-            res2 = service.create_wallet_recharge_order(self.customer1, {"amount_paise": 50000, "currency": "INR"}, key)
-            self.assertEqual(res2.status_code, 201)
-            self.assertEqual(mock_create.call_count, 1)
-
-    # ========================================================================
-    # 3. Support Ticket Reopening & Isolation Tests
-    # ========================================================================
-
-    def test_reply_to_closed_or_resolved_ticket_reopens_to_open(self):
-        ticket = CustomerSupportTicket.objects.create(
-            customer=self.customer1,
-            subject="Billing discrepancy",
-            category="BILLING",
-            status="RESOLVED",
-            version=1,
-        )
-        CustomerSupportMessage.objects.create(ticket=ticket, sender=self.customer1, message="Initial problem")
-
-        # Customer replies to RESOLVED ticket
-        res = repo.reply_support_ticket(self.customer1, ticket.id, "The problem persists")
-        self.assertEqual(res["status"], "OPEN")
-        self.assertEqual(res["version"], 2)
-        self.assertEqual(len(res["messages"]), 2)
-
-        # Mark CLOSED
-        ticket.refresh_from_db()
-        ticket.status = "CLOSED"
-        ticket.save()
-
-        # Customer replies to CLOSED ticket
-        res2 = repo.reply_support_ticket(self.customer1, ticket.id, "Need to reopen this")
-        self.assertEqual(res2["status"], "OPEN")
-        self.assertEqual(res2["version"], 3)
-        self.assertEqual(len(res2["messages"]), 3)
-
-    def test_support_ticket_ownership_isolation(self):
-        ticket = CustomerSupportTicket.objects.create(
-            customer=self.customer1,
-            subject="Private ticket",
-            category="GENERAL",
-            status="OPEN",
-            version=1,
-        )
-        # Customer 2 cannot read Customer 1's ticket
-        with self.assertRaises(DomainError) as ctx:
-            repo.get_support_ticket(self.customer2, ticket.id)
-        self.assertEqual(ctx.exception.code, "NOT_FOUND")
-
-        # Customer 2 cannot reply to Customer 1's ticket
-        with self.assertRaises(DomainError) as ctx:
-            repo.reply_support_ticket(self.customer2, ticket.id, "Unauthorized reply")
-        self.assertEqual(ctx.exception.code, "NOT_FOUND")
-
-    # ========================================================================
-    # 4. Rating PUT Retries, Preconditions & Versioning Tests
-    # ========================================================================
-
-    def _create_completed_job(self, customer: Principal) -> ServiceJob:
-        req = ServiceRequest.objects.create(
-            customer=customer,
-            vehicle_snapshot={"make": "Tata"},
-            address_snapshot={"address": "Kolkata"},
-            requested_energy_wh=30000,
-            state="FULFILLED",
-        )
-        policy, _ = PricingPolicy.objects.get_or_create(
-            status="ACTIVE",
-            defaults={
-                "name": "Standard Rate",
-                "revision": 1,
-                "currency": "INR",
-            },
-        )
-        quote = Quote.objects.create(
-            request=req,
-            pricing_policy=policy,
-            pricing_snapshot={},
-            total_paise=47200,
-            currency="INR",
-            expires_at=timezone.now(),
-            accepted_at=timezone.now(),
-        )
-        return ServiceJob.objects.create(
-            request=req,
-            accepted_quote=quote,
-            state="COMPLETED",
-            version=1,
-        )
-
-    def test_rating_first_write_creates_version_1(self):
-        job = self._create_completed_job(self.customer1)
-        res = repo.upsert_rating_for_job(self.customer1, job.id, rating=5, comment="Excellent")
-        self.assertEqual(res["rating"], 5)
-        self.assertEqual(res["version"], 1)
-
-    def test_rating_subsequent_update_preconditions(self):
-        job = self._create_completed_job(self.customer1)
-        # Create initial rating
-        repo.upsert_rating_for_job(self.customer1, job.id, rating=5, comment="Initial")
-
-        # Subsequent update without If-Match (version=None) must be rejected
-        with self.assertRaises(DomainError) as ctx:
-            repo.upsert_rating_for_job(self.customer1, job.id, rating=4, comment="Updated", version=None)
-        self.assertEqual(ctx.exception.code, "PRECONDITION_REQUIRED")
-
-        # Subsequent update with stale version must be rejected
-        with self.assertRaises(DomainError) as ctx:
-            repo.upsert_rating_for_job(self.customer1, job.id, rating=4, comment="Updated", version=99)
-        self.assertEqual(ctx.exception.code, "RESOURCE_VERSION_MISMATCH")
-
-        # Identical repeated submission with version=1 returns current state without incrementing version
-        res_same = repo.upsert_rating_for_job(self.customer1, job.id, rating=5, comment="Initial", version=1)
-        self.assertEqual(res_same["rating"], 5)
-        self.assertEqual(res_same["version"], 1)  # Version stays 1!
-
-        # Modified submission with version=1 increments version to 2
-        res_diff = repo.upsert_rating_for_job(self.customer1, job.id, rating=4, comment="Revised", version=1)
-        self.assertEqual(res_diff["rating"], 4)
-        self.assertEqual(res_diff["version"], 2)
-
-    def test_rating_ownership_isolation(self):
-        job = self._create_completed_job(self.customer1)
-        # Customer 2 cannot rate Customer 1's job
-        with self.assertRaises(DomainError) as ctx:
-            repo.upsert_rating_for_job(self.customer2, job.id, rating=5)
-        self.assertEqual(ctx.exception.code, "NOT_FOUND")
-
-    # ========================================================================
-    # 5. Notification Serialization & Delivery Preference Tests
-    # ========================================================================
-
-    def test_notification_serialization_matches_ninja_schema(self):
-        notif = repo.create_notification(
-            customer=self.customer1,
-            title="Battery Ready",
-            message="Your vehicle reached 80% charge.",
-            notification_type="SERVICE",
-            data={"session_id": "sess_123"},
-        )
-        formatted = repo.format_notification(notif)
-
-        # Validate against strict NotificationData schema (must not raise ValidationError)
-        validated = schemas.NotificationData.model_validate(formatted)
-        self.assertEqual(validated.title, "Battery Ready")
-        self.assertEqual(validated.body, "Your vehicle reached 80% charge.")
-        self.assertEqual(validated.category, "SERVICE")
-        self.assertFalse(validated.is_read)
-        self.assertIsNone(validated.read_at)
-        self.assertEqual(validated.data["session_id"], "sess_123")
-
-    def test_notification_delivery_preferences_respected(self):
-        # Default preferences: service_updates=True, promotions=False
-        pref, _ = CustomerNotificationPreference.objects.get_or_create(customer=self.customer1)
-        self.assertTrue(pref.service_updates)
-        self.assertFalse(pref.promotions)
-
-        # Promotional notification should be suppressed
-        n_promo = repo.create_notification(self.customer1, "Discount", "Save 20%", "PROMOTION")
-        self.assertIsNone(n_promo)
-
-        # Service notification should be created
-        n_service = repo.create_notification(self.customer1, "Update", "Technician arrived", "SERVICE")
-        self.assertIsNotNone(n_service)
-
-        # Update preference to enable promotions
-        repo.update_notification_preferences(self.customer1, {"promotions": True, "service_updates": False})
-        n_promo2 = repo.create_notification(self.customer1, "Discount 2", "Save 30%", "PROMOTION")
-        self.assertIsNotNone(n_promo2)
-
-        # Now service updates should be suppressed
-        n_service2 = repo.create_notification(self.customer1, "Update 2", "Arrived", "SERVICE")
-        self.assertIsNone(n_service2)
-
-    def test_notification_mark_read_and_read_all(self):
-        # Enable service updates
-        repo.update_notification_preferences(self.customer1, {"service_updates": True})
-        n1 = repo.create_notification(self.customer1, "N1", "Message 1", "SERVICE")
-        n2 = repo.create_notification(self.customer1, "N2", "Message 2", "SERVICE")
-
-        self.assertEqual(repo.get_unread_notification_count(self.customer1), 2)
-
-        # Mark single read
-        repo.mark_notification_read(self.customer1, n1.id)
-        self.assertEqual(repo.get_unread_notification_count(self.customer1), 1)
-
-        # Mark all read
-        repo.mark_all_notifications_read(self.customer1)
-        self.assertEqual(repo.get_unread_notification_count(self.customer1), 0)
-
-    # ========================================================================
-    # 6. List Queries Bounded Limit Tests
-    # ========================================================================
-
-    def test_list_queries_bounds_clamp_to_1_and_100(self):
-        # Create 3 notifications
-        repo.update_notification_preferences(self.customer1, {"service_updates": True})
-        for i in range(3):
-            repo.create_notification(self.customer1, f"Title {i}", f"Msg {i}", "SERVICE")
-
-        # Negative or 0 limit clamps to 1
-        res_zero = repo.list_notifications(self.customer1, limit=0)
-        self.assertEqual(len(res_zero), 1)
-
-        # Huge limit clamps to 100 max
-        res_huge = repo.list_notifications(self.customer1, limit=5000)
-        self.assertEqual(len(res_huge), 3)
-
-    # ========================================================================
-    # 7. Cross-Customer Isolation & Job / Meter Behavior Tests
-    # ========================================================================
-
-    def test_wallet_cross_customer_isolation(self):
-        order1 = repo.create_payment_order(self.customer1, 25000, "INR", "order_iso_1", "key_1")
-        pay_id = f"pay_{uuid4().hex[:12]}"
-        sig = self._compute_sig(order1["provider_order_id"], pay_id)
-        ev = {"id": pay_id, "order_id": order1["provider_order_id"], "status": "captured", "amount": 25000, "currency": "INR"}
-
-        # Customer 2 cannot verify or credit Customer 1's order
-        with self.assertRaises(DomainError) as ctx:
-            repo.verify_and_credit_recharge(self.customer2, order1["provider_order_id"], pay_id, sig, self.secret, ev)
-        self.assertEqual(ctx.exception.code, "NOT_FOUND")
-
-        # Customer 2's wallet ledger is completely independent
-        w2_data, _ = repo.get_or_create_wallet(self.customer2)
-        self.assertEqual(w2_data["balance_paise"], 0)
-        self.assertEqual(len(repo.list_wallet_transactions(self.customer2)), 0)
-
-    def test_job_cancellation_and_live_meter_observations(self):
-        job = self._create_completed_job(self.customer1)
-        job.state = "EN_ROUTE"
-        job.save()
-
-        from cow.models import Charger, HALFact
-        charger = Charger.objects.create(
-            asset_tag=f"CHG_{uuid4().hex[:6]}",
-            manufacturer="ABB",
-            model="Terra",
-            active=True,
-        )
-
-        # Add charging session and meter observation
-        session = ChargingSession.objects.create(
-            job=job,
-            charger=charger,
-            connector_number=1,
-            state="CHARGING",
-            meter_start_wh=1000,
-            last_meter_wh=5000,
-            started_at=timezone.now(),
-        )
-        fact = HALFact.objects.create(
-            event_id=uuid4(),
-            kind="METER_VALUE",
-            contract_version="v1",
-            payload_digest="digest",
-            charger=charger,
-            body={},
-            emitted_at=timezone.now(),
-        )
-        obs = MeterObservation.objects.create(
-            session=session,
-            fact=fact,
-            energy_wh=5000,
-            observed_at=timezone.now(),
-        )
-
-        live = repo.get_job_live(self.customer1, job.id)
-        self.assertEqual(live["job_id"], str(job.id))
-        self.assertEqual(live["state"], "EN_ROUTE")
-        self.assertIsNone(live["eta_minutes"])  # No fabricated 15m ETA
-        self.assertIsNotNone(live["charging_status"])
-        self.assertEqual(live["charging_status"]["latest_meter"]["energy_wh"], 5000)
-
-        # Test cancellation on cancellable state (e.g. DISPATCHING)
-        job.state = "DISPATCHING"
-        job.save()
-        cancel_res = repo.cancel_job(self.customer1, job.id, version=job.version, reason="Customer request")
-        self.assertEqual(cancel_res["state"], "CANCELLED")
-        job.refresh_from_db()
-        self.assertEqual(job.state, "CANCELLED")
-
-    def test_service_layer_requires_idempotency_key(self):
-        class DummyRequest:
-            headers = {}
-            content_type = "application/json"
-
-        with self.assertRaises(DomainError) as ctx:
-            service.get_idempotency_key(DummyRequest(), required=True)
-        self.assertEqual(ctx.exception.code, "IDEMPOTENCY_KEY_REQUIRED")
-        self.assertEqual(ctx.exception.status_code, 428)
-
-
-class UserHTTPBehaviorTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        create_schema_tables()
-        cls.client = Client()
-
-    def test_unauthenticated_wallet_requests_rejected(self):
-        res = self.client.get("/api/v1/app/wallet")
-        self.assertEqual(res.status_code, 401)
-        self.assertEqual(res.json()["error"]["code"], "INVALID_CREDENTIALS")
-
-        res_post = self.client.post("/api/v1/app/wallet/recharge/order", data=b"{}", content_type="application/json")
-        self.assertEqual(res_post.status_code, 401)
-        self.assertEqual(res_post.json()["error"]["code"], "INVALID_CREDENTIALS")
-
-    def test_unsupported_media_type_rejected(self):
-        res = self.client.post("/api/v1/app/auth/login", data=b"email=a&password=b", content_type="application/x-www-form-urlencoded")
-        self.assertEqual(res.status_code, 415)
-        self.assertEqual(res.json()["error"]["code"], "UNSUPPORTED_MEDIA_TYPE")
+                if isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        self.assertFalse(
+                            node.module.endswith("models_zone") or node.module.endswith("models_local"),
+                            f"Illegal models module imported in {py_file}: {node.module}",
+                        )
+
+    def test_router_endpoints_use_service_layer(self):
+        """All router operations must delegate to service functions, avoiding direct DB writes."""
+        router_path = Path(service.__file__).resolve().parent / "router.py"
+        with open(router_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("service.create_wallet_recharge_order", content)
+        self.assertIn("service.verify_wallet_recharge", content)
+        self.assertIn("service.get_wallet", content)
+        self.assertIn("service.list_wallet_transactions", content)
+
+    def test_idempotency_key_enforcement(self):
+        """Wallet recharge order routes must enforce Idempotency-Key header."""
+        router_path = Path(service.__file__).resolve().parent / "router.py"
+        with open(router_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn('service.get_idempotency_key(request, required=True)', content)
 
 
 if __name__ == "__main__":

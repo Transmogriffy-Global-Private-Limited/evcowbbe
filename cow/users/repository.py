@@ -888,13 +888,62 @@ def list_wallet_transactions(actor: Principal, limit: int = 50) -> list[dict[str
     return [format_wallet_transaction(tx) for tx in txs]
 
 
-def get_payment_order_by_receipt(actor: Principal, receipt: str, key_id: str = "") -> dict[str, Any] | None:
+RECONCILIATION_EVIDENCE_ALLOWLIST = {
+    "id",
+    "order_id",
+    "amount",
+    "currency",
+    "status",
+    "method",
+    "created_at",
+    "bank",
+    "wallet",
+    "vpa",
+    "email",
+    "contact",
+    "fee",
+    "tax",
+    "error_code",
+    "error_description",
+}
+
+
+def sanitize_payment_evidence(evidence: dict[str, Any] | None) -> dict[str, Any]:
+    """Filter payment verification evidence to an explicit allowlist of non-sensitive reconciliation fields."""
+    if not evidence or not isinstance(evidence, dict):
+        return {}
+    return {k: v for k, v in evidence.items() if k in RECONCILIATION_EVIDENCE_ALLOWLIST}
+
+
+def get_payment_order_by_receipt(
+    actor: Principal,
+    receipt: str,
+    expected_amount_paise: int | None = None,
+    expected_currency: str = "INR",
+    key_id: str = "",
+) -> dict[str, Any] | None:
     """Retrieve an existing payment order by receipt for idempotent order recovery."""
     if not receipt:
         return None
     order = PaymentOrder.objects.filter(customer=actor, receipt=receipt).first()
     if not order:
         return None
+
+    # Conflict check: verify amount and currency match
+    if expected_amount_paise is not None and order.amount_paise != expected_amount_paise:
+        reject(
+            409,
+            "PAYMENT_ORDER_CONFLICT",
+            f"Payment order for receipt '{receipt}' exists with conflicting amount: expected {expected_amount_paise}, found {order.amount_paise}",
+        )
+    if expected_currency and order.currency != expected_currency:
+        reject(
+            409,
+            "PAYMENT_ORDER_CONFLICT",
+            f"Payment order for receipt '{receipt}' exists with conflicting currency: expected {expected_currency}, found {order.currency}",
+        )
+
+    is_intent = order.provider_order_id.startswith("intent_")
     return {
         "order_id": order.provider_order_id,
         "provider_order_id": order.provider_order_id,
@@ -904,7 +953,142 @@ def get_payment_order_by_receipt(actor: Principal, receipt: str, key_id: str = "
         "currency": order.currency,
         "key_id": key_id,
         "state": order.state,
+        "is_intent": is_intent,
     }
+
+
+def create_payment_intent(
+    actor: Principal,
+    amount_paise: int,
+    currency: str,
+    receipt: str,
+    key_id: str,
+    idempotency_key: str = "",
+) -> dict[str, Any]:
+    """Record a durable local payment intent in DB before calling external payment gateway.
+    
+    Ensures that the initial pending intent is durable across crashes or timeouts,
+    executed in a short transaction without holding locks during external HTTP calls.
+    """
+    if currency != "INR":
+        reject(422, "UNSUPPORTED_CURRENCY", "Only INR currency is supported")
+    if not (100 <= amount_paise <= 10000000):
+        reject(422, "INVALID_AMOUNT", "Amount must be between 100 paise (₹1) and 10000000 paise (₹100,000)")
+
+    placeholder_order_id = f"intent_{receipt}"
+
+    with transaction.atomic():
+        existing = PaymentOrder.objects.select_for_update().filter(
+            customer=actor, receipt=receipt
+        ).first()
+        if existing:
+            if existing.amount_paise != amount_paise or existing.currency != currency:
+                reject(409, "PAYMENT_ORDER_CONFLICT", "Payment order parameters conflict with existing receipt")
+            return {
+                "order_id": existing.provider_order_id,
+                "provider_order_id": existing.provider_order_id,
+                "provider": existing.provider,
+                "amount_paise": existing.amount_paise,
+                "amount_inr": format_paise_to_inr_str(existing.amount_paise),
+                "currency": existing.currency,
+                "key_id": key_id,
+                "state": existing.state,
+                "is_intent": existing.provider_order_id.startswith("intent_"),
+            }
+
+        order = PaymentOrder.objects.create(
+            customer=actor,
+            provider="RAZORPAY",
+            provider_order_id=placeholder_order_id,
+            amount_paise=amount_paise,
+            currency=currency,
+            state="PENDING",
+            receipt=receipt,
+            details={
+                "state": "INTENT_CREATED",
+                "idempotency_key": idempotency_key,
+            },
+        )
+        audit(
+            actor,
+            order,
+            "PAYMENT_INTENT_CREATED",
+            details={"amount_paise": amount_paise, "receipt": receipt},
+        )
+        return {
+            "order_id": order.provider_order_id,
+            "provider_order_id": order.provider_order_id,
+            "provider": order.provider,
+            "amount_paise": order.amount_paise,
+            "amount_inr": format_paise_to_inr_str(order.amount_paise),
+            "currency": order.currency,
+            "key_id": key_id,
+            "state": order.state,
+            "is_intent": True,
+        }
+
+
+def confirm_payment_intent(
+    actor: Principal,
+    receipt: str,
+    provider_order_id: str,
+    key_id: str,
+) -> dict[str, Any]:
+    """Confirm a durable intent by linking the authoritative gateway order ID."""
+    with transaction.atomic():
+        order = PaymentOrder.objects.select_for_update().filter(
+            customer=actor, receipt=receipt
+        ).first()
+        if not order:
+            reject(404, "NOT_FOUND", "Payment intent record not found")
+
+        if order.provider_order_id != provider_order_id:
+            order.provider_order_id = provider_order_id
+            order.details = {
+                **order.details,
+                "state": "GATEWAY_CONFIRMED",
+                "provider_order_id": provider_order_id,
+            }
+            order.save(update_fields=["provider_order_id", "details", "updated_at"])
+
+            audit(
+                actor,
+                order,
+                "PAYMENT_ORDER_CONFIRMED",
+                details={"provider_order_id": provider_order_id, "receipt": receipt},
+            )
+
+        return {
+            "order_id": order.provider_order_id,
+            "provider_order_id": order.provider_order_id,
+            "provider": order.provider,
+            "amount_paise": order.amount_paise,
+            "amount_inr": format_paise_to_inr_str(order.amount_paise),
+            "currency": order.currency,
+            "key_id": key_id,
+            "state": order.state,
+            "is_intent": False,
+        }
+
+
+def mark_payment_intent_uncertain(
+    actor: Principal,
+    receipt: str,
+    error_reason: str,
+) -> None:
+    """Mark durable intent as uncertain after gateway timeout or network failure for later reconciliation."""
+    with transaction.atomic():
+        order = PaymentOrder.objects.select_for_update().filter(
+            customer=actor, receipt=receipt
+        ).first()
+        if order:
+            order.error_reason = error_reason[:500]
+            order.details = {
+                **order.details,
+                "state": "UNCERTAIN",
+                "last_error": error_reason[:500],
+            }
+            order.save(update_fields=["error_reason", "details", "updated_at"])
 
 
 def create_payment_order(
@@ -944,6 +1128,7 @@ def create_payment_order(
         "currency": order.currency,
         "key_id": key_id,
         "state": order.state,
+        "is_intent": order.provider_order_id.startswith("intent_"),
     }
 
 
@@ -1029,11 +1214,8 @@ def verify_and_credit_recharge(
         ).exists():
             reject(409, "DUPLICATE_PAYMENT", "Payment ID has already been credited")
 
-        # Strip any sensitive credentials before persisting durable evidence
-        safe_evidence = {
-            k: v for k, v in payment_evidence.items()
-            if k not in {"secret", "key_secret", "auth", "Authorization"}
-        }
+        # Explicitly filter evidence to allowlisted non-sensitive fields before persisting
+        safe_evidence = sanitize_payment_evidence(payment_evidence)
 
         # Lock the customer's wallet before updating balance
         wallet, _ = WalletAccount.objects.select_for_update().get_or_create(
