@@ -354,6 +354,7 @@ def get_service_request(actor: Principal, request_id: UUID) -> dict[str, Any]:
 
 
 def list_service_requests(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 100))
     qs = ServiceRequest.objects.filter(customer=actor).order_by("-created_at")[:limit]
     return [format_service_request(x) for x in qs]
 
@@ -388,6 +389,7 @@ def get_job(actor: Principal, job_id: UUID) -> dict[str, Any]:
 
 
 def list_jobs(actor: Principal, limit: int = 50, state: str | None = None) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 100))
     query = ServiceJob.objects.select_related("request", "accepted_quote", "driver_duty").filter(
         request__customer=actor
     )
@@ -538,12 +540,26 @@ def upsert_rating_for_job(
         job = get_job_model(actor, job_id)
         if job.state != "COMPLETED":
             reject(409, "INVALID_JOB_STATE", f"Job in state {job.state} cannot be rated; only COMPLETED jobs can be rated")
+        clean_comment = comment or ""
         rating_obj = CustomerJobRating.objects.select_for_update().filter(job=job, customer=actor).first()
         if rating_obj:
-            if version is not None:
-                assert_version(rating_obj, version)
+            if version is None:
+                reject(428, "PRECONDITION_REQUIRED", "If-Match header is required to update an existing rating")
+            assert_version(rating_obj, version)
+
+            # Idempotent retry: identical submission returns current state without extra version bumps or audits
+            if rating_obj.rating == rating and rating_obj.comment == clean_comment:
+                return {
+                    "job_id": str(job.id),
+                    "rating": rating_obj.rating,
+                    "comment": rating_obj.comment or None,
+                    "version": rating_obj.version,
+                    "created_at": rating_obj.created_at.isoformat(),
+                    "updated_at": rating_obj.updated_at.isoformat(),
+                }
+
             rating_obj.rating = rating
-            rating_obj.comment = comment or ""
+            rating_obj.comment = clean_comment
             rating_obj.version += 1
             rating_obj.save(update_fields=["rating", "comment", "version", "updated_at"])
             audit(actor, rating_obj, "JOB_RATING_UPDATED", details={"rating": rating, "version": rating_obj.version})
@@ -552,7 +568,7 @@ def upsert_rating_for_job(
                 job=job,
                 customer=actor,
                 rating=rating,
-                comment=comment or "",
+                comment=clean_comment,
                 version=1,
             )
             audit(actor, rating_obj, "JOB_RATING_CREATED", details={"rating": rating})
@@ -567,6 +583,7 @@ def upsert_rating_for_job(
 
 
 def list_ratings(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 100))
     ratings = CustomerJobRating.objects.filter(customer=actor).order_by("-updated_at")[:limit]
     return [
         {
@@ -647,6 +664,7 @@ def get_support_ticket(actor: Principal, ticket_id: UUID) -> dict[str, Any]:
 
 
 def list_support_tickets(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 100))
     tickets = (
         CustomerSupportTicket.objects.prefetch_related("messages")
         .filter(customer=actor)
@@ -670,8 +688,6 @@ def reply_support_ticket(
         )
         if not ticket:
             reject(404, "NOT_FOUND", "Support ticket not found")
-        if ticket.status == "CLOSED":
-            reject(409, "TICKET_CLOSED", "Cannot reply to a closed support ticket")
         if version is not None:
             assert_version(ticket, version)
         CustomerSupportMessage.objects.create(
@@ -679,10 +695,11 @@ def reply_support_ticket(
             sender=actor,
             message=message,
         )
+        # Customer reply automatically reopens RESOLVED or CLOSED tickets to OPEN
         ticket.status = "OPEN"
         ticket.version += 1
         ticket.save(update_fields=["status", "version", "updated_at"])
-        audit(actor, ticket, "SUPPORT_TICKET_REPLIED", details={"version": ticket.version})
+        audit(actor, ticket, "SUPPORT_TICKET_REPLIED", details={"version": ticket.version, "status": ticket.status})
         return format_support_ticket(ticket)
 
 
@@ -694,16 +711,39 @@ def format_notification(n: CustomerNotification) -> dict[str, Any]:
     return {
         "id": str(n.id),
         "title": n.title,
-        "message": n.message,
-        "notification_type": n.notification_type,
+        "body": n.message,
+        "category": n.notification_type,
         "is_read": n.is_read,
         "read_at": n.read_at.isoformat() if n.read_at else None,
         "created_at": n.created_at.isoformat(),
-        "data": n.data,
+        "data": n.data or {},
     }
 
 
+def create_notification(
+    customer: Principal,
+    title: str,
+    message: str,
+    notification_type: str = "SERVICE",
+    data: dict[str, Any] | None = None,
+) -> CustomerNotification | None:
+    """Create a notification respecting the customer's delivery preferences."""
+    pref, _ = CustomerNotificationPreference.objects.get_or_create(customer=customer)
+    if notification_type in ("PROMOTION", "PROMOTIONAL") and not pref.promotions:
+        return None
+    if notification_type in ("SERVICE", "SERVICE_UPDATE") and not pref.service_updates:
+        return None
+    return CustomerNotification.objects.create(
+        customer=customer,
+        title=title,
+        message=message,
+        notification_type=notification_type,
+        data=data or {},
+    )
+
+
 def list_notifications(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 100))
     notifs = CustomerNotification.objects.filter(customer=actor).order_by("-created_at")[:limit]
     return [format_notification(n) for n in notifs]
 
@@ -839,12 +879,32 @@ def get_or_create_wallet(actor: Principal) -> tuple[dict[str, Any], int]:
 
 def list_wallet_transactions(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
     """List recent ledger transactions for customer's wallet."""
+    limit = max(1, min(limit, 100))
     wallet, _ = WalletAccount.objects.get_or_create(
         customer=actor,
         defaults={"balance_paise": 0, "currency": "INR", "version": 1},
     )
     txs = WalletTransaction.objects.filter(wallet=wallet).order_by("-created_at")[:limit]
     return [format_wallet_transaction(tx) for tx in txs]
+
+
+def get_payment_order_by_receipt(actor: Principal, receipt: str, key_id: str = "") -> dict[str, Any] | None:
+    """Retrieve an existing payment order by receipt for idempotent order recovery."""
+    if not receipt:
+        return None
+    order = PaymentOrder.objects.filter(customer=actor, receipt=receipt).first()
+    if not order:
+        return None
+    return {
+        "order_id": order.provider_order_id,
+        "provider_order_id": order.provider_order_id,
+        "provider": order.provider,
+        "amount_paise": order.amount_paise,
+        "amount_inr": format_paise_to_inr_str(order.amount_paise),
+        "currency": order.currency,
+        "key_id": key_id,
+        "state": order.state,
+    }
 
 
 def create_payment_order(
@@ -908,6 +968,14 @@ def verify_and_credit_recharge(
     if not hmac.compare_digest(expected.lower(), signature.lower()):
         reject(400, "PAYMENT_SIGNATURE_INVALID", "Razorpay payment signature verification failed")
 
+    # Authoritative evidence verification is strictly fail-closed: HMAC alone NEVER authorizes credit
+    if not payment_evidence or not isinstance(payment_evidence, dict):
+        reject(400, "MISSING_PAYMENT_EVIDENCE", "Authoritative payment verification evidence from provider is required")
+
+    # Reject simulation in real payment flows
+    if payment_evidence.get("simulated"):
+        reject(400, "PAYMENT_SIMULATION_DISALLOWED", "Simulated payments are not permitted to credit wallet ledgers")
+
     with transaction.atomic():
         # Lock PaymentOrder inside transaction FIRST
         order = PaymentOrder.objects.select_for_update().filter(
@@ -934,23 +1002,38 @@ def verify_and_credit_recharge(
         if order.state != "PENDING":
             reject(400, "INVALID_ORDER_STATE", f"Payment order is in state {order.state}")
 
+        # Strict fail-closed verification of authoritative evidence against order and submitted credentials
+        ev_status = payment_evidence.get("status")
+        if ev_status != "captured":
+            reject(400, "PAYMENT_NOT_CAPTURED", f"Payment status is '{ev_status}', not 'captured'")
+
+        ev_id = payment_evidence.get("id")
+        if not ev_id or ev_id != payment_id:
+            reject(400, "PAYMENT_ID_MISMATCH", f"Payment evidence ID '{ev_id}' does not match submitted payment '{payment_id}'")
+
+        ev_order_id = payment_evidence.get("order_id")
+        if not ev_order_id or ev_order_id != order.provider_order_id:
+            reject(400, "PAYMENT_ORDER_MISMATCH", f"Payment evidence order ID '{ev_order_id}' does not match order '{order.provider_order_id}'")
+
+        ev_amount = payment_evidence.get("amount")
+        if ev_amount is None or ev_amount != order.amount_paise:
+            reject(400, "PAYMENT_AMOUNT_MISMATCH", f"Payment amount {ev_amount} does not match order {order.amount_paise}")
+
+        ev_currency = payment_evidence.get("currency")
+        if not ev_currency or ev_currency != order.currency:
+            reject(400, "PAYMENT_CURRENCY_MISMATCH", f"Payment currency '{ev_currency}' does not match order '{order.currency}'")
+
         # Check if this payment_id has already been credited across any order
         if PaymentOrder.objects.filter(
             provider="RAZORPAY", provider_payment_id=payment_id, state="CAPTURED"
         ).exists():
             reject(409, "DUPLICATE_PAYMENT", "Payment ID has already been credited")
 
-        # Validate payment evidence if supplied
-        if payment_evidence:
-            ev_status = payment_evidence.get("status")
-            if ev_status and ev_status != "captured":
-                reject(400, "PAYMENT_NOT_CAPTURED", f"Payment status is {ev_status}, not captured")
-            ev_amount = payment_evidence.get("amount")
-            if ev_amount is not None and ev_amount != order.amount_paise:
-                reject(400, "PAYMENT_AMOUNT_MISMATCH", f"Payment amount {ev_amount} does not match order {order.amount_paise}")
-            ev_currency = payment_evidence.get("currency")
-            if ev_currency and ev_currency != order.currency:
-                reject(400, "PAYMENT_CURRENCY_MISMATCH", f"Payment currency {ev_currency} does not match order {order.currency}")
+        # Strip any sensitive credentials before persisting durable evidence
+        safe_evidence = {
+            k: v for k, v in payment_evidence.items()
+            if k not in {"secret", "key_secret", "auth", "Authorization"}
+        }
 
         # Lock the customer's wallet before updating balance
         wallet, _ = WalletAccount.objects.select_for_update().get_or_create(
@@ -968,14 +1051,14 @@ def verify_and_credit_recharge(
             amount_paise=order.amount_paise,
             balance_after_paise=wallet.balance_paise,
             reference_id=payment_id,
-            details=payment_evidence or {"provider_order_id": order_id, "provider": "RAZORPAY"},
+            details=safe_evidence,
         )
 
         # Transition order to CAPTURED
         order.state = "CAPTURED"
         order.provider_payment_id = payment_id
         order.provider_signature = signature
-        order.details = payment_evidence or {}
+        order.details = safe_evidence
         order.save(update_fields=["state", "provider_payment_id", "provider_signature", "details", "updated_at"])
 
         audit(

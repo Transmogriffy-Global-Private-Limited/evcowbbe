@@ -369,6 +369,7 @@ def upsert_job_rating(
     actor: Principal, job_id: UUID, raw_payload: dict[str, Any], version: int | None, key: str
 ) -> JsonResponse:
     payload = parse_payload(RatingCreatePayload, raw_payload)
+    idempotency_payload = {**payload.model_dump(mode="json"), "if_match_version": version}
 
     def op():
         res = repo.upsert_rating_for_job(actor, job_id, payload.rating, payload.comment, version=version)
@@ -378,7 +379,7 @@ def upsert_job_rating(
         actor,
         f"PUT /app/jobs/{job_id}/rating",
         key,
-        payload.model_dump(mode="json"),
+        idempotency_payload,
         op,
     )
 
@@ -421,6 +422,7 @@ def reply_support_ticket(
     actor: Principal, ticket_id: UUID, raw_payload: dict[str, Any], version: int | None, key: str
 ) -> JsonResponse:
     payload = parse_payload(SupportReplyPayload, raw_payload)
+    idempotency_payload = {**payload.model_dump(mode="json"), "if_match_version": version}
 
     def op():
         res = repo.reply_support_ticket(actor, ticket_id, payload.message, version=version)
@@ -430,7 +432,7 @@ def reply_support_ticket(
         actor,
         f"POST /app/support/tickets/{ticket_id}/replies",
         key,
-        payload.model_dump(mode="json"),
+        idempotency_payload,
         op,
     )
 
@@ -494,14 +496,8 @@ def get_razorpay_credentials() -> tuple[str, str]:
 
 
 def call_razorpay_create_order(key_id: str, secret: str, amount_paise: int, currency: str, receipt: str) -> str:
-    """Create Razorpay payment order via official Orders API.
-
-    Simulation is strictly isolated to explicit RAZORPAY_TEST_SIMULATION=1 environment.
-    """
-    is_simulation = os.environ.get("RAZORPAY_TEST_SIMULATION") == "1"
+    """Create Razorpay payment order via official Orders API."""
     if not key_id or not secret:
-        if is_simulation:
-            return f"order_test_{uuid4().hex[:14]}"
         reject(500, "CONFIGURATION_ERROR", "Payment gateway credentials are not configured")
 
     import base64
@@ -531,24 +527,14 @@ def call_razorpay_create_order(key_id: str, secret: str, amount_paise: int, curr
                 reject(502, "PAYMENT_GATEWAY_ERROR", "Razorpay did not return an order ID")
             return order_id
     except urllib.error.HTTPError as e:
-        if is_simulation:
-            return f"order_test_{uuid4().hex[:14]}"
         err_msg = e.read().decode("utf-8", errors="replace")
         reject(502, "PAYMENT_GATEWAY_ERROR", f"Payment provider rejected order: {err_msg}")
     except (urllib.error.URLError, OSError) as e:
-        if is_simulation:
-            return f"order_test_{uuid4().hex[:14]}"
         reject(504, "GATEWAY_TIMEOUT", f"Payment gateway connection timed out or unreachable: {e}")
 
 
 def fetch_razorpay_payment(key_id: str, secret: str, payment_id: str) -> dict[str, Any]:
     """Fetch authoritative payment status from Razorpay."""
-    if os.environ.get("RAZORPAY_TEST_SIMULATION") == "1":
-        return {
-            "id": payment_id,
-            "status": "captured",
-            "simulated": True,
-        }
     if not key_id or not secret:
         reject(500, "CONFIGURATION_ERROR", "Payment gateway credentials are not configured")
 
@@ -591,7 +577,16 @@ def create_wallet_recharge_order(actor: Principal, raw_payload: dict[str, Any], 
     key_id, secret = get_razorpay_credentials()
 
     def op():
-        receipt = f"rcpt_{uuid4().hex[:12]}"
+        # Stable deterministic receipt per (actor, idempotency key), bounded to 40 chars for Razorpay API
+        actor_part = actor.id.hex[:8] if hasattr(actor, "id") and hasattr(actor.id, "hex") else str(actor.id)[:8]
+        clean_key = re.sub(r"[^a-zA-Z0-9_-]", "", key)[:16]
+        receipt = f"rc_{actor_part}_{clean_key}"[:40]
+
+        # Order recovery: check if order was already recorded locally for this receipt
+        existing = repo.get_payment_order_by_receipt(actor, receipt, key_id=key_id)
+        if existing:
+            return 201, {"data": existing}
+
         provider_order_id = call_razorpay_create_order(
             key_id=key_id,
             secret=secret,
@@ -604,7 +599,7 @@ def create_wallet_recharge_order(actor: Principal, raw_payload: dict[str, Any], 
             amount_paise=payload.amount_paise,
             currency=payload.currency,
             provider_order_id=provider_order_id,
-            key_id=key_id or "rzp_test_simulated",
+            key_id=key_id,
             receipt=receipt,
         )
         return 201, {"data": data}

@@ -372,7 +372,9 @@ class NotificationData(Schema):
     body: str
     category: str
     is_read: bool = False
+    read_at: str | None = None
     created_at: str
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class NotificationEnvelope(Schema):

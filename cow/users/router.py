@@ -6,7 +6,7 @@ PlaneBearer('app') and keeps all route registration in one place.
 
 from uuid import UUID
 
-from ninja import Body, Router
+from ninja import Body, Query, Router
 
 from cow.users import service
 from cow.users.charging import register_charging_routes
@@ -59,7 +59,7 @@ def register_user_feature_routes(router: Router) -> None:
         response=ServiceRequestListEnvelope,
         operation_id="app_service_requests_list",
     )
-    def list_service_requests(request, limit: int = 50):
+    def list_service_requests(request, limit: int = Query(default=50, ge=1, le=100)):
         return {"data": service.list_service_requests(request.auth, limit=limit)}
 
     @router.get(
@@ -78,7 +78,7 @@ def register_user_feature_routes(router: Router) -> None:
         response=JobListEnvelope,
         operation_id="app_jobs_list",
     )
-    def list_jobs(request, limit: int = 50, state: str | None = None):
+    def list_jobs(request, limit: int = Query(default=50, ge=1, le=100), state: str | None = None):
         return {"data": service.list_jobs(request.auth, limit=limit, state=state)}
 
     @router.post(
@@ -128,7 +128,7 @@ def register_user_feature_routes(router: Router) -> None:
         response=RatingListEnvelope,
         operation_id="app_ratings_list",
     )
-    def list_ratings(request, limit: int = 50):
+    def list_ratings(request, limit: int = Query(default=50, ge=1, le=100)):
         return {"data": service.list_ratings(request.auth, limit=limit)}
 
     @router.get(
@@ -146,7 +146,7 @@ def register_user_feature_routes(router: Router) -> None:
     )
     def put_job_rating(request, job_id: UUID, payload: RatingCreatePayload = REQUIRED_BODY):
         service.ensure_json(request)
-        key = service.get_idempotency_key(request, required=False)
+        key = service.get_idempotency_key(request, required=True)
         version = None
         if "If-Match" in request.headers:
             version = service.get_version_etag(request)
@@ -160,7 +160,7 @@ def register_user_feature_routes(router: Router) -> None:
         response=SupportTicketListEnvelope,
         operation_id="app_support_tickets_list",
     )
-    def list_support_tickets(request, limit: int = 50):
+    def list_support_tickets(request, limit: int = Query(default=50, ge=1, le=100)):
         return {"data": service.list_support_tickets(request.auth, limit=limit)}
 
     @router.post(
@@ -188,7 +188,7 @@ def register_user_feature_routes(router: Router) -> None:
     )
     def reply_support_ticket(request, ticket_id: UUID, payload: SupportReplyPayload = REQUIRED_BODY):
         service.ensure_json(request)
-        key = service.get_idempotency_key(request, required=False)
+        key = service.get_idempotency_key(request, required=True)
         version = None
         if "If-Match" in request.headers:
             version = service.get_version_etag(request)
@@ -202,7 +202,7 @@ def register_user_feature_routes(router: Router) -> None:
         response=NotificationListEnvelope,
         operation_id="app_notifications_list",
     )
-    def list_notifications(request, limit: int = 50):
+    def list_notifications(request, limit: int = Query(default=50, ge=1, le=100)):
         return {"data": service.list_notifications(request.auth, limit=limit)}
 
     @router.get(
@@ -275,7 +275,7 @@ def register_user_feature_routes(router: Router) -> None:
         response=WalletTransactionListEnvelope,
         operation_id="app_wallet_transactions_list",
     )
-    def list_wallet_transactions(request, limit: int = 50):
+    def list_wallet_transactions(request, limit: int = Query(default=50, ge=1, le=100)):
         return {"data": service.list_wallet_transactions(request.auth, limit=limit)}
 
     @router.post(
@@ -285,7 +285,7 @@ def register_user_feature_routes(router: Router) -> None:
     )
     def create_recharge_order(request, payload: WalletRechargeOrderPayload = REQUIRED_BODY):
         service.ensure_json(request)
-        key = service.get_idempotency_key(request, required=False)
+        key = service.get_idempotency_key(request, required=True)
         return service.create_wallet_recharge_order(request.auth, payload.model_dump(), key)
 
     @router.post(
@@ -295,7 +295,7 @@ def register_user_feature_routes(router: Router) -> None:
     )
     def create_payment_order_alias(request, payload: WalletRechargeOrderPayload = REQUIRED_BODY):
         service.ensure_json(request)
-        key = service.get_idempotency_key(request, required=False)
+        key = service.get_idempotency_key(request, required=True)
         return service.create_wallet_recharge_order(request.auth, payload.model_dump(), key)
 
     @router.post(

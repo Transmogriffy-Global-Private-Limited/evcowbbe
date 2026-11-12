@@ -89,6 +89,9 @@ TAG_DESCRIPTIONS = {
     "31 | Driver recruitment": "Driver application and private document submission, review history, and correction workflow.",
     "32 | Admin Driver recruitment": "Private document review, recruitment policy and auditable onboarding; not duty authorization.",
     "33 | Customer wallet & payments": "Customer wallet balance, recharge order creation, and Razorpay payment verification.",
+    "34 | Customer support": "Customer support tickets, messages and thread reopening.",
+    "35 | Customer notifications": "Customer in-app notifications and delivery preferences.",
+    "36 | Customer realtime": "SSE ticket allocation and event streaming (subject to server streaming configuration).",
     "22 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
     "23 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
 }
@@ -105,6 +108,20 @@ KNOWN_SUMMARIES = {
     "app_wallet_payment_order": "Create payment order (alias)",
     "app_wallet_recharge_verify": "Verify Razorpay payment and credit wallet",
     "app_wallet_verify_payment": "Verify payment (alias)",
+    "app_ratings_list": "List customer job ratings",
+    "app_jobs_rating_get": "Get rating for completed job",
+    "app_jobs_rating_put": "Upsert or update rating for completed job",
+    "app_support_tickets_list": "List customer support tickets",
+    "app_support_tickets_create": "Create a support ticket",
+    "app_support_tickets_get": "Get support ticket details and messages",
+    "app_support_tickets_reply": "Reply to support ticket and reopen if closed",
+    "app_notifications_list": "List customer notifications",
+    "app_notifications_unread_count": "Get unread notification count",
+    "app_notifications_read": "Mark a notification as read",
+    "app_notifications_read_all": "Mark all notifications as read",
+    "app_notifications_preferences_get": "Get notification preferences",
+    "app_notifications_preferences_put": "Update notification preferences",
+    "app_realtime_tickets_create": "Create realtime stream ticket (returns 501 if streaming not configured)",
     "adminFleetVehiclesList": "List fleet vehicles",
     "adminFleetVehiclesCreate": "Register fleet vehicle",
     "adminFleetVehicleGet": "Get fleet vehicle",
@@ -189,8 +206,16 @@ def _tag(path: str) -> str:
         return "09 | Customer service requests"
     if path.startswith("/api/v1/app/jobs"):
         return "10 | Customer jobs"
+    if path.startswith("/api/v1/app/ratings"):
+        return "10 | Customer jobs"
     if path.startswith("/api/v1/app/wallet"):
         return "33 | Customer wallet & payments"
+    if path.startswith("/api/v1/app/support"):
+        return "34 | Customer support"
+    if path.startswith("/api/v1/app/notifications"):
+        return "35 | Customer notifications"
+    if path.startswith("/api/v1/app/realtime"):
+        return "36 | Customer realtime"
     if path.startswith("/api/v1/admin/jobs"):
         return "11 | Admin jobs & charging"
     if path.startswith("/api/v1/admin/vehicles"):
