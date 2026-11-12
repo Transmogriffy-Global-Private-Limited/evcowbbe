@@ -3327,6 +3327,2328 @@ paths:
           $ref: '#/components/responses/FleetPrecondition'
         '500':
           $ref: '#/components/responses/Internal'
+
+  # Customer / User plane operations
+  /api/v1/app/profile:
+    get:
+      tags:
+      - Customer App
+      operationId: app_profile_get
+      summary: Read current customer profile
+      description: Returns customer-owned profile details (full_name, phone, version).
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Customer profile envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - full_name
+                    - phone
+                    - version
+                    properties:
+                      full_name:
+                        type: string
+                        example: Abhranil Pal
+                      phone:
+                        type: string
+                        nullable: true
+                        example: '+919876543210'
+                      version:
+                        type: integer
+                        example: 1
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/WrongPlane'
+        '500':
+          $ref: '#/components/responses/Internal'
+    patch:
+      tags:
+      - Customer App
+      operationId: app_profile_patch
+      summary: Update customer profile
+      description: Guarded optimistic update of customer profile details with required
+        If-Match ETag and Idempotency-Key.
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: If-Match
+        in: header
+        required: true
+        description: Current profile version ETag as quoted integer.
+        schema:
+          type: string
+          example: '"1"'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique mutation idempotency key (16..128 chars).
+        schema:
+          type: string
+          example: idemp-profile-patch-001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+                phone:
+                  type: string
+                  maxLength: 24
+                  nullable: true
+      responses:
+        '200':
+          description: Updated customer profile envelope
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"2"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - full_name
+                    - phone
+                    - version
+                    properties:
+                      full_name:
+                        type: string
+                      phone:
+                        type: string
+                        nullable: true
+                      version:
+                        type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/vehicles:
+    get:
+      tags:
+      - Customer App
+      operationId: app_vehicles_list
+      summary: List saved customer electric vehicles
+      description: Returns active, saved EV records owned by the authenticated customer.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: List of saved EVs
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - make
+                      - model
+                      - active
+                      - saved
+                      - version
+                      - capability_evidence
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        label:
+                          type: string
+                        make:
+                          type: string
+                        model:
+                          type: string
+                        variant:
+                          type: string
+                        registration_number:
+                          type: string
+                        battery_capacity_wh:
+                          type: integer
+                          nullable: true
+                        connector_types:
+                          type: array
+                          items:
+                            type: string
+                        supports_ac:
+                          type: boolean
+                        supports_dc:
+                          type: boolean
+                        active:
+                          type: boolean
+                        saved:
+                          type: boolean
+                        version:
+                          type: integer
+                        capability_evidence:
+                          type: string
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+    post:
+      tags:
+      - Customer App
+      operationId: app_vehicles_create
+      summary: Register a new customer EV
+      description: Self-reported vehicle capability declaration; does not certify
+        physical charger compatibility.
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - make
+              - model
+              properties:
+                label:
+                  type: string
+                  maxLength: 100
+                make:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                model:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                variant:
+                  type: string
+                  maxLength: 120
+                registration_number:
+                  type: string
+                  maxLength: 32
+                battery_capacity_wh:
+                  type: integer
+                  nullable: true
+                connector_types:
+                  type: array
+                  items:
+                    type: string
+                supports_ac:
+                  type: boolean
+                  default: false
+                supports_dc:
+                  type: boolean
+                  default: false
+                max_ac_power_w:
+                  type: integer
+                  nullable: true
+                max_dc_power_w:
+                  type: integer
+                  nullable: true
+                saved:
+                  type: boolean
+                  default: true
+      responses:
+        '201':
+          description: Created vehicle record
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"1"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/vehicles/{vehicle_id}:
+    get:
+      tags:
+      - Customer App
+      operationId: app_vehicles_get
+      summary: Read customer EV by ID
+      parameters:
+      - name: vehicle_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Vehicle details
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"1"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+    patch:
+      tags:
+      - Customer App
+      operationId: app_vehicles_patch
+      summary: Update customer EV details
+      parameters:
+      - name: vehicle_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          example: '"1"'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated vehicle record
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"2"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+    delete:
+      tags:
+      - Customer App
+      operationId: app_vehicles_delete
+      summary: Retire customer EV
+      parameters:
+      - name: vehicle_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          example: '"1"'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Deactivated vehicle record
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/addresses:
+    get:
+      tags:
+      - Customer App
+      operationId: app_addresses_list
+      summary: List saved customer service addresses
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: List of saved addresses
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+    post:
+      tags:
+      - Customer App
+      operationId: app_addresses_create
+      summary: Create new customer service address
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - address
+              - latitude
+              - longitude
+              properties:
+                address:
+                  type: string
+                  minLength: 5
+                  maxLength: 700
+                latitude:
+                  type: string
+                  example: '22.9475572'
+                longitude:
+                  type: string
+                  example: '88.4614943'
+                label:
+                  type: string
+                  maxLength: 80
+                city:
+                  type: string
+                  maxLength: 120
+                state:
+                  type: string
+                  maxLength: 120
+                country_code:
+                  type: string
+                  default: IN
+                saved:
+                  type: boolean
+                  default: true
+      responses:
+        '201':
+          description: Created address record
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"1"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/addresses/{address_id}:
+    get:
+      tags:
+      - Customer App
+      operationId: app_addresses_get
+      summary: Read customer service address by ID
+      parameters:
+      - name: address_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Address details
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"1"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+    patch:
+      tags:
+      - Customer App
+      operationId: app_addresses_patch
+      summary: Update customer service address
+      parameters:
+      - name: address_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          example: '"1"'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Updated address record
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"2"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+    delete:
+      tags:
+      - Customer App
+      operationId: app_addresses_delete
+      summary: Retire customer service address
+      parameters:
+      - name: address_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          example: '"1"'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Deactivated address record
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/addresses/{address_id}/make-default:
+    post:
+      tags:
+      - Customer App
+      operationId: app_addresses_default
+      summary: Set address as default primary service address
+      parameters:
+      - name: address_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          example: '"1"'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Address promoted to default
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"2"'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/service-requests:
+    get:
+      tags:
+      - Customer App
+      operationId: app_service_requests_list
+      summary: List recent service requests
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: List of service requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+    post:
+      tags:
+      - Customer App
+      operationId: cow_api_request_service
+      summary: Create mobile charging service request
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - vehicle_id
+              - address_id
+              - requested_energy_wh
+              properties:
+                vehicle_id:
+                  type: string
+                  format: uuid
+                address_id:
+                  type: string
+                  format: uuid
+                requested_energy_wh:
+                  type: integer
+                  minimum: 1
+                  maximum: 500000
+      responses:
+        '201':
+          description: Created service request record with frozen snapshots
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - id
+                    - state
+                    - vehicle_snapshot
+                    - address_snapshot
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      state:
+                        type: string
+                        example: REQUESTED
+                      vehicle_snapshot:
+                        type: object
+                      address_snapshot:
+                        type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/service-requests/{request_id}:
+    get:
+      tags:
+      - Customer App
+      operationId: app_service_request_get
+      summary: Read service request details
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Service request record
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/service-requests/{request_id}/quote:
+    post:
+      tags:
+      - Customer App
+      operationId: cow_api_quote_request
+      summary: Request quote (GATED / RETIRED)
+      description: Legacy non-zone quotation retired; Zone composite tariffs required.
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '410':
+          description: Legacy quote retired
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - error
+                properties:
+                  error:
+                    type: object
+                    required:
+                    - code
+                    - message
+                    properties:
+                      code:
+                        type: string
+                        example: LEGACY_QUOTE_RETIRED
+                      message:
+                        type: string
+  /api/v1/app/quotes/{quote_id}/accept:
+    post:
+      tags:
+      - Customer App
+      operationId: cow_api_accept_quote
+      summary: Accept quote (GATED / RETIRED)
+      description: Legacy quotation acceptance retired; Zone commitment required.
+      parameters:
+      - name: quote_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '410':
+          description: Legacy quote accept retired
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - error
+                properties:
+                  error:
+                    type: object
+                    required:
+                    - code
+                    - message
+                    properties:
+                      code:
+                        type: string
+                        example: LEGACY_QUOTE_RETIRED
+                      message:
+                        type: string
+  /api/v1/app/jobs:
+    get:
+      tags:
+      - Customer App
+      operationId: app_jobs_list
+      summary: List customer service jobs history
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      - name: state
+        in: query
+        required: false
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/jobs/{job_id}:
+    get:
+      tags:
+      - Customer App
+      operationId: cow_api_get_job
+      summary: Read customer service job detail
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Service job details
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - id
+                    - state
+                    - version
+                    - vehicle_snapshot
+                    - address_snapshot
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      state:
+                        type: string
+                        example: DISPATCHING
+                      version:
+                        type: integer
+                      vehicle_snapshot:
+                        type: object
+                      address_snapshot:
+                        type: object
+                      quoted_total_paise:
+                        type: integer
+                        nullable: true
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/jobs/{job_id}/cancel:
+    post:
+      tags:
+      - Customer App
+      operationId: app_jobs_cancel
+      summary: Cancel an active service job
+      description: Allows cancellation in eligible pre-charging states with strict
+        If-Match and Idempotency-Key.
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          example: '"1"'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 255
+      responses:
+        '200':
+          description: Cancelled job envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '412':
+          $ref: '#/components/responses/FleetVersionMismatch'
+        '428':
+          $ref: '#/components/responses/FleetPrecondition'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/jobs/{job_id}/live:
+    get:
+      tags:
+      - Customer App
+      operationId: app_jobs_live
+      summary: Read live job projection (ETA, telemetry)
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Live projection envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - job_id
+                    - state
+                    - freshness_timestamp
+                    properties:
+                      job_id:
+                        type: string
+                        format: uuid
+                      state:
+                        type: string
+                      eta_minutes:
+                        type: integer
+                        nullable: true
+                      driver_location:
+                        type: object
+                        nullable: true
+                      charging_status:
+                        type: object
+                        nullable: true
+                      freshness_timestamp:
+                        type: string
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/jobs/{job_id}/vehicle/promote:
+    post:
+      tags:
+      - Customer App
+      operationId: app_jobs_promote_vehicle
+      summary: Promote vehicle snapshot from job into customer saved vehicles
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  maxLength: 100
+      responses:
+        '201':
+          description: Saved EV record created from snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/jobs/{job_id}/address/promote:
+    post:
+      tags:
+      - Customer App
+      operationId: app_jobs_promote_address
+      summary: Promote address snapshot from job into customer saved addresses
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  maxLength: 80
+                make_default:
+                  type: boolean
+                  default: false
+      responses:
+        '201':
+          description: Saved address record created from snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/ratings:
+    get:
+      tags:
+      - Customer App
+      operationId: app_ratings_list
+      summary: List customer submitted ratings
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: List of ratings
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - job_id
+                      - rating
+                      - created_at
+                      properties:
+                        job_id:
+                          type: string
+                          format: uuid
+                        rating:
+                          type: integer
+                        comment:
+                          type: string
+                          nullable: true
+                        created_at:
+                          type: string
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/jobs/{job_id}/rating:
+    get:
+      tags:
+      - Customer App
+      operationId: app_jobs_rating_get
+      summary: Get rating for completed job
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Job rating details
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - job_id
+                    - rating
+                    - created_at
+                    properties:
+                      job_id:
+                        type: string
+                        format: uuid
+                      rating:
+                        type: integer
+                      comment:
+                        type: string
+                        nullable: true
+                      created_at:
+                        type: string
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+    put:
+      tags:
+      - Customer App
+      operationId: app_jobs_rating_put
+      summary: Submit or update rating for completed job
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - rating
+              properties:
+                rating:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                comment:
+                  type: string
+                  maxLength: 500
+                  nullable: true
+      responses:
+        '200':
+          description: Saved rating envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '409':
+          $ref: '#/components/responses/FleetConflict'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/support/tickets:
+    get:
+      tags:
+      - Customer App
+      operationId: app_support_tickets_list
+      summary: List customer support tickets
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: List of support tickets
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+    post:
+      tags:
+      - Customer App
+      operationId: app_support_tickets_create
+      summary: Create new support ticket
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - category
+              - subject
+              - message
+              properties:
+                category:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+                subject:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                job_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '201':
+          description: Created support ticket record
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/support/tickets/{ticket_id}:
+    get:
+      tags:
+      - Customer App
+      operationId: app_support_tickets_get
+      summary: Read support ticket and message thread
+      parameters:
+      - name: ticket_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Support ticket details and message thread
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/support/tickets/{ticket_id}/replies:
+    post:
+      tags:
+      - Customer App
+      operationId: app_support_tickets_reply
+      summary: Reply to support ticket
+      parameters:
+      - name: ticket_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - message
+              properties:
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        '201':
+          description: Thread reply recorded and ticket updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/notifications:
+    get:
+      tags:
+      - Customer App
+      operationId: app_notifications_list
+      summary: List customer inbox notifications
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items: &id001
+                      type: object
+                      required:
+                      - id
+                      - title
+                      - body
+                      - category
+                      - is_read
+                      - created_at
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        title:
+                          type: string
+                        body:
+                          type: string
+                        category:
+                          type: string
+                          example: SERVICE
+                        is_read:
+                          type: boolean
+                          example: false
+                        read_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        created_at:
+                          type: string
+                          format: date-time
+                        data:
+                          type: object
+                          additionalProperties: true
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/notifications/unread-count:
+    get:
+      tags:
+      - Customer App
+      operationId: app_notifications_unread_count
+      summary: Count unread notifications
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Unread notification count
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - unread_count
+                    properties:
+                      unread_count:
+                        type: integer
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/notifications/{notification_id}/read:
+    post:
+      tags:
+      - Customer App
+      operationId: app_notifications_read
+      summary: Mark notification as read
+      parameters:
+      - name: notification_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Notification marked read
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data: *id001
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          $ref: '#/components/responses/FleetNotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/notifications/read-all:
+    post:
+      tags:
+      - Customer App
+      operationId: app_notifications_read_all
+      summary: Mark all notifications as read
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: All notifications marked read
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items: *id001
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/notifications/preferences:
+    get:
+      tags:
+      - Customer App
+      operationId: app_notifications_preferences_get
+      summary: Read customer notification channel preferences
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Channel preferences envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+    put:
+      tags:
+      - Customer App
+      operationId: app_notifications_preferences_put
+      summary: Update customer notification channel preferences
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                push_enabled:
+                  type: boolean
+                email_enabled:
+                  type: boolean
+                sms_enabled:
+                  type: boolean
+                service_updates:
+                  type: boolean
+                promotions:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated preferences envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/realtime/tickets:
+    post:
+      tags:
+      - Customer App
+      operationId: app_realtime_tickets_create
+      summary: Request single-use SSE streaming ticket (Unavailable)
+      description: Realtime SSE streaming transport is not commissioned or configured in this release. Requests to this endpoint return HTTP 501 REALTIME_STREAM_NOT_CONFIGURED.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subscriptions:
+                  type: array
+                  items:
+                    type: string
+                  example:
+                  - self
+                  - notifications
+                resume_after:
+                  type: string
+                  nullable: true
+      responses:
+        '501':
+          description: Realtime SSE streaming transport is not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/wallet:
+    get:
+      tags:
+      - Customer App
+      operationId: app_wallet_get
+      summary: Read customer wallet balance
+      description: Returns the customer's wallet balance (in paise and INR), currency,
+        and version with ETag.
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Customer wallet envelope
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: Quoted wallet version
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - balance_paise
+                    - balance_inr
+                    - currency
+                    - version
+                    properties:
+                      balance_paise:
+                        type: integer
+                        example: 50000
+                      balance_inr:
+                        type: string
+                        example: '500.00'
+                      currency:
+                        type: string
+                        example: INR
+                      version:
+                        type: integer
+                        example: 1
+                      updated_at:
+                        type: string
+                        nullable: true
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/wallet/transactions:
+    get:
+      tags:
+      - Customer App
+      operationId: app_wallet_transactions_list
+      summary: List wallet transactions
+      description: Returns the chronological ledger transactions for customer wallet.
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: Wallet transactions envelope
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - transaction_type
+                      - amount_paise
+                      - amount_inr
+                      - balance_after_paise
+                      - balance_after_inr
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        transaction_type:
+                          type: string
+                          example: CREDIT_TOPUP
+                        amount_paise:
+                          type: integer
+                          example: 50000
+                        amount_inr:
+                          type: number
+                          example: 500.0
+                        balance_after_paise:
+                          type: integer
+                          example: 50000
+                        balance_after_inr:
+                          type: number
+                          example: 500.0
+                        reference_id:
+                          type: string
+                          example: pay_12345
+                        created_at:
+                          type: string
+                          nullable: true
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/wallet/recharge/order:
+    post:
+      tags:
+      - Customer App
+      operationId: app_wallet_recharge_order
+      summary: Create Razorpay wallet recharge order
+      description: Creates a Razorpay payment order and pending payment record for
+        wallet top-up.
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+        required: true
+        description: Client-provided idempotency key (16 to 128 characters)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - amount_paise
+              properties:
+                amount_paise:
+                  type: integer
+                  minimum: 100
+                  maximum: 10000000
+                  example: 50000
+                  description: Recharge amount in paise (min 100 paise = ₹1.00, max 10000000 paise = ₹100,000)
+                currency:
+                  type: string
+                  default: INR
+                  example: INR
+      responses:
+        '201':
+          description: Recharge order created
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - order_id
+                    - provider_order_id
+                    - provider
+                    - amount_paise
+                    - amount_inr
+                    - currency
+                    - key_id
+                    - state
+                    properties:
+                      order_id:
+                        type: string
+                      provider_order_id:
+                        type: string
+                      provider:
+                        type: string
+                        example: RAZORPAY
+                      amount_paise:
+                        type: integer
+                        example: 50000
+                      amount_inr:
+                        type: string
+                        example: '500.00'
+                      currency:
+                        type: string
+                        example: INR
+                      key_id:
+                        type: string
+                      state:
+                        type: string
+                        example: PENDING
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/wallet/payment_order:
+    post:
+      tags:
+      - Customer App
+      operationId: app_wallet_payment_order
+      summary: Create payment order (alias)
+      description: Alias for /api/v1/app/wallet/recharge/order.
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+        required: true
+        description: Client-provided idempotency key (16 to 128 characters)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - amount_paise
+              properties:
+                amount_paise:
+                  type: integer
+                  minimum: 100
+                  maximum: 10000000
+                  example: 50000
+                  description: Recharge amount in paise (min 100 paise = ₹1.00, max 10000000 paise = ₹100,000)
+                currency:
+                  type: string
+                  default: INR
+                  example: INR
+      responses:
+        '201':
+          description: Payment order created
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - order_id
+                    - provider_order_id
+                    - provider
+                    - amount_paise
+                    - amount_inr
+                    - currency
+                    - key_id
+                    - state
+                    properties:
+                      order_id:
+                        type: string
+                      provider_order_id:
+                        type: string
+                      provider:
+                        type: string
+                        example: RAZORPAY
+                      amount_paise:
+                        type: integer
+                        example: 50000
+                      amount_inr:
+                        type: string
+                        example: '500.00'
+                      currency:
+                        type: string
+                        example: INR
+                      key_id:
+                        type: string
+                      state:
+                        type: string
+                        example: PENDING
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/wallet/recharge/verify:
+    post:
+      tags:
+      - Customer App
+      operationId: app_wallet_recharge_verify
+      summary: Verify Razorpay payment and credit wallet
+      description: Verifies HMAC-SHA256 signature and atomically credits customer
+        wallet balance.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - razorpay_order_id
+              - razorpay_payment_id
+              - razorpay_signature
+              properties:
+                razorpay_order_id:
+                  type: string
+                razorpay_payment_id:
+                  type: string
+                razorpay_signature:
+                  type: string
+      responses:
+        '200':
+          description: Recharge payment verified and credited
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - status
+                    - credited_paise
+                    - credited_inr
+                    - balance_paise
+                    - balance_inr
+                    - currency
+                    - version
+                    properties:
+                      status:
+                        type: string
+                        example: CAPTURED
+                      credited_paise:
+                        type: integer
+                        example: 50000
+                      credited_inr:
+                        type: string
+                        example: '500.00'
+                      balance_paise:
+                        type: integer
+                        example: 50000
+                      balance_inr:
+                        type: string
+                        example: '500.00'
+                      currency:
+                        type: string
+                        example: INR
+                      version:
+                        type: integer
+                        example: 2
+        '400':
+          description: Invalid signature or payment failed
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          description: Order not found
+        '409':
+          description: Payment conflict or duplicate payment
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /api/v1/app/wallet/verify_payment:
+    post:
+      tags:
+      - Customer App
+      operationId: app_wallet_verify_payment
+      summary: Verify payment (alias)
+      description: Alias for /api/v1/app/wallet/recharge/verify.
+      security:
+      - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - razorpay_order_id
+              - razorpay_payment_id
+              - razorpay_signature
+              properties:
+                razorpay_order_id:
+                  type: string
+                razorpay_payment_id:
+                  type: string
+                razorpay_signature:
+                  type: string
+      responses:
+        '200':
+          description: Payment verified and credited
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - status
+                    - credited_paise
+                    - credited_inr
+                    - balance_paise
+                    - balance_inr
+                    - currency
+                    - version
+                    properties:
+                      status:
+                        type: string
+                        example: CAPTURED
+                      credited_paise:
+                        type: integer
+                        example: 50000
+                      credited_inr:
+                        type: string
+                        example: '500.00'
+                      balance_paise:
+                        type: integer
+                        example: 50000
+                      balance_inr:
+                        type: string
+                        example: '500.00'
+                      currency:
+                        type: string
+                        example: INR
+                      version:
+                        type: integer
+                        example: 2
+        '400':
+          description: Invalid signature or payment failed
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '404':
+          description: Order not found
+        '409':
+          description: Payment conflict or duplicate payment
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '422':
+          $ref: '#/components/responses/FleetValidation'
+        '500':
+          $ref: '#/components/responses/Internal'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -5035,2350 +7357,3 @@ components:
                   details: {}
 
 
-# ==========================================================================
-# user-apis-Abhranil
-# ==========================================================================
-
-x-user-apis-Abhranil:
-  title: Customer / User Module APIs
-  contributor: Abhranil Pal
-  paths:
-    /api/v1/app/profile:
-      get:
-        tags:
-        - Customer App
-        operationId: app_profile_get
-        summary: Read current customer profile
-        description: Returns customer-owned profile details (full_name, phone, version).
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Customer profile envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - full_name
-                      - phone
-                      - version
-                      properties:
-                        full_name:
-                          type: string
-                          example: Abhranil Pal
-                        phone:
-                          type: string
-                          nullable: true
-                          example: '+919876543210'
-                        version:
-                          type: integer
-                          example: 1
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '403':
-            $ref: '#/components/responses/WrongPlane'
-          '500':
-            $ref: '#/components/responses/Internal'
-      patch:
-        tags:
-        - Customer App
-        operationId: app_profile_patch
-        summary: Update customer profile
-        description: Guarded optimistic update of customer profile details with required
-          If-Match ETag and Idempotency-Key.
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: If-Match
-          in: header
-          required: true
-          description: Current profile version ETag as quoted integer.
-          schema:
-            type: string
-            example: '"1"'
-        - name: Idempotency-Key
-          in: header
-          required: true
-          description: Unique mutation idempotency key (16..128 chars).
-          schema:
-            type: string
-            example: idemp-profile-patch-001
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  full_name:
-                    type: string
-                    minLength: 1
-                    maxLength: 160
-                  phone:
-                    type: string
-                    maxLength: 24
-                    nullable: true
-        responses:
-          '200':
-            description: Updated customer profile envelope
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"2"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - full_name
-                      - phone
-                      - version
-                      properties:
-                        full_name:
-                          type: string
-                        phone:
-                          type: string
-                          nullable: true
-                        version:
-                          type: integer
-          '400':
-            $ref: '#/components/responses/BadRequest'
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '412':
-            $ref: '#/components/responses/FleetVersionMismatch'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '428':
-            $ref: '#/components/responses/FleetPrecondition'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/vehicles:
-      get:
-        tags:
-        - Customer App
-        operationId: app_vehicles_list
-        summary: List saved customer electric vehicles
-        description: Returns active, saved EV records owned by the authenticated customer.
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: List of saved EVs
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        required:
-                        - id
-                        - make
-                        - model
-                        - active
-                        - saved
-                        - version
-                        - capability_evidence
-                        properties:
-                          id:
-                            type: string
-                            format: uuid
-                          label:
-                            type: string
-                          make:
-                            type: string
-                          model:
-                            type: string
-                          variant:
-                            type: string
-                          registration_number:
-                            type: string
-                          battery_capacity_wh:
-                            type: integer
-                            nullable: true
-                          connector_types:
-                            type: array
-                            items:
-                              type: string
-                          supports_ac:
-                            type: boolean
-                          supports_dc:
-                            type: boolean
-                          active:
-                            type: boolean
-                          saved:
-                            type: boolean
-                          version:
-                            type: integer
-                          capability_evidence:
-                            type: string
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-      post:
-        tags:
-        - Customer App
-        operationId: app_vehicles_create
-        summary: Register a new customer EV
-        description: Self-reported vehicle capability declaration; does not certify
-          physical charger compatibility.
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - make
-                - model
-                properties:
-                  label:
-                    type: string
-                    maxLength: 100
-                  make:
-                    type: string
-                    minLength: 1
-                    maxLength: 120
-                  model:
-                    type: string
-                    minLength: 1
-                    maxLength: 120
-                  variant:
-                    type: string
-                    maxLength: 120
-                  registration_number:
-                    type: string
-                    maxLength: 32
-                  battery_capacity_wh:
-                    type: integer
-                    nullable: true
-                  connector_types:
-                    type: array
-                    items:
-                      type: string
-                  supports_ac:
-                    type: boolean
-                    default: false
-                  supports_dc:
-                    type: boolean
-                    default: false
-                  max_ac_power_w:
-                    type: integer
-                    nullable: true
-                  max_dc_power_w:
-                    type: integer
-                    nullable: true
-                  saved:
-                    type: boolean
-                    default: true
-        responses:
-          '201':
-            description: Created vehicle record
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"1"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '400':
-            $ref: '#/components/responses/BadRequest'
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/vehicles/{vehicle_id}:
-      get:
-        tags:
-        - Customer App
-        operationId: app_vehicles_get
-        summary: Read customer EV by ID
-        parameters:
-        - name: vehicle_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Vehicle details
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"1"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-      patch:
-        tags:
-        - Customer App
-        operationId: app_vehicles_patch
-        summary: Update customer EV details
-        parameters:
-        - name: vehicle_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-            example: '"1"'
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-        responses:
-          '200':
-            description: Updated vehicle record
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"2"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '412':
-            $ref: '#/components/responses/FleetVersionMismatch'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '428':
-            $ref: '#/components/responses/FleetPrecondition'
-          '500':
-            $ref: '#/components/responses/Internal'
-      delete:
-        tags:
-        - Customer App
-        operationId: app_vehicles_delete
-        summary: Retire customer EV
-        parameters:
-        - name: vehicle_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-            example: '"1"'
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Deactivated vehicle record
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '412':
-            $ref: '#/components/responses/FleetVersionMismatch'
-          '428':
-            $ref: '#/components/responses/FleetPrecondition'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/addresses:
-      get:
-        tags:
-        - Customer App
-        operationId: app_addresses_list
-        summary: List saved customer service addresses
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: List of saved addresses
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-      post:
-        tags:
-        - Customer App
-        operationId: app_addresses_create
-        summary: Create new customer service address
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - address
-                - latitude
-                - longitude
-                properties:
-                  address:
-                    type: string
-                    minLength: 5
-                    maxLength: 700
-                  latitude:
-                    type: string
-                    example: '22.9475572'
-                  longitude:
-                    type: string
-                    example: '88.4614943'
-                  label:
-                    type: string
-                    maxLength: 80
-                  city:
-                    type: string
-                    maxLength: 120
-                  state:
-                    type: string
-                    maxLength: 120
-                  country_code:
-                    type: string
-                    default: IN
-                  saved:
-                    type: boolean
-                    default: true
-        responses:
-          '201':
-            description: Created address record
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"1"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '400':
-            $ref: '#/components/responses/BadRequest'
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/addresses/{address_id}:
-      get:
-        tags:
-        - Customer App
-        operationId: app_addresses_get
-        summary: Read customer service address by ID
-        parameters:
-        - name: address_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Address details
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"1"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-      patch:
-        tags:
-        - Customer App
-        operationId: app_addresses_patch
-        summary: Update customer service address
-        parameters:
-        - name: address_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-            example: '"1"'
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-        responses:
-          '200':
-            description: Updated address record
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"2"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '409':
-            $ref: '#/components/responses/FleetConflict'
-          '412':
-            $ref: '#/components/responses/FleetVersionMismatch'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '428':
-            $ref: '#/components/responses/FleetPrecondition'
-          '500':
-            $ref: '#/components/responses/Internal'
-      delete:
-        tags:
-        - Customer App
-        operationId: app_addresses_delete
-        summary: Retire customer service address
-        parameters:
-        - name: address_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-            example: '"1"'
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Deactivated address record
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '412':
-            $ref: '#/components/responses/FleetVersionMismatch'
-          '428':
-            $ref: '#/components/responses/FleetPrecondition'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/addresses/{address_id}/make-default:
-      post:
-        tags:
-        - Customer App
-        operationId: app_addresses_default
-        summary: Set address as default primary service address
-        parameters:
-        - name: address_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-            example: '"1"'
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Address promoted to default
-            headers:
-              ETag:
-                schema:
-                  type: string
-                  example: '"2"'
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '409':
-            $ref: '#/components/responses/FleetConflict'
-          '412':
-            $ref: '#/components/responses/FleetVersionMismatch'
-          '428':
-            $ref: '#/components/responses/FleetPrecondition'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/service-requests:
-      get:
-        tags:
-        - Customer App
-        operationId: app_service_requests_list
-        summary: List recent service requests
-        parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 100
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: List of service requests
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-      post:
-        tags:
-        - Customer App
-        operationId: cow_api_request_service
-        summary: Create mobile charging service request
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - vehicle_id
-                - address_id
-                - requested_energy_wh
-                properties:
-                  vehicle_id:
-                    type: string
-                    format: uuid
-                  address_id:
-                    type: string
-                    format: uuid
-                  requested_energy_wh:
-                    type: integer
-                    minimum: 1
-                    maximum: 500000
-        responses:
-          '201':
-            description: Created service request record with frozen snapshots
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - id
-                      - state
-                      - vehicle_snapshot
-                      - address_snapshot
-                      properties:
-                        id:
-                          type: string
-                          format: uuid
-                        state:
-                          type: string
-                          example: REQUESTED
-                        vehicle_snapshot:
-                          type: object
-                        address_snapshot:
-                          type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/service-requests/{request_id}:
-      get:
-        tags:
-        - Customer App
-        operationId: app_service_request_get
-        summary: Read service request details
-        parameters:
-        - name: request_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Service request record
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/service-requests/{request_id}/quote:
-      post:
-        tags:
-        - Customer App
-        operationId: cow_api_quote_request
-        summary: Request quote (GATED / RETIRED)
-        description: Legacy non-zone quotation retired; Zone composite tariffs required.
-        parameters:
-        - name: request_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '410':
-            description: Legacy quote retired
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - error
-                  properties:
-                    error:
-                      type: object
-                      required:
-                      - code
-                      - message
-                      properties:
-                        code:
-                          type: string
-                          example: LEGACY_QUOTE_RETIRED
-                        message:
-                          type: string
-    /api/v1/app/quotes/{quote_id}/accept:
-      post:
-        tags:
-        - Customer App
-        operationId: cow_api_accept_quote
-        summary: Accept quote (GATED / RETIRED)
-        description: Legacy quotation acceptance retired; Zone commitment required.
-        parameters:
-        - name: quote_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '410':
-            description: Legacy quote accept retired
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - error
-                  properties:
-                    error:
-                      type: object
-                      required:
-                      - code
-                      - message
-                      properties:
-                        code:
-                          type: string
-                          example: LEGACY_QUOTE_RETIRED
-                        message:
-                          type: string
-    /api/v1/app/jobs:
-      get:
-        tags:
-        - Customer App
-        operationId: app_jobs_list
-        summary: List customer service jobs history
-        parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 100
-        - name: state
-          in: query
-          required: false
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: List of jobs
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/jobs/{job_id}:
-      get:
-        tags:
-        - Customer App
-        operationId: cow_api_get_job
-        summary: Read customer service job detail
-        parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Service job details
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - id
-                      - state
-                      - version
-                      - vehicle_snapshot
-                      - address_snapshot
-                      properties:
-                        id:
-                          type: string
-                          format: uuid
-                        state:
-                          type: string
-                          example: DISPATCHING
-                        version:
-                          type: integer
-                        vehicle_snapshot:
-                          type: object
-                        address_snapshot:
-                          type: object
-                        quoted_total_paise:
-                          type: integer
-                          nullable: true
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/jobs/{job_id}/cancel:
-      post:
-        tags:
-        - Customer App
-        operationId: app_jobs_cancel
-        summary: Cancel an active service job
-        description: Allows cancellation in eligible pre-charging states with strict
-          If-Match and Idempotency-Key.
-        parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-            example: '"1"'
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: false
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  reason:
-                    type: string
-                    maxLength: 255
-        responses:
-          '200':
-            description: Cancelled job envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '409':
-            $ref: '#/components/responses/FleetConflict'
-          '412':
-            $ref: '#/components/responses/FleetVersionMismatch'
-          '428':
-            $ref: '#/components/responses/FleetPrecondition'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/jobs/{job_id}/live:
-      get:
-        tags:
-        - Customer App
-        operationId: app_jobs_live
-        summary: Read live job projection (ETA, telemetry)
-        parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Live projection envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - job_id
-                      - state
-                      - freshness_timestamp
-                      properties:
-                        job_id:
-                          type: string
-                          format: uuid
-                        state:
-                          type: string
-                        eta_minutes:
-                          type: integer
-                          nullable: true
-                        driver_location:
-                          type: object
-                          nullable: true
-                        charging_status:
-                          type: object
-                          nullable: true
-                        freshness_timestamp:
-                          type: string
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/jobs/{job_id}/vehicle/promote:
-      post:
-        tags:
-        - Customer App
-        operationId: app_jobs_promote_vehicle
-        summary: Promote vehicle snapshot from job into customer saved vehicles
-        parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: false
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  label:
-                    type: string
-                    maxLength: 100
-        responses:
-          '201':
-            description: Saved EV record created from snapshot
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/jobs/{job_id}/address/promote:
-      post:
-        tags:
-        - Customer App
-        operationId: app_jobs_promote_address
-        summary: Promote address snapshot from job into customer saved addresses
-        parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: false
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  label:
-                    type: string
-                    maxLength: 80
-                  make_default:
-                    type: boolean
-                    default: false
-        responses:
-          '201':
-            description: Saved address record created from snapshot
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/ratings:
-      get:
-        tags:
-        - Customer App
-        operationId: app_ratings_list
-        summary: List customer submitted ratings
-        parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 100
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: List of ratings
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        required:
-                        - job_id
-                        - rating
-                        - created_at
-                        properties:
-                          job_id:
-                            type: string
-                            format: uuid
-                          rating:
-                            type: integer
-                          comment:
-                            type: string
-                            nullable: true
-                          created_at:
-                            type: string
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/jobs/{job_id}/rating:
-      get:
-        tags:
-        - Customer App
-        operationId: app_jobs_rating_get
-        summary: Get rating for completed job
-        parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Job rating details
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - job_id
-                      - rating
-                      - created_at
-                      properties:
-                        job_id:
-                          type: string
-                          format: uuid
-                        rating:
-                          type: integer
-                        comment:
-                          type: string
-                          nullable: true
-                        created_at:
-                          type: string
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-      put:
-        tags:
-        - Customer App
-        operationId: app_jobs_rating_put
-        summary: Submit or update rating for completed job
-        parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - rating
-                properties:
-                  rating:
-                    type: integer
-                    minimum: 1
-                    maximum: 5
-                  comment:
-                    type: string
-                    maxLength: 500
-                    nullable: true
-        responses:
-          '200':
-            description: Saved rating envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '409':
-            $ref: '#/components/responses/FleetConflict'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/support/tickets:
-      get:
-        tags:
-        - Customer App
-        operationId: app_support_tickets_list
-        summary: List customer support tickets
-        parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 100
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: List of support tickets
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-      post:
-        tags:
-        - Customer App
-        operationId: app_support_tickets_create
-        summary: Create new support ticket
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - category
-                - subject
-                - message
-                properties:
-                  category:
-                    type: string
-                    minLength: 1
-                    maxLength: 50
-                  subject:
-                    type: string
-                    minLength: 1
-                    maxLength: 200
-                  message:
-                    type: string
-                    minLength: 1
-                    maxLength: 2000
-                  job_id:
-                    type: string
-                    format: uuid
-                    nullable: true
-        responses:
-          '201':
-            description: Created support ticket record
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/support/tickets/{ticket_id}:
-      get:
-        tags:
-        - Customer App
-        operationId: app_support_tickets_get
-        summary: Read support ticket and message thread
-        parameters:
-        - name: ticket_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Support ticket details and message thread
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/support/tickets/{ticket_id}/replies:
-      post:
-        tags:
-        - Customer App
-        operationId: app_support_tickets_reply
-        summary: Reply to support ticket
-        parameters:
-        - name: ticket_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - message
-                properties:
-                  message:
-                    type: string
-                    minLength: 1
-                    maxLength: 2000
-        responses:
-          '201':
-            description: Thread reply recorded and ticket updated
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/notifications:
-      get:
-        tags:
-        - Customer App
-        operationId: app_notifications_list
-        summary: List customer inbox notifications
-        parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 100
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: List of notifications
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items: &id001
-                        type: object
-                        required:
-                        - id
-                        - title
-                        - body
-                        - category
-                        - is_read
-                        - created_at
-                        properties:
-                          id:
-                            type: string
-                            format: uuid
-                          title:
-                            type: string
-                          body:
-                            type: string
-                          category:
-                            type: string
-                            example: SERVICE
-                          is_read:
-                            type: boolean
-                            example: false
-                          read_at:
-                            type: string
-                            format: date-time
-                            nullable: true
-                          created_at:
-                            type: string
-                            format: date-time
-                          data:
-                            type: object
-                            additionalProperties: true
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/notifications/unread-count:
-      get:
-        tags:
-        - Customer App
-        operationId: app_notifications_unread_count
-        summary: Count unread notifications
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Unread notification count
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - unread_count
-                      properties:
-                        unread_count:
-                          type: integer
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/notifications/{notification_id}/read:
-      post:
-        tags:
-        - Customer App
-        operationId: app_notifications_read
-        summary: Mark notification as read
-        parameters:
-        - name: notification_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Notification marked read
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data: *id001
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            $ref: '#/components/responses/FleetNotFound'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/notifications/read-all:
-      post:
-        tags:
-        - Customer App
-        operationId: app_notifications_read_all
-        summary: Mark all notifications as read
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: All notifications marked read
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items: *id001
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/notifications/preferences:
-      get:
-        tags:
-        - Customer App
-        operationId: app_notifications_preferences_get
-        summary: Read customer notification channel preferences
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Channel preferences envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-      put:
-        tags:
-        - Customer App
-        operationId: app_notifications_preferences_put
-        summary: Update customer notification channel preferences
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  push_enabled:
-                    type: boolean
-                  email_enabled:
-                    type: boolean
-                  sms_enabled:
-                    type: boolean
-                  service_updates:
-                    type: boolean
-                  promotions:
-                    type: boolean
-        responses:
-          '200':
-            description: Updated preferences envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/realtime/tickets:
-      post:
-        tags:
-        - Customer App
-        operationId: app_realtime_tickets_create
-        summary: Request single-use SSE streaming ticket
-        description: Issues short-lived (60s) single-use cryptographically random
-          token for authorized topic subscriptions. Realtime SSE streaming transport is not
-          yet enabled or configured in this release; requests currently return HTTP 501 REALTIME_STREAM_NOT_CONFIGURED.
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  subscriptions:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                    - self
-                    - notifications
-                  resume_after:
-                    type: string
-                    nullable: true
-        responses:
-          '200':
-            description: Realtime ticket envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - ticket
-                      - expires_at
-                      - stream_url
-                      properties:
-                        ticket:
-                          type: string
-                        expires_at:
-                          type: string
-                        stream_url:
-                          type: string
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-          '501':
-            description: Realtime streaming transport not configured
-    /api/v1/app/wallet:
-      get:
-        tags:
-        - Customer App
-        operationId: app_wallet_get
-        summary: Read customer wallet balance
-        description: Returns the customer's wallet balance (in paise and INR), currency,
-          and version with ETag.
-        security:
-        - BearerAuth: []
-        responses:
-          '200':
-            description: Customer wallet envelope
-            headers:
-              ETag:
-                schema:
-                  type: string
-                description: Quoted wallet version
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - balance_paise
-                      - balance_inr
-                      - currency
-                      - version
-                      properties:
-                        balance_paise:
-                          type: integer
-                          example: 50000
-                        balance_inr:
-                          type: string
-                          example: '500.00'
-                        currency:
-                          type: string
-                          example: INR
-                        version:
-                          type: integer
-                          example: 1
-                        updated_at:
-                          type: string
-                          nullable: true
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/wallet/transactions:
-      get:
-        tags:
-        - Customer App
-        operationId: app_wallet_transactions_list
-        summary: List wallet transactions
-        description: Returns the chronological ledger transactions for customer wallet.
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 100
-        responses:
-          '200':
-            description: Wallet transactions envelope
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        required:
-                        - id
-                        - transaction_type
-                        - amount_paise
-                        - amount_inr
-                        - balance_after_paise
-                        - balance_after_inr
-                        properties:
-                          id:
-                            type: string
-                            format: uuid
-                          transaction_type:
-                            type: string
-                            example: CREDIT_TOPUP
-                          amount_paise:
-                            type: integer
-                            example: 50000
-                          amount_inr:
-                            type: number
-                            example: 500.0
-                          balance_after_paise:
-                            type: integer
-                            example: 50000
-                          balance_after_inr:
-                            type: number
-                            example: 500.0
-                          reference_id:
-                            type: string
-                            example: pay_12345
-                          created_at:
-                            type: string
-                            nullable: true
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/wallet/recharge/order:
-      post:
-        tags:
-        - Customer App
-        operationId: app_wallet_recharge_order
-        summary: Create Razorpay wallet recharge order
-        description: Creates a Razorpay payment order and pending payment record for
-          wallet top-up.
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: Idempotency-Key
-          in: header
-          schema:
-            type: string
-            minLength: 16
-            maxLength: 128
-          required: true
-          description: Client-provided idempotency key (16 to 128 characters)
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - amount_paise
-                properties:
-                  amount_paise:
-                    type: integer
-                    minimum: 100
-                    maximum: 10000000
-                    example: 50000
-                    description: Recharge amount in paise (min 100 paise = ₹1.00, max 10000000 paise = ₹100,000)
-                  currency:
-                    type: string
-                    default: INR
-                    example: INR
-        responses:
-          '201':
-            description: Recharge order created
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - order_id
-                      - provider_order_id
-                      - provider
-                      - amount_paise
-                      - amount_inr
-                      - currency
-                      - key_id
-                      - state
-                      properties:
-                        order_id:
-                          type: string
-                        provider_order_id:
-                          type: string
-                        provider:
-                          type: string
-                          example: RAZORPAY
-                        amount_paise:
-                          type: integer
-                          example: 50000
-                        amount_inr:
-                          type: string
-                          example: '500.00'
-                        currency:
-                          type: string
-                          example: INR
-                        key_id:
-                          type: string
-                        state:
-                          type: string
-                          example: PENDING
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/wallet/payment_order:
-      post:
-        tags:
-        - Customer App
-        operationId: app_wallet_payment_order
-        summary: Create payment order (alias)
-        description: Alias for /api/v1/app/wallet/recharge/order.
-        security:
-        - BearerAuth: []
-        parameters:
-        - name: Idempotency-Key
-          in: header
-          schema:
-            type: string
-            minLength: 16
-            maxLength: 128
-          required: true
-          description: Client-provided idempotency key (16 to 128 characters)
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - amount_paise
-                properties:
-                  amount_paise:
-                    type: integer
-                    minimum: 100
-                    maximum: 10000000
-                    example: 50000
-                    description: Recharge amount in paise (min 100 paise = ₹1.00, max 10000000 paise = ₹100,000)
-                  currency:
-                    type: string
-                    default: INR
-                    example: INR
-        responses:
-          '201':
-            description: Payment order created
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - order_id
-                      - provider_order_id
-                      - provider
-                      - amount_paise
-                      - amount_inr
-                      - currency
-                      - key_id
-                      - state
-                      properties:
-                        order_id:
-                          type: string
-                        provider_order_id:
-                          type: string
-                        provider:
-                          type: string
-                          example: RAZORPAY
-                        amount_paise:
-                          type: integer
-                          example: 50000
-                        amount_inr:
-                          type: string
-                          example: '500.00'
-                        currency:
-                          type: string
-                          example: INR
-                        key_id:
-                          type: string
-                        state:
-                          type: string
-                          example: PENDING
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/wallet/recharge/verify:
-      post:
-        tags:
-        - Customer App
-        operationId: app_wallet_recharge_verify
-        summary: Verify Razorpay payment and credit wallet
-        description: Verifies HMAC-SHA256 signature and atomically credits customer
-          wallet balance.
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - razorpay_order_id
-                - razorpay_payment_id
-                - razorpay_signature
-                properties:
-                  razorpay_order_id:
-                    type: string
-                  razorpay_payment_id:
-                    type: string
-                  razorpay_signature:
-                    type: string
-        responses:
-          '200':
-            description: Recharge payment verified and credited
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - status
-                      - credited_paise
-                      - credited_inr
-                      - balance_paise
-                      - balance_inr
-                      - currency
-                      - version
-                      properties:
-                        status:
-                          type: string
-                          example: CAPTURED
-                        credited_paise:
-                          type: integer
-                          example: 50000
-                        credited_inr:
-                          type: string
-                          example: '500.00'
-                        balance_paise:
-                          type: integer
-                          example: 50000
-                        balance_inr:
-                          type: string
-                          example: '500.00'
-                        currency:
-                          type: string
-                          example: INR
-                        version:
-                          type: integer
-                          example: 2
-          '400':
-            description: Invalid signature or payment failed
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            description: Order not found
-          '409':
-            description: Payment conflict or duplicate payment
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'
-    /api/v1/app/wallet/verify_payment:
-      post:
-        tags:
-        - Customer App
-        operationId: app_wallet_verify_payment
-        summary: Verify payment (alias)
-        description: Alias for /api/v1/app/wallet/recharge/verify.
-        security:
-        - BearerAuth: []
-        requestBody:
-          required: true
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                - razorpay_order_id
-                - razorpay_payment_id
-                - razorpay_signature
-                properties:
-                  razorpay_order_id:
-                    type: string
-                  razorpay_payment_id:
-                    type: string
-                  razorpay_signature:
-                    type: string
-        responses:
-          '200':
-            description: Payment verified and credited
-            content:
-              application/json:
-                schema:
-                  type: object
-                  required:
-                  - data
-                  properties:
-                    data:
-                      type: object
-                      required:
-                      - status
-                      - credited_paise
-                      - credited_inr
-                      - balance_paise
-                      - balance_inr
-                      - currency
-                      - version
-                      properties:
-                        status:
-                          type: string
-                          example: CAPTURED
-                        credited_paise:
-                          type: integer
-                          example: 50000
-                        credited_inr:
-                          type: string
-                          example: '500.00'
-                        balance_paise:
-                          type: integer
-                          example: 50000
-                        balance_inr:
-                          type: string
-                          example: '500.00'
-                        currency:
-                          type: string
-                          example: INR
-                        version:
-                          type: integer
-                          example: 2
-          '400':
-            description: Invalid signature or payment failed
-          '401':
-            $ref: '#/components/responses/InvalidCredentials'
-          '404':
-            description: Order not found
-          '409':
-            description: Payment conflict or duplicate payment
-          '415':
-            $ref: '#/components/responses/UnsupportedContentType'
-          '422':
-            $ref: '#/components/responses/FleetValidation'
-          '500':
-            $ref: '#/components/responses/Internal'

@@ -13,7 +13,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
-
+import hashlib
 from django.db import transaction
 from django.utils import timezone
 
@@ -896,11 +896,6 @@ RECONCILIATION_EVIDENCE_ALLOWLIST = {
     "status",
     "method",
     "created_at",
-    "bank",
-    "wallet",
-    "vpa",
-    "email",
-    "contact",
     "fee",
     "tax",
     "error_code",
@@ -913,6 +908,22 @@ def sanitize_payment_evidence(evidence: dict[str, Any] | None) -> dict[str, Any]
     if not evidence or not isinstance(evidence, dict):
         return {}
     return {k: v for k, v in evidence.items() if k in RECONCILIATION_EVIDENCE_ALLOWLIST}
+
+
+def format_payment_order(order: PaymentOrder, key_id: str = "") -> dict[str, Any]:
+    """Format PaymentOrder model instance into uniform dictionary representation."""
+    is_intent = order.provider_order_id.startswith("intent_")
+    return {
+        "order_id": order.provider_order_id,
+        "provider_order_id": order.provider_order_id,
+        "provider": order.provider,
+        "amount_paise": order.amount_paise,
+        "amount_inr": format_paise_to_inr_str(order.amount_paise),
+        "currency": order.currency,
+        "key_id": key_id,
+        "state": order.state,
+        "is_intent": is_intent,
+    }
 
 
 def get_payment_order_by_receipt(
@@ -943,18 +954,99 @@ def get_payment_order_by_receipt(
             f"Payment order for receipt '{receipt}' exists with conflicting currency: expected {expected_currency}, found {order.currency}",
         )
 
-    is_intent = order.provider_order_id.startswith("intent_")
-    return {
-        "order_id": order.provider_order_id,
-        "provider_order_id": order.provider_order_id,
-        "provider": order.provider,
-        "amount_paise": order.amount_paise,
-        "amount_inr": format_paise_to_inr_str(order.amount_paise),
-        "currency": order.currency,
-        "key_id": key_id,
-        "state": order.state,
-        "is_intent": is_intent,
-    }
+    return format_payment_order(order, key_id=key_id)
+
+
+def acquire_payment_creation_claim(
+    actor: Principal,
+    receipt: str,
+    amount_paise: int,
+    currency: str,
+    idempotency_key: str = "",
+    lease_seconds: int = 30,
+    key_id: str = "",
+) -> tuple[str, str | None, dict[str, Any] | None]:
+    """Atomically acquire exclusive claim for external order creation under row-level lock.
+    
+    Returns:
+      ("CONFIRMED", None, order_dict) -> Already confirmed with Razorpay order ID.
+      ("IN_PROGRESS", claim_token, order_dict) -> Another worker currently holds active lease.
+      ("CLAIMED", my_claim_token, order_dict) -> Lease acquired; safe to proceed to gateway call.
+    """
+    if currency != "INR":
+        reject(422, "UNSUPPORTED_CURRENCY", "Only INR currency is supported")
+    if not (100 <= amount_paise <= 10000000):
+        reject(422, "INVALID_AMOUNT", "Amount must be between 100 paise (₹1) and 10000000 paise (₹100,000)")
+
+    my_claim_token = uuid4().hex
+    now = timezone.now()
+    claim_expires_at = now + timedelta(seconds=lease_seconds)
+    key_digest = (
+        hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:32]
+        if idempotency_key
+        else ""
+    )
+
+    with transaction.atomic():
+        order = PaymentOrder.objects.select_for_update().filter(
+            customer=actor, receipt=receipt
+        ).first()
+
+        if not order:
+            placeholder_order_id = f"intent_{receipt}"
+            order = PaymentOrder.objects.create(
+                customer=actor,
+                provider="RAZORPAY",
+                provider_order_id=placeholder_order_id,
+                amount_paise=amount_paise,
+                currency=currency,
+                state="PENDING",
+                receipt=receipt,
+                claim_token=my_claim_token,
+                claim_expires_at=claim_expires_at,
+                details={
+                    "state": "CLAIMED",
+                    "idempotency_key_digest": key_digest,
+                },
+            )
+            audit(
+                actor,
+                order,
+                "PAYMENT_INTENT_CREATED",
+                details={"amount_paise": amount_paise, "receipt": receipt, "claim_token": my_claim_token},
+            )
+            return (
+                "CLAIMED",
+                my_claim_token,
+                format_payment_order(order, key_id=key_id),
+            )
+
+        # Existing record found: verify amount and currency
+        if order.amount_paise != amount_paise or order.currency != currency:
+            reject(
+                409,
+                "PAYMENT_ORDER_CONFLICT",
+                f"Payment order for receipt '{receipt}' exists with conflicting amount or currency",
+            )
+
+        # Check if already confirmed with a real gateway order ID
+        if not order.provider_order_id.startswith("intent_"):
+            return ("CONFIRMED", None, format_payment_order(order, key_id=key_id))
+
+        # Check if another worker holds an active lease
+        if order.claim_token and order.claim_expires_at and order.claim_expires_at > now:
+            return ("IN_PROGRESS", order.claim_token, format_payment_order(order, key_id=key_id))
+
+        # Lease expired or no active claim: take over the claim
+        order.claim_token = my_claim_token
+        order.claim_expires_at = claim_expires_at
+        order.details = {
+            **order.details,
+            "state": "RECLAIMED",
+            "claim_token": my_claim_token,
+        }
+        order.save(update_fields=["claim_token", "claim_expires_at", "details", "updated_at"])
+        return ("CLAIMED", my_claim_token, format_payment_order(order, key_id=key_id))
 
 
 def create_payment_intent(
@@ -965,76 +1057,34 @@ def create_payment_intent(
     key_id: str,
     idempotency_key: str = "",
 ) -> dict[str, Any]:
-    """Record a durable local payment intent in DB before calling external payment gateway.
-    
-    Ensures that the initial pending intent is durable across crashes or timeouts,
-    executed in a short transaction without holding locks during external HTTP calls.
-    """
-    if currency != "INR":
-        reject(422, "UNSUPPORTED_CURRENCY", "Only INR currency is supported")
-    if not (100 <= amount_paise <= 10000000):
-        reject(422, "INVALID_AMOUNT", "Amount must be between 100 paise (₹1) and 10000000 paise (₹100,000)")
-
-    placeholder_order_id = f"intent_{receipt}"
-
-    with transaction.atomic():
-        existing = PaymentOrder.objects.select_for_update().filter(
-            customer=actor, receipt=receipt
-        ).first()
-        if existing:
-            if existing.amount_paise != amount_paise or existing.currency != currency:
-                reject(409, "PAYMENT_ORDER_CONFLICT", "Payment order parameters conflict with existing receipt")
-            return {
-                "order_id": existing.provider_order_id,
-                "provider_order_id": existing.provider_order_id,
-                "provider": existing.provider,
-                "amount_paise": existing.amount_paise,
-                "amount_inr": format_paise_to_inr_str(existing.amount_paise),
-                "currency": existing.currency,
-                "key_id": key_id,
-                "state": existing.state,
-                "is_intent": existing.provider_order_id.startswith("intent_"),
-            }
-
-        order = PaymentOrder.objects.create(
-            customer=actor,
-            provider="RAZORPAY",
-            provider_order_id=placeholder_order_id,
-            amount_paise=amount_paise,
-            currency=currency,
-            state="PENDING",
-            receipt=receipt,
-            details={
-                "state": "INTENT_CREATED",
-                "idempotency_key": idempotency_key,
-            },
-        )
-        audit(
-            actor,
-            order,
-            "PAYMENT_INTENT_CREATED",
-            details={"amount_paise": amount_paise, "receipt": receipt},
-        )
-        return {
-            "order_id": order.provider_order_id,
-            "provider_order_id": order.provider_order_id,
-            "provider": order.provider,
-            "amount_paise": order.amount_paise,
-            "amount_inr": format_paise_to_inr_str(order.amount_paise),
-            "currency": order.currency,
-            "key_id": key_id,
-            "state": order.state,
-            "is_intent": True,
-        }
+    """Record a durable local payment intent in DB before calling external payment gateway."""
+    status, _, order_dict = acquire_payment_creation_claim(
+        actor=actor,
+        receipt=receipt,
+        amount_paise=amount_paise,
+        currency=currency,
+        idempotency_key=idempotency_key,
+        key_id=key_id,
+    )
+    return order_dict
 
 
 def confirm_payment_intent(
     actor: Principal,
     receipt: str,
     provider_order_id: str,
-    key_id: str,
+    key_id: str = "",
+    claim_token: str | None = None,
 ) -> dict[str, Any]:
-    """Confirm a durable intent by linking the authoritative gateway order ID."""
+    """Confirm a durable intent with the authoritative gateway order ID under row lock.
+    
+    Guarantees:
+    - Row is locked with select_for_update() before state inspection.
+    - An already confirmed order cannot be replaced with a different order ID.
+    - Identical retry returns existing confirmed order without mutation.
+    - Stale worker (whose claim expired and was superseded) is rejected with 409.
+    - Captured orders cannot be mutated.
+    """
     with transaction.atomic():
         order = PaymentOrder.objects.select_for_update().filter(
             customer=actor, receipt=receipt
@@ -1042,39 +1092,57 @@ def confirm_payment_intent(
         if not order:
             reject(404, "NOT_FOUND", "Payment intent record not found")
 
-        if order.provider_order_id != provider_order_id:
-            order.provider_order_id = provider_order_id
-            order.details = {
-                **order.details,
-                "state": "GATEWAY_CONFIRMED",
-                "provider_order_id": provider_order_id,
-            }
-            order.save(update_fields=["provider_order_id", "details", "updated_at"])
+        # Captured orders are immutable
+        if order.state == "CAPTURED":
+            if order.provider_order_id == provider_order_id:
+                return format_payment_order(order, key_id=key_id)
+            reject(409, "PAYMENT_ORDER_CONFLICT", "Order is already captured with a different ID")
 
-            audit(
-                actor,
-                order,
-                "PAYMENT_ORDER_CONFIRMED",
-                details={"provider_order_id": provider_order_id, "receipt": receipt},
+        # If already confirmed
+        if not order.provider_order_id.startswith("intent_"):
+            if order.provider_order_id == provider_order_id:
+                # Idempotent replay: return existing confirmed order without mutation
+                return format_payment_order(order, key_id=key_id)
+            # Rejection: cannot replace an already confirmed external order identity
+            reject(
+                409,
+                "PAYMENT_ORDER_CONFLICT",
+                f"Payment order is already confirmed with order ID '{order.provider_order_id}', cannot replace with '{provider_order_id}'",
             )
 
-        return {
-            "order_id": order.provider_order_id,
-            "provider_order_id": order.provider_order_id,
-            "provider": order.provider,
-            "amount_paise": order.amount_paise,
-            "amount_inr": format_paise_to_inr_str(order.amount_paise),
-            "currency": order.currency,
-            "key_id": key_id,
-            "state": order.state,
-            "is_intent": False,
+        # Order is currently unconfirmed (intent_...): check claim token
+        if claim_token and order.claim_token and order.claim_token != claim_token:
+            reject(
+                409,
+                "STALE_CLAIM",
+                "Payment order creation claim is stale or has been superseded by another worker",
+            )
+
+        # Valid initial confirmation: transition from intent to confirmed order
+        order.provider_order_id = provider_order_id
+        order.claim_token = ""
+        order.claim_expires_at = None
+        order.details = {
+            **order.details,
+            "state": "GATEWAY_CONFIRMED",
+            "provider_order_id": provider_order_id,
         }
+        order.save(update_fields=["provider_order_id", "claim_token", "claim_expires_at", "details", "updated_at"])
+
+        audit(
+            actor,
+            order,
+            "PAYMENT_ORDER_CONFIRMED",
+            details={"provider_order_id": provider_order_id, "receipt": receipt},
+        )
+        return format_payment_order(order, key_id=key_id)
 
 
 def mark_payment_intent_uncertain(
     actor: Principal,
     receipt: str,
     error_reason: str,
+    claim_token: str | None = None,
 ) -> None:
     """Mark durable intent as uncertain after gateway timeout or network failure for later reconciliation."""
     with transaction.atomic():
@@ -1082,13 +1150,20 @@ def mark_payment_intent_uncertain(
             customer=actor, receipt=receipt
         ).first()
         if order:
-            order.error_reason = error_reason[:500]
+            if claim_token and order.claim_token and order.claim_token != claim_token:
+                return  # Another worker already reclaimed, do not touch
+
+            # Sanitize error reason: do not store full stack traces or credentials
+            safe_reason = error_reason.split("\n")[0][:200]
+            order.error_reason = safe_reason
+            order.claim_token = ""
+            order.claim_expires_at = None
             order.details = {
                 **order.details,
                 "state": "UNCERTAIN",
-                "last_error": error_reason[:500],
+                "last_error": safe_reason,
             }
-            order.save(update_fields=["error_reason", "details", "updated_at"])
+            order.save(update_fields=["error_reason", "claim_token", "claim_expires_at", "details", "updated_at"])
 
 
 def create_payment_order(

@@ -861,12 +861,15 @@ class PaymentOrder(Timestamped):
     provider_payment_id = models.CharField(max_length=128, null=True, blank=True)
     provider_signature = models.CharField(max_length=256, null=True, blank=True)
     receipt = models.CharField(max_length=128, blank=True, default="")
+    claim_token = models.CharField(max_length=64, blank=True, default="")
+    claim_expires_at = models.DateTimeField(null=True, blank=True)
     error_reason = models.CharField(max_length=500, blank=True, default="")
     details = models.JSONField(default=dict, blank=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["customer", "created_at"], name="cow_pay_order_cust_idx"),
+            models.Index(fields=["customer", "receipt"], name="cow_pay_order_cust_rcpt_idx"),
             models.Index(fields=["provider_order_id"], name="cow_pay_order_poid_idx"),
         ]
         constraints = [
@@ -874,7 +877,12 @@ class PaymentOrder(Timestamped):
                 fields=["provider", "provider_payment_id"],
                 condition=Q(provider_payment_id__isnull=False),
                 name="cow_pay_provider_payment_unique",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["customer", "receipt"],
+                condition=~Q(receipt=""),
+                name="cow_pay_order_cust_receipt_unique",
+            ),
         ]
 
 
