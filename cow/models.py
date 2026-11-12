@@ -805,3 +805,75 @@ class DriverApplicationHistory(models.Model):
     event_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     delivery_state = models.CharField(max_length=24, default="NOT_CONFIGURED")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class WalletAccount(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.OneToOneField(
+        Principal, on_delete=models.PROTECT, related_name="wallet_account"
+    )
+    balance_paise = models.BigIntegerField(default=0)
+    currency = models.CharField(max_length=3, default="INR")
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(balance_paise__gte=0),
+                name="cow_wallet_balance_nonnegative",
+            )
+        ]
+
+
+class WalletTransaction(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(
+        WalletAccount, on_delete=models.PROTECT, related_name="transactions"
+    )
+    transaction_type = models.CharField(max_length=32)
+    amount_paise = models.PositiveBigIntegerField()
+    balance_after_paise = models.BigIntegerField()
+    reference_id = models.CharField(max_length=128, blank=True, default="")
+    idempotency_key = models.CharField(max_length=128, blank=True, default="")
+    details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["wallet", "created_at"], name="cow_wallet_tx_created_idx"),
+            models.Index(fields=["reference_id"], name="cow_wallet_tx_ref_idx"),
+        ]
+
+
+class PaymentOrder(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey(
+        Principal, on_delete=models.PROTECT, related_name="payment_orders"
+    )
+    provider = models.CharField(max_length=32, default="RAZORPAY")
+    provider_order_id = models.CharField(max_length=128, unique=True)
+    amount_paise = models.PositiveBigIntegerField()
+    currency = models.CharField(max_length=3, default="INR")
+    state = models.CharField(
+        max_length=24,
+        choices=[(x, x) for x in ("PENDING", "CAPTURED", "FAILED")],
+        default="PENDING",
+    )
+    provider_payment_id = models.CharField(max_length=128, null=True, blank=True)
+    provider_signature = models.CharField(max_length=256, null=True, blank=True)
+    receipt = models.CharField(max_length=128, blank=True, default="")
+    error_reason = models.CharField(max_length=500, blank=True, default="")
+    details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["customer", "created_at"], name="cow_pay_order_cust_idx"),
+            models.Index(fields=["provider_order_id"], name="cow_pay_order_poid_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "provider_payment_id"],
+                condition=Q(provider_payment_id__isnull=False),
+                name="cow_pay_provider_payment_unique",
+            )
+        ]
+

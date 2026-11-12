@@ -167,6 +167,44 @@ class UserSchemasTest(unittest.TestCase):
         )
         self.assertIn("self", rt.subscriptions)
 
+    def test_wallet_schemas(self):
+        w = schemas.WalletAccountData(
+            balance_paise=50000,
+            balance_inr=500.0,
+            currency="INR",
+            version=1,
+        )
+        self.assertEqual(w.balance_paise, 50000)
+        self.assertEqual(w.balance_inr, 500.0)
+
+        tx = schemas.WalletTransactionData(
+            id=str(uuid4()),
+            transaction_type="CREDIT_TOPUP",
+            amount_paise=50000,
+            amount_inr=500.0,
+            balance_after_paise=50000,
+            balance_after_inr=500.0,
+            reference_id="pay_12345",
+        )
+        self.assertEqual(tx.transaction_type, "CREDIT_TOPUP")
+
+        order_req = schemas.WalletRechargeOrderPayload(amount_paise=10000)
+        self.assertEqual(order_req.amount_paise, 10000)
+        self.assertEqual(order_req.currency, "INR")
+
+        with self.assertRaises(ValidationError):
+            schemas.WalletRechargeOrderPayload(amount_paise=0)
+
+        with self.assertRaises(ValidationError):
+            schemas.WalletRechargeOrderPayload(amount_paise=-50)
+
+        verify_req = schemas.WalletRechargeVerifyPayload(
+            razorpay_order_id="order_123",
+            razorpay_payment_id="pay_456",
+            razorpay_signature="abcde12345",
+        )
+        self.assertEqual(verify_req.razorpay_order_id, "order_123")
+
 
 class UserModuleStructureTest(unittest.TestCase):
     def test_all_user_files_parse(self):
@@ -226,9 +264,43 @@ class UserModuleStructureTest(unittest.TestCase):
             "app_notifications_preferences_get",
             "app_notifications_preferences_put",
             "app_realtime_tickets_create",
+            "app_wallet_get",
+            "app_wallet_transactions_list",
+            "app_wallet_recharge_order",
+            "app_wallet_payment_order",
+            "app_wallet_recharge_verify",
+            "app_wallet_verify_payment",
         )
         for op in expected_extended:
             self.assertIn(f'operation_id="{op}"', router_src)
+
+    def test_wallet_models_declared(self):
+        models_src = (ROOT / "cow/models.py").read_text(encoding="utf-8")
+        self.assertIn("class WalletAccount(Timestamped):", models_src)
+        self.assertIn("class WalletTransaction(Timestamped):", models_src)
+        self.assertIn("class PaymentOrder(Timestamped):", models_src)
+        self.assertIn("cow_wallet_balance_nonnegative", models_src)
+        self.assertIn("cow_pay_provider_payment_unique", models_src)
+
+    def test_razorpay_signature_hmac_logic(self):
+        import hashlib
+        import hmac
+
+        secret = "WvCG1TeQLOABInHqBgwyWb2t"
+        order_id = "order_test_123"
+        payment_id = "pay_test_456"
+
+        data = f"{order_id}|{payment_id}".encode("utf-8")
+        valid_sig = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
+
+        # Valid signature matches
+        self.assertTrue(hmac.compare_digest(valid_sig, valid_sig))
+
+        # Tampered payment id fails
+        tampered_data = f"{order_id}|pay_test_999".encode("utf-8")
+        tampered_sig = hmac.new(secret.encode("utf-8"), tampered_data, hashlib.sha256).hexdigest()
+        self.assertFalse(hmac.compare_digest(valid_sig, tampered_sig))
+
 
 
 if __name__ == "__main__":

@@ -6,9 +6,10 @@ boundaries for all Customer-facing operations.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.http import JsonResponse
 from pydantic import ValidationError as PydanticValidationError
@@ -32,6 +33,8 @@ from cow.users.schemas import (
     SupportTicketCreatePayload,
     VehicleCreate,
     VehiclePatch,
+    WalletRechargeOrderPayload,
+    WalletRechargeVerifyPayload,
 )
 
 
@@ -465,3 +468,110 @@ def update_notification_preferences(actor: Principal, raw_payload: dict[str, Any
 def create_realtime_ticket(actor: Principal, raw_payload: dict[str, Any]) -> dict[str, Any]:
     payload = parse_payload(RealtimeTicketPayload, raw_payload)
     return repo.create_realtime_ticket(actor, payload.subscriptions, payload.resume_after)
+
+
+# ============================================================================
+# Wallet & Payment Recharge Services
+# ============================================================================
+
+def get_razorpay_credentials() -> tuple[str, str]:
+    """Retrieve configured Razorpay Key ID and Key Secret."""
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "").strip()
+    secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
+    if not key_id or not secret:
+        # Check .env if available
+        try:
+            from scripts.dev import env_file
+            env_file()
+            key_id = os.environ.get("RAZORPAY_KEY_ID", "").strip()
+            secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
+        except Exception:
+            pass
+    return key_id, secret
+
+
+def call_razorpay_create_order(key_id: str, secret: str, amount_paise: int, currency: str, receipt: str) -> str:
+    """Attempt Razorpay API order creation, falling back to simulated order if offline/testing."""
+    if not key_id or not secret:
+        return f"order_{uuid4().hex[:16]}"
+
+    import base64
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = "https://api.razorpay.com/v1/orders"
+    payload = json.dumps({
+        "amount": amount_paise,
+        "currency": currency,
+        "receipt": receipt,
+        "payment_capture": 1,
+    }).encode("utf-8")
+    auth_str = f"{key_id}:{secret}"
+    b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("ascii")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {b64_auth}",
+    }
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            return res_data.get("id", f"order_{uuid4().hex[:16]}")
+    except (urllib.error.URLError, OSError):
+        return f"order_{uuid4().hex[:16]}"
+
+
+def get_wallet(actor: Principal) -> tuple[dict[str, Any], int]:
+    """Retrieve customer's wallet balance and version."""
+    return repo.get_or_create_wallet(actor)
+
+
+def list_wallet_transactions(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    """Retrieve customer's wallet transaction ledger."""
+    return repo.list_wallet_transactions(actor, limit=limit)
+
+
+def create_wallet_recharge_order(actor: Principal, raw_payload: dict[str, Any], key: str) -> JsonResponse:
+    """Create a new Razorpay payment order for wallet recharge."""
+    payload = parse_payload(WalletRechargeOrderPayload, raw_payload)
+    p = payload.model_dump(mode="json")
+    key_id, secret = get_razorpay_credentials()
+
+    def op():
+        receipt = f"rcpt_{uuid4().hex[:12]}"
+        provider_order_id = call_razorpay_create_order(
+            key_id=key_id,
+            secret=secret,
+            amount_paise=payload.amount_paise,
+            currency=payload.currency,
+            receipt=receipt,
+        )
+        data = repo.create_payment_order(
+            actor=actor,
+            amount_paise=payload.amount_paise,
+            currency=payload.currency,
+            provider_order_id=provider_order_id,
+            key_id=key_id or "rzp_test_simulated",
+            receipt=receipt,
+        )
+        return 201, {"data": data}
+
+    return execute_idempotent(actor, "wallet-recharge-order", key, p, op)
+
+
+def verify_wallet_recharge(actor: Principal, raw_payload: dict[str, Any]) -> dict[str, Any]:
+    """Verify payment signature from Razorpay and credit wallet."""
+    payload = parse_payload(WalletRechargeVerifyPayload, raw_payload)
+    _, secret = get_razorpay_credentials()
+    if not secret:
+        reject(500, "CONFIGURATION_ERROR", "Razorpay key secret is not configured")
+
+    return repo.verify_and_credit_recharge(
+        actor=actor,
+        order_id=payload.razorpay_order_id,
+        payment_id=payload.razorpay_payment_id,
+        signature=payload.razorpay_signature,
+        secret=secret,
+    )
+

@@ -25,9 +25,12 @@ from cow.models import (
     CustomerProfile,
     CustomerVehicle,
     MeterObservation,
+    PaymentOrder,
     Principal,
     ServiceJob,
     ServiceRequest,
+    WalletAccount,
+    WalletTransaction,
 )
 from cow.services import jobs
 from cow.users.contracts import (
@@ -844,3 +847,180 @@ def create_realtime_ticket(actor: Principal, subscriptions: list[str], resume_af
         "expires_at": expires_at.isoformat(),
         "stream_url": stream_url,
     }
+
+
+# ============================================================================
+# Wallet & Payment Order Operations
+# ============================================================================
+
+def format_wallet(w: WalletAccount) -> dict[str, Any]:
+    return {
+        "balance_paise": w.balance_paise,
+        "balance_inr": round(w.balance_paise / 100.0, 2),
+        "currency": w.currency,
+        "version": w.version,
+        "updated_at": w.updated_at.isoformat() if w.updated_at else None,
+    }
+
+
+def format_wallet_transaction(tx: WalletTransaction) -> dict[str, Any]:
+    return {
+        "id": str(tx.id),
+        "transaction_type": tx.transaction_type,
+        "amount_paise": tx.amount_paise,
+        "amount_inr": round(tx.amount_paise / 100.0, 2),
+        "balance_after_paise": tx.balance_after_paise,
+        "balance_after_inr": round(tx.balance_after_paise / 100.0, 2),
+        "reference_id": tx.reference_id,
+        "created_at": tx.created_at.isoformat() if tx.created_at else None,
+    }
+
+
+def get_or_create_wallet(actor: Principal) -> tuple[dict[str, Any], int]:
+    """Retrieve or initialize customer wallet account."""
+    wallet, _ = WalletAccount.objects.get_or_create(
+        customer=actor,
+        defaults={"balance_paise": 0, "currency": "INR", "version": 1},
+    )
+    return format_wallet(wallet), wallet.version
+
+
+def list_wallet_transactions(actor: Principal, limit: int = 50) -> list[dict[str, Any]]:
+    """List recent ledger transactions for customer's wallet."""
+    wallet, _ = WalletAccount.objects.get_or_create(
+        customer=actor,
+        defaults={"balance_paise": 0, "currency": "INR", "version": 1},
+    )
+    txs = WalletTransaction.objects.filter(wallet=wallet).order_by("-created_at")[:limit]
+    return [format_wallet_transaction(tx) for tx in txs]
+
+
+def create_payment_order(
+    actor: Principal,
+    amount_paise: int,
+    currency: str,
+    provider_order_id: str,
+    key_id: str,
+    receipt: str = "",
+) -> dict[str, Any]:
+    """Record an intent/order for payment top-up."""
+    order = PaymentOrder.objects.create(
+        customer=actor,
+        provider="RAZORPAY",
+        provider_order_id=provider_order_id,
+        amount_paise=amount_paise,
+        currency=currency,
+        state="PENDING",
+        receipt=receipt,
+    )
+    audit(
+        actor,
+        order,
+        "PAYMENT_ORDER_CREATED",
+        details={"amount_paise": amount_paise, "provider_order_id": provider_order_id},
+    )
+    return {
+        "order_id": order.provider_order_id,
+        "provider_order_id": order.provider_order_id,
+        "provider": "RAZORPAY",
+        "amount_paise": order.amount_paise,
+        "amount_inr": round(order.amount_paise / 100.0, 2),
+        "currency": order.currency,
+        "key_id": key_id,
+        "state": order.state,
+    }
+
+
+def verify_and_credit_recharge(
+    actor: Principal,
+    order_id: str,
+    payment_id: str,
+    signature: str,
+    secret: str,
+) -> dict[str, Any]:
+    """Verify Razorpay payment signature and idempotently credit wallet."""
+    order = PaymentOrder.objects.filter(provider_order_id=order_id, customer=actor).first()
+    if not order:
+        reject(404, "NOT_FOUND", "Payment order not found")
+
+    import hashlib
+    import hmac
+
+    # Signature verification over order_id|payment_id
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        f"{order_id}|{payment_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected.lower(), signature.lower()):
+        reject(400, "PAYMENT_SIGNATURE_INVALID", "Razorpay payment signature verification failed")
+
+    # Idempotent replay: if already captured with the exact same payment ID, return current state
+    if order.state == "CAPTURED":
+        if order.provider_payment_id == payment_id:
+            wallet, _ = WalletAccount.objects.get_or_create(customer=actor)
+            return {
+                "status": "CAPTURED",
+                "credited_paise": order.amount_paise,
+                "credited_inr": round(order.amount_paise / 100.0, 2),
+                "balance_paise": wallet.balance_paise,
+                "balance_inr": round(wallet.balance_paise / 100.0, 2),
+                "currency": wallet.currency,
+                "version": wallet.version,
+            }
+        reject(409, "PAYMENT_CONFLICT", "Order already captured with a different payment ID")
+
+    if order.state == "FAILED":
+        reject(400, "PAYMENT_ORDER_FAILED", "Payment order is marked as failed")
+
+    # Atomic credit with row-level lock on wallet
+    with transaction.atomic():
+        if PaymentOrder.objects.filter(
+            provider="RAZORPAY", provider_payment_id=payment_id, state="CAPTURED"
+        ).exists():
+            reject(409, "DUPLICATE_PAYMENT", "Payment ID has already been credited")
+
+        wallet, _ = WalletAccount.objects.select_for_update().get_or_create(
+            customer=actor,
+            defaults={"balance_paise": 0, "currency": "INR", "version": 1},
+        )
+        wallet.balance_paise += order.amount_paise
+        wallet.version += 1
+        wallet.save(update_fields=["balance_paise", "version", "updated_at"])
+
+        WalletTransaction.objects.create(
+            wallet=wallet,
+            transaction_type="CREDIT_TOPUP",
+            amount_paise=order.amount_paise,
+            balance_after_paise=wallet.balance_paise,
+            reference_id=payment_id,
+            details={"provider_order_id": order_id, "provider": "RAZORPAY"},
+        )
+
+        order.state = "CAPTURED"
+        order.provider_payment_id = payment_id
+        order.provider_signature = signature
+        order.save(update_fields=["state", "provider_payment_id", "provider_signature", "updated_at"])
+
+        audit(
+            actor,
+            wallet,
+            "WALLET_RECHARGE_CAPTURED",
+            details={
+                "amount_paise": order.amount_paise,
+                "provider_order_id": order_id,
+                "provider_payment_id": payment_id,
+                "balance_after_paise": wallet.balance_paise,
+            },
+        )
+
+    return {
+        "status": "CAPTURED",
+        "credited_paise": order.amount_paise,
+        "credited_inr": round(order.amount_paise / 100.0, 2),
+        "balance_paise": wallet.balance_paise,
+        "balance_inr": round(wallet.balance_paise / 100.0, 2),
+        "currency": wallet.currency,
+        "version": wallet.version,
+    }
+

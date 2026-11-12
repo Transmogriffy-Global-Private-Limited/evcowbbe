@@ -37,6 +37,12 @@ from cow.users.schemas import (
     SupportTicketEnvelope,
     SupportTicketListEnvelope,
     VehicleEnvelope,
+    WalletEnvelope,
+    WalletRechargeOrderEnvelope,
+    WalletRechargeOrderPayload,
+    WalletRechargeVerifyEnvelope,
+    WalletRechargeVerifyPayload,
+    WalletTransactionListEnvelope,
 )
 
 REQUIRED_BODY = Body(...)
@@ -245,6 +251,65 @@ def register_user_feature_routes(router: Router) -> None:
     def create_realtime_ticket(request, payload: RealtimeTicketPayload = REQUIRED_BODY):
         service.ensure_json(request)
         return {"data": service.create_realtime_ticket(request.auth, payload.model_dump())}
+
+    # ========================================================================
+    # Wallet & Razorpay Payment Recharge
+    # ========================================================================
+    @router.get(
+        "/wallet",
+        response=WalletEnvelope,
+        operation_id="app_wallet_get",
+    )
+    def get_wallet(request):
+        data, version = service.get_wallet(request.auth)
+        return service.as_response(200, data, etag=version)
+
+    @router.get(
+        "/wallet/transactions",
+        response=WalletTransactionListEnvelope,
+        operation_id="app_wallet_transactions_list",
+    )
+    def list_wallet_transactions(request, limit: int = 50):
+        return {"data": service.list_wallet_transactions(request.auth, limit=limit)}
+
+    @router.post(
+        "/wallet/recharge/order",
+        response={201: WalletRechargeOrderEnvelope},
+        operation_id="app_wallet_recharge_order",
+    )
+    def create_recharge_order(request, payload: WalletRechargeOrderPayload = REQUIRED_BODY):
+        service.ensure_json(request)
+        key = service.get_idempotency_key(request, required=False)
+        return service.create_wallet_recharge_order(request.auth, payload.model_dump(), key)
+
+    @router.post(
+        "/wallet/payment_order",
+        response={201: WalletRechargeOrderEnvelope},
+        operation_id="app_wallet_payment_order",
+    )
+    def create_payment_order_alias(request, payload: WalletRechargeOrderPayload = REQUIRED_BODY):
+        service.ensure_json(request)
+        key = service.get_idempotency_key(request, required=False)
+        return service.create_wallet_recharge_order(request.auth, payload.model_dump(), key)
+
+    @router.post(
+        "/wallet/recharge/verify",
+        response=WalletRechargeVerifyEnvelope,
+        operation_id="app_wallet_recharge_verify",
+    )
+    def verify_recharge(request, payload: WalletRechargeVerifyPayload = REQUIRED_BODY):
+        service.ensure_json(request)
+        return {"data": service.verify_wallet_recharge(request.auth, payload.model_dump())}
+
+    @router.post(
+        "/wallet/verify_payment",
+        response=WalletRechargeVerifyEnvelope,
+        operation_id="app_wallet_verify_payment",
+    )
+    def verify_payment_alias(request, payload: WalletRechargeVerifyPayload = REQUIRED_BODY):
+        service.ensure_json(request)
+        return {"data": service.verify_wallet_recharge(request.auth, payload.model_dump())}
+
 
 
 def build_router(auth_backend, mount_identity, mount_otp) -> Router:

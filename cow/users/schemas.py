@@ -435,3 +435,85 @@ class RealtimeTicketData(Schema):
 class RealtimeTicketEnvelope(Schema):
     model_config = ConfigDict(extra="forbid")
     data: RealtimeTicketData
+
+
+# ============================================================================
+# Wallet & Payment Recharge Schemas
+# ============================================================================
+
+class WalletAccountData(Schema):
+    model_config = ConfigDict(extra="forbid")
+    balance_paise: int
+    balance_inr: float
+    currency: str = "INR"
+    version: int
+    updated_at: str | None = None
+
+
+class WalletEnvelope(Schema):
+    model_config = ConfigDict(extra="forbid")
+    data: WalletAccountData
+
+
+class WalletTransactionData(Schema):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    transaction_type: str
+    amount_paise: int
+    amount_inr: float
+    balance_after_paise: int
+    balance_after_inr: float
+    reference_id: str = ""
+    created_at: str | None = None
+
+
+class WalletTransactionListEnvelope(Schema):
+    model_config = ConfigDict(extra="forbid")
+    data: list[WalletTransactionData]
+
+
+class WalletRechargeOrderPayload(Schema):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    amount_paise: int = Field(gt=0, le=10000000)
+    currency: str = Field(default="INR", max_length=3)
+
+
+class WalletRechargeOrderData(Schema):
+    model_config = ConfigDict(extra="forbid")
+    order_id: str
+    provider_order_id: str
+    provider: str = "RAZORPAY"
+    amount_paise: int
+    amount_inr: float
+    currency: str = "INR"
+    key_id: str
+    state: str = "PENDING"
+
+
+class WalletRechargeOrderEnvelope(Schema):
+    model_config = ConfigDict(extra="forbid")
+    data: WalletRechargeOrderData
+
+
+class WalletRechargeVerifyPayload(Schema):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    razorpay_order_id: str = Field(min_length=1, max_length=128)
+    razorpay_payment_id: str = Field(min_length=1, max_length=128)
+    razorpay_signature: str = Field(min_length=1, max_length=256)
+
+
+class WalletRechargeVerifyData(Schema):
+    model_config = ConfigDict(extra="forbid")
+    status: str
+    credited_paise: int
+    credited_inr: float
+    balance_paise: int
+    balance_inr: float
+    currency: str = "INR"
+    version: int
+
+
+class WalletRechargeVerifyEnvelope(Schema):
+    model_config = ConfigDict(extra="forbid")
+    data: WalletRechargeVerifyData
+

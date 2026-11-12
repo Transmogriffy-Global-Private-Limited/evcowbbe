@@ -88,6 +88,7 @@ TAG_DESCRIPTIONS = {
     "30 | Admin drivers": "Driver identity and operational facts; approval or dispatchability not inferred.",
     "31 | Driver recruitment": "Driver application and private document submission, review history, and correction workflow.",
     "32 | Admin Driver recruitment": "Private document review, recruitment policy and auditable onboarding; not duty authorization.",
+    "33 | Customer wallet & payments": "Customer wallet balance, recharge order creation, and Razorpay payment verification.",
     "22 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
     "23 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
 }
@@ -98,6 +99,12 @@ KNOWN_SUMMARIES = {
     "health_live": "Check process liveness",
     "health_ready": "Check PostgreSQL readiness",
     "version": "Read logical API version",
+    "app_wallet_get": "Read customer wallet balance",
+    "app_wallet_transactions_list": "List customer wallet transactions",
+    "app_wallet_recharge_order": "Create Razorpay recharge order",
+    "app_wallet_payment_order": "Create payment order (alias)",
+    "app_wallet_recharge_verify": "Verify Razorpay payment and credit wallet",
+    "app_wallet_verify_payment": "Verify payment (alias)",
     "adminFleetVehiclesList": "List fleet vehicles",
     "adminFleetVehiclesCreate": "Register fleet vehicle",
     "adminFleetVehicleGet": "Get fleet vehicle",
@@ -182,6 +189,8 @@ def _tag(path: str) -> str:
         return "09 | Customer service requests"
     if path.startswith("/api/v1/app/jobs"):
         return "10 | Customer jobs"
+    if path.startswith("/api/v1/app/wallet"):
+        return "33 | Customer wallet & payments"
     if path.startswith("/api/v1/admin/jobs"):
         return "11 | Admin jobs & charging"
     if path.startswith("/api/v1/admin/vehicles"):

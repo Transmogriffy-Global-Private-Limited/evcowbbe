@@ -5235,6 +5235,302 @@ x-user-apis-Abhranil:
           '500':
             $ref: '#/components/responses/Internal'
 
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+
     /api/v1/app/vehicles/{vehicle_id}:
       get:
         tags:
@@ -5431,6 +5727,302 @@ x-user-apis-Abhranil:
             $ref: '#/components/responses/FleetValidation'
           '500':
             $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
 
     /api/v1/app/addresses/{address_id}:
       get:
@@ -5681,6 +6273,302 @@ x-user-apis-Abhranil:
             $ref: '#/components/responses/FleetValidation'
           '500':
             $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
 
     /api/v1/app/service-requests/{request_id}:
       get:
@@ -6142,6 +7030,302 @@ x-user-apis-Abhranil:
           '500':
             $ref: '#/components/responses/Internal'
 
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+
     /api/v1/app/support/tickets:
       get:
         tags:
@@ -6215,6 +7399,302 @@ x-user-apis-Abhranil:
             $ref: '#/components/responses/FleetValidation'
           '500':
             $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
 
     /api/v1/app/support/tickets/{ticket_id}:
       get:
@@ -6292,6 +7772,302 @@ x-user-apis-Abhranil:
             $ref: '#/components/responses/FleetValidation'
           '500':
             $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
 
     /api/v1/app/notifications:
       get:
@@ -6463,6 +8239,302 @@ x-user-apis-Abhranil:
           '500':
             $ref: '#/components/responses/Internal'
 
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+
     /api/v1/app/realtime/tickets:
       post:
         tags:
@@ -6510,4 +8582,302 @@ x-user-apis-Abhranil:
             $ref: '#/components/responses/FleetValidation'
           '500':
             $ref: '#/components/responses/Internal'
+    # ==========================================================================
+    # user-apis-Abhranil: Wallet & Razorpay Payment Recharge
+    # ==========================================================================
+    /api/v1/app/wallet:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_get
+        summary: Read customer wallet balance
+        description: Returns the customer's wallet balance (in paise and INR), currency, and version with ETag.
+        security:
+        - BearerAuth: []
+        responses:
+          '200':
+            description: Customer wallet envelope
+            headers:
+              ETag:
+                schema: {type: string}
+                description: Quoted wallet version
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [balance_paise, balance_inr, currency, version]
+                      properties:
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 1}
+                        updated_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/transactions:
+      get:
+        tags:
+        - Customer App
+        operationId: app_wallet_transactions_list
+        summary: List wallet transactions
+        description: Returns the chronological ledger transactions for customer wallet.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 50}
+        responses:
+          '200':
+            description: Wallet transactions envelope
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, transaction_type, amount_paise, amount_inr, balance_after_paise, balance_after_inr]
+                        properties:
+                          id: {type: string, format: uuid}
+                          transaction_type: {type: string, example: 'CREDIT_TOPUP'}
+                          amount_paise: {type: integer, example: 50000}
+                          amount_inr: {type: number, example: 500.0}
+                          balance_after_paise: {type: integer, example: 50000}
+                          balance_after_inr: {type: number, example: 500.0}
+                          reference_id: {type: string, example: 'pay_12345'}
+                          created_at: {type: string, nullable: true}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_order
+        summary: Create Razorpay wallet recharge order
+        description: Creates a Razorpay payment order and pending payment record for wallet top-up.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Recharge order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/payment_order:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_payment_order
+        summary: Create payment order (alias)
+        description: Alias for /api/v1/app/wallet/recharge/order.
+        security:
+        - BearerAuth: []
+        parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string}
+          required: false
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [amount_paise]
+                properties:
+                  amount_paise: {type: integer, minimum: 1, maximum: 10000000, example: 50000}
+                  currency: {type: string, default: 'INR', example: 'INR'}
+        responses:
+          '201':
+            description: Payment order created
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [order_id, provider_order_id, provider, amount_paise, amount_inr, currency, key_id, state]
+                      properties:
+                        order_id: {type: string}
+                        provider_order_id: {type: string}
+                        provider: {type: string, example: 'RAZORPAY'}
+                        amount_paise: {type: integer, example: 50000}
+                        amount_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        key_id: {type: string}
+                        state: {type: string, example: 'PENDING'}
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/recharge/verify:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_recharge_verify
+        summary: Verify Razorpay payment and credit wallet
+        description: Verifies HMAC-SHA256 signature and atomically credits customer wallet balance.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Recharge payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
+    /api/v1/app/wallet/verify_payment:
+      post:
+        tags:
+        - Customer App
+        operationId: app_wallet_verify_payment
+        summary: Verify payment (alias)
+        description: Alias for /api/v1/app/wallet/recharge/verify.
+        security:
+        - BearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+                properties:
+                  razorpay_order_id: {type: string}
+                  razorpay_payment_id: {type: string}
+                  razorpay_signature: {type: string}
+        responses:
+          '200':
+            description: Payment verified and credited
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      type: object
+                      required: [status, credited_paise, credited_inr, balance_paise, balance_inr, currency, version]
+                      properties:
+                        status: {type: string, example: 'CAPTURED'}
+                        credited_paise: {type: integer, example: 50000}
+                        credited_inr: {type: number, example: 500.0}
+                        balance_paise: {type: integer, example: 50000}
+                        balance_inr: {type: number, example: 500.0}
+                        currency: {type: string, example: 'INR'}
+                        version: {type: integer, example: 2}
+          '400':
+            description: Invalid signature or payment failed
+          '401':
+            $ref: '#/components/responses/InvalidCredentials'
+          '404':
+            description: Order not found
+          '409':
+            description: Payment conflict or duplicate payment
+          '415':
+            $ref: '#/components/responses/UnsupportedContentType'
+          '422':
+            $ref: '#/components/responses/FleetValidation'
+          '500':
+            $ref: '#/components/responses/Internal'
+
 
