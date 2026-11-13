@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC_PATH = ROOT / "docs/contracts/auth.openapi.yaml"
+SPEC_PATH = ROOT / "docs/contracts/go_frozen_82.openapi.yaml"
 GO_DEVELOPMENT_ORIGINS = frozenset({
     "http://localhost:5173", "http://localhost:8080", "http://localhost:8081",
     "http://127.0.0.1:5173", "http://127.0.0.1:8080", "http://127.0.0.1:8081",
