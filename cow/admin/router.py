@@ -12,6 +12,7 @@ from cow.admin.commercial import register as register_commercial_routes
 from cow.admin.management import register as register_admin_management
 from cow.admin.driver_applications import register as register_driver_applications
 from cow.admin.driver_operations import register as register_driver_operations
+from cow.admin.schedules import register as register_admin_schedules
 
 
 def build_router(auth_backend, mount_identity, mount_otp) -> Router:
@@ -24,5 +25,6 @@ def build_router(auth_backend, mount_identity, mount_otp) -> Router:
     register_admin_management(router)
     register_driver_applications(router)
     register_driver_operations(router)
+    register_admin_schedules(router)
     mount_otp(router, "admin")
     return router

@@ -150,30 +150,10 @@ def assert_start_admissible(job_id, charger_id, connector_number: int, *,
     charger = Charger.objects.select_for_update().filter(pk=charger_id).first()
     if vehicle is None or charger is None:
         reject(409, "ASSET_NOT_OPERATIONAL", "Assigned physical asset missing")
-    if (not vehicle.active or vehicle.operational_status != "AVAILABLE"
-        or not charger.active or charger.operational_status != "AVAILABLE"):
-        reject(409, "ASSET_NOT_OPERATIONAL", "Assigned asset is unavailable")
-    today = timezone.localdate(timezone=ZoneInfo("Asia/Kolkata"))
-    if (vehicle.inspection_status != "VALID"
-        or vehicle.registration_valid_until is None or vehicle.registration_valid_until < today
-        or vehicle.insurance_valid_until is None or vehicle.insurance_valid_until < today):
-        reject(409, "ASSET_NOT_OPERATIONAL", "Vehicle certificates or inspection not verified")
-    if not charger.hal_identity or not charger.rated_power_w:
-        reject(409, "CHARGER_HAL_IDENTITY_UNKNOWN", "Charger lacks required identity/power")
-    connector = ChargerConnector.objects.select_for_update().filter(
-        charger_id=charger_id, connector_number=connector_number, active=True
-    ).first()
-    if connector is None:
-        reject(409, "CONNECTOR_NOT_OPERATIONAL", "Connector is unregistered or inactive")
-    now = timezone.now()
-    if (_in_maintenance(VehicleMaintenancePeriod, "vehicle_id", vehicle.pk, now)
-        or _in_maintenance(ChargerMaintenancePeriod, "charger_id", charger.pk, now)):
-        reject(409, "ASSET_IN_MAINTENANCE", "Asset is under maintenance")
-    if not VehicleChargerPairing.objects.filter(
-        vehicle_id=vehicle.pk, charger_id=charger.pk, status="ACTIVE",
-        effective_from__lte=now, effective_to__isnull=True,
-    ).exists():
-        reject(409, "ASSET_PAIRING_MISMATCH_BLOCKED", "Effective pairing not proven")
+    assert_duty_assets(vehicle, charger, timezone.now(), connector_number=connector_number)
+    from cow.models import DriverAssetMismatch
+    if DriverAssetMismatch.objects.filter(duty=duty, status="UNRESOLVED").exists():
+        reject(409, "ASSET_MISMATCH_UNRESOLVED", "Reported asset mismatch blocks charging")
     # A duty must not service two concurrent live jobs.
     if ServiceJob.objects.filter(driver_duty_id=duty.pk, state__in=(
         "ASSIGNED", "ACCEPTED", "EN_ROUTE", "ARRIVED", "SERVICE_PREPARING",
@@ -194,3 +174,47 @@ def assert_start_admissible(job_id, charger_id, connector_number: int, *,
     if pending.exists():
         reject(409, "CHARGING_COMMAND_CONFLICT", "Previous charging command unresolved")
     return job
+
+
+def assert_duty_assets(vehicle: ServiceVehicle, charger: Charger, now: datetime, *,
+                       connector_number: int | None = None) -> None:
+    """One current physical eligibility rule for C3 duty and Stage B charging.
+
+    Call inside transaction.atomic(), after the global operational admission
+    gate and after locking the vehicle then charger. This grants no HAL action.
+    """
+    _require_gate()
+    if (not vehicle.active or vehicle.operational_status != "AVAILABLE"
+        or not charger.active or charger.operational_status != "AVAILABLE"):
+        reject(409, "ASSET_NOT_OPERATIONAL", "Assigned asset is unavailable")
+    today = timezone.localdate(timezone=ZoneInfo("Asia/Kolkata"))
+    if (vehicle.inspection_status != "VALID"
+        or vehicle.registration_valid_until is None or vehicle.registration_valid_until < today
+        or vehicle.insurance_valid_until is None or vehicle.insurance_valid_until < today):
+        reject(409, "ASSET_NOT_OPERATIONAL", "Vehicle certificates or inspection not verified")
+    if not charger.hal_identity or not charger.rated_power_w:
+        reject(409, "CHARGER_HAL_IDENTITY_UNKNOWN", "Charger lacks required identity/power")
+    if connector_number is not None:
+        connector = ChargerConnector.objects.select_for_update().filter(
+            charger_id=charger.pk, connector_number=connector_number, active=True
+        ).first()
+        if connector is None:
+            reject(409, "CONNECTOR_NOT_OPERATIONAL", "Connector is unregistered or inactive")
+    if (_in_maintenance(VehicleMaintenancePeriod, "vehicle_id", vehicle.pk, now)
+        or _in_maintenance(ChargerMaintenancePeriod, "charger_id", charger.pk, now)):
+        reject(409, "ASSET_IN_MAINTENANCE", "Asset is under maintenance")
+    if not VehicleChargerPairing.objects.filter(
+        vehicle_id=vehicle.pk, charger_id=charger.pk, status="ACTIVE",
+        effective_from__lte=now, effective_to__isnull=True,
+    ).exists():
+        reject(409, "ASSET_PAIRING_MISMATCH_BLOCKED", "Effective pairing not proven")
+    # A reported physical identity mismatch is an asset-level safety hold,
+    # including AFTER the original duty ends. C3.1 has no approved resolution
+    # operation; a new duty must not silently forget the prior unsafe report.
+    from django.db.models import Q
+    from cow.models import DriverAssetMismatch
+    if DriverAssetMismatch.objects.filter(status="UNRESOLVED").filter(
+        Q(expected_vehicle_id=vehicle.pk) | Q(expected_charger_id=charger.pk)
+    ).exists():
+        reject(409, "ASSET_MISMATCH_UNRESOLVED",
+               "Unreconciled physical asset report blocks admission")

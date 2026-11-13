@@ -394,6 +394,8 @@ class DutySession(Timestamped):
     started_at = models.DateTimeField()
     ended_at = models.DateTimeField(null=True)
     observed_pairing = models.JSONField(default=dict)
+    schedule = models.ForeignKey("DriverSchedule", on_delete=models.PROTECT, null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -411,6 +413,12 @@ class DutySession(Timestamped):
                 condition=Q(ended_at__isnull=True),
                 name="cow_one_active_charger_claim",
             ),
+            models.UniqueConstraint(
+                fields=["schedule"], condition=Q(schedule__isnull=False),
+                name="cow_c3_one_duty_per_schedule",
+            ),
+            models.CheckConstraint(condition=Q(version__gte=1),
+                                   name="cow_c3_duty_version_positive"),
         ]
 
 class PricingPolicy(Timestamped):
@@ -995,3 +1003,99 @@ class CustomerNotificationPreference(Timestamped):
     sms_enabled = models.BooleanField(default=True)
     service_updates = models.BooleanField(default=True)
     promotions = models.BooleanField(default=False)
+
+
+# C3: schedules are planned occurrences; DutySession remains the sole live claim.
+class DriverSchedule(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    driver = models.ForeignKey(DriverProfile, on_delete=models.PROTECT)
+    vehicle = models.ForeignKey(ServiceVehicle, on_delete=models.PROTECT)
+    charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    status = models.CharField(
+        max_length=16, default="PUBLISHED",
+        choices=[(v, v) for v in ("PUBLISHED", "CANCELLED")],
+    )
+    version = models.PositiveIntegerField(default=1)
+    notes = models.CharField(max_length=500, blank=True, default="")
+    created_by = models.ForeignKey(Principal, on_delete=models.PROTECT)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["driver", "starts_at", "ends_at"], name="cow_c3_schedule_driver_idx"),
+            models.Index(fields=["vehicle", "starts_at"], name="cow_c3_schedule_vehicle_idx"),
+            models.Index(fields=["charger", "starts_at"], name="cow_c3_schedule_charger_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(condition=Q(ends_at__gt=F("starts_at")),
+                                   name="cow_c3_schedule_positive_range"),
+            models.CheckConstraint(condition=Q(version__gte=1),
+                                   name="cow_c3_schedule_version_positive"),
+            models.CheckConstraint(condition=Q(status__in=["PUBLISHED", "CANCELLED"]),
+                                   name="cow_c3_schedule_status_valid"),
+        ]
+
+
+class DriverDutyBreak(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    duty = models.ForeignKey(DutySession, on_delete=models.PROTECT)
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    reason = models.CharField(max_length=500)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(ended_at__isnull=True) |
+                                   Q(ended_at__gt=F("started_at")),
+                                   name="cow_c3_break_positive_range"),
+            models.UniqueConstraint(fields=["duty"], condition=Q(ended_at__isnull=True),
+                                    name="cow_c3_one_open_break_per_duty"),
+        ]
+
+
+class DriverDutyEvent(models.Model):
+    """Immutable operational history. See 0015 PostgreSQL DB trigger."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    duty = models.ForeignKey(DutySession, on_delete=models.PROTECT)
+    actor = models.ForeignKey(Principal, on_delete=models.PROTECT)
+    action = models.CharField(max_length=32)
+    from_state = models.CharField(max_length=25)
+    to_state = models.CharField(max_length=25)
+    reason = models.CharField(max_length=500)
+    result_version = models.PositiveIntegerField()
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["duty", "-occurred_at"], name="cow_c3_duty_history_idx")]
+        constraints = [
+            models.UniqueConstraint(fields=["duty", "result_version"],
+                                    name="cow_c3_one_duty_event_version"),
+            models.CheckConstraint(condition=Q(result_version__gte=1),
+                                   name="cow_c3_duty_event_version_pos"),
+        ]
+
+
+class DriverAssetMismatch(models.Model):
+    """Reported observation, not an authorization to alter fleet truth."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    duty = models.ForeignKey(DutySession, on_delete=models.PROTECT)
+    reported_by = models.ForeignKey(Principal, on_delete=models.PROTECT)
+    expected_vehicle = models.ForeignKey(ServiceVehicle, on_delete=models.PROTECT)
+    expected_charger = models.ForeignKey(Charger, on_delete=models.PROTECT)
+    observed_vehicle_id = models.UUIDField()
+    observed_charger_id = models.UUIDField()
+    reason = models.CharField(max_length=500)
+    status = models.CharField(max_length=16, default="UNRESOLVED",
+                              choices=[(v, v) for v in ("UNRESOLVED", "RESOLVED")])
+    reported_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["duty"], condition=Q(status="UNRESOLVED"),
+                                    name="cow_c3_one_open_mismatch"),
+            models.CheckConstraint(condition=Q(status__in=["UNRESOLVED", "RESOLVED"]),
+                                   name="cow_c3_mismatch_status_valid"),
+        ]
+        indexes = [models.Index(fields=["duty", "-reported_at"],
+                                name="cow_c3_mismatch_duty_idx")]
