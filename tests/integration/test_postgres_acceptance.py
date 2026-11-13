@@ -273,5 +273,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0010_commercial_machine_registry",
         "0011_driver_recruitment_c1",
         "0012_driver_operational_c2",
+        "0013_customer_module_0013",
     )
     assert after == before
