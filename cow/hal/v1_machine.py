@@ -16,6 +16,10 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from cow.common.errors import reject
+from cow.hal.v1_mapping_evolution import (
+    UnsupportedMappingEvolution,
+    verify_additive_mapping_change,
+)
 from cow.models import (AuditEvent, Charger, ChargerConnector,
                         HALV1Mapping, HALV1ChargerOperation,
                         HALV1ChargerRuntime, HALV1ConnectorRuntime)
@@ -105,8 +109,18 @@ def prepare_mapping(actor, charger_id):
             reject(409,'HAL_MAPPING_OUTCOME_UNKNOWN','Mapping outcome requires reconciliation')
         if mapping is None:
             mapping=HALV1Mapping(charger=c,scope_id=UUID(scope()))
-        if mapping.state=='SYNCHRONIZED' and mapping.snapshot==snapshot:
-            return {'charger_id':str(c.pk),'state':'SYNCHRONIZED','already_current':True}
+        if mapping.state=='SYNCHRONIZED':
+            # Preserve the last acknowledged Go mapping on unsupported changes.
+            # Go v1 PUT is additive: it cannot remove/rebind existing connector
+            # UUID/number pairs or replace the mapped charger/OCPP identity.
+            try:
+                verify_additive_mapping_change(mapping.snapshot, snapshot)
+            except UnsupportedMappingEvolution as exc:
+                reject(409, exc.code, str(exc))
+            if mapping.ocpp_identity != mapping.snapshot['charger_ocpp_identity']:
+                reject(409,'HAL_MAPPING_BASELINE_INVALID','Last acknowledged HAL identity is inconsistent')
+            if mapping.snapshot==snapshot:
+                return {'charger_id':str(c.pk),'state':'SYNCHRONIZED','already_current':True}
         mapping.ocpp_identity=c.hal_identity
         mapping.snapshot=snapshot
         mapping.state='PENDING'
@@ -301,7 +315,13 @@ def send_operation_once(actor,operation_id):
             # No remote dispatch happened; preserve local cancelability.
             reject(409,'HAL_MAPPING_CHANGED_BEFORE_SEND','Mapping drifted since staging; cancel unsent operation')
         snapshot=op.snapshot
-        current_connector=ChargerConnector.objects.filter(pk=op.connector_id,charger_id=op.charger_id).first() if op.connector_id else None
+        current_connector=(ChargerConnector.objects.select_for_update().filter(
+            pk=op.connector_id,charger_id=op.charger_id).first() if op.connector_id else None)
+        # The logical mapping need not change when a physical gun is disabled.
+        # Still, a staged Admin command MUST NOT operate that now-disabled gun.
+        if current_connector is not None and not current_connector.active:
+            reject(409,'HAL_OPERATION_CONNECTOR_DISABLED',
+                   'Connector became unavailable after operation staging')
         connector_id=str(current_connector.pk) if current_connector else ''
         connector_number=current_connector.connector_number if current_connector else 0
         if (snapshot.get('cms_operation_id')!=str(op.pk) or
