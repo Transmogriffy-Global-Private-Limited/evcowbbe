@@ -17,6 +17,8 @@ def send_operation_once(command_id):
 
     Reconciliation is separate and must not assume a timeout means not executed.
     """
+    if settings.COW_HAL_V1_BASE_URL:
+        return "V1_MIGRATION_BLOCKED"
     if not settings.COW_HAL_BASE_URL or len(settings.COW_HAL_SHARED_SECRET) < 32:
         return "DISCONNECTED"
     with transaction.atomic():

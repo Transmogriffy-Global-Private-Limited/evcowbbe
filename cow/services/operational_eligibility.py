@@ -21,7 +21,7 @@ from django.utils import timezone
 from cow.common.errors import reject
 from cow.models import (
     Charger, ChargerConnector, ChargerMaintenancePeriod, ChargingSession,
-    DriverProfile, DutySession, HALCommand, ServiceJob, ServiceVehicle,
+    DriverProfile, DutySession, HALCommand, HALV1ChargerOperation, HALV1Mapping, ServiceJob, ServiceVehicle,
     VehicleChargerPairing, VehicleMaintenancePeriod,
 )
 
@@ -61,7 +61,8 @@ def _require_gate():
         raise RuntimeError("Operational admission requires transaction.atomic()")
 
 
-def _blocking_activity(*, vehicle_id=None, charger_id=None, include_pairing=False):
+def _blocking_activity(*, vehicle_id=None, charger_id=None, include_pairing=False,
+                       exclude_hal_v1_operation_id=None):
     """Read-only, non-PII reasons. Called under the operational gate."""
     _require_gate()
     blockers = []
@@ -75,7 +76,26 @@ def _blocking_activity(*, vehicle_id=None, charger_id=None, include_pairing=Fals
             blockers.append("ACTIVE_CHARGING_SESSION")
         if HALCommand.objects.filter(charger_id=charger_id, state__in=BUSY_COMMAND_STATES).exists():
             blockers.append("UNRESOLVED_HAL_COMMAND")
+        pending_v1 = HALV1ChargerOperation.objects.filter(
+            charger_id=charger_id,
+            state__in=("PERSISTED", "DELIVERY_ATTEMPTED", "RECEIPT_RECORDED", "RECONCILIATION_REQUIRED"),
+        )
+        if exclude_hal_v1_operation_id is not None:
+            pending_v1 = pending_v1.exclude(pk=exclude_hal_v1_operation_id)
+        if pending_v1.exists():
+            blockers.append("UNRESOLVED_HAL_V1_OPERATION")
     if vehicle_id is not None:
+        paired_chargers = VehicleChargerPairing.objects.filter(
+            vehicle_id=vehicle_id, status="ACTIVE", effective_to__isnull=True,
+        ).values("charger_id")
+        pending_paired_v1 = HALV1ChargerOperation.objects.filter(
+            charger_id__in=paired_chargers,
+            state__in=("PERSISTED", "DELIVERY_ATTEMPTED", "RECEIPT_RECORDED", "RECONCILIATION_REQUIRED"),
+        )
+        if exclude_hal_v1_operation_id is not None:
+            pending_paired_v1 = pending_paired_v1.exclude(pk=exclude_hal_v1_operation_id)
+        if pending_paired_v1.exists():
+            blockers.append("UNRESOLVED_PAIRED_HAL_V1_OPERATION")
         if ChargingSession.objects.filter(
             job__driver_duty__vehicle_id=vehicle_id, state="ACTIVE"
         ).exists():
@@ -95,10 +115,12 @@ def _blocking_activity(*, vehicle_id=None, charger_id=None, include_pairing=Fals
     return blockers
 
 
-def ensure_quiescent(*, vehicle_id=None, charger_id=None, include_pairing=False):
+def ensure_quiescent(*, vehicle_id=None, charger_id=None, include_pairing=False,
+                     exclude_hal_v1_operation_id=None):
     lock_gate()  # Also enforce at the shared service boundary.
     blockers = _blocking_activity(
         vehicle_id=vehicle_id, charger_id=charger_id, include_pairing=include_pairing,
+        exclude_hal_v1_operation_id=exclude_hal_v1_operation_id,
     )
     if blockers:
         reject(409, "ASSET_OPERATION_BLOCKED", ", ".join(blockers))
@@ -218,3 +240,12 @@ def assert_duty_assets(vehicle: ServiceVehicle, charger: Charger, now: datetime,
     ).exists():
         reject(409, "ASSET_MISMATCH_UNRESOLVED",
                "Unreconciled physical asset report blocks admission")
+    # Shared C3 and Stage B start admission refuse unresolved Go HAL commands.
+    if HALV1ChargerOperation.objects.filter(charger=charger, state__in=(
+        "PERSISTED", "DELIVERY_ATTEMPTED", "RECEIPT_RECORDED", "RECONCILIATION_REQUIRED",
+    )).exists():
+        reject(409, "HAL_V1_MACHINE_BUSY", "Unresolved Go HAL machine operation blocks asset admission")
+    if HALV1Mapping.objects.filter(charger=charger, state__in=(
+        "PENDING", "ATTEMPTED", "RECONCILIATION_REQUIRED",
+    )).exists():
+        reject(409, "HAL_V1_MAPPING_UNCERTAIN", "CoW charger mapping synchronization incomplete")

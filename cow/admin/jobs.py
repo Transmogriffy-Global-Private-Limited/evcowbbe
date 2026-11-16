@@ -3,6 +3,7 @@ from uuid import UUID
 from typing import Literal
 
 from django.db import transaction
+from django.conf import settings
 from ninja import Schema
 from pydantic import ConfigDict, Field
 
@@ -43,6 +44,8 @@ def register_job_routes(router):
     @router.post("/jobs/{job_id}/charging/start",response={202:ChargingCommandEnvelope},operation_id="cow_api_start_charging")
     def start_charging(request,job_id:UUID,payload:HALCommandPayload):
         rbac.require(request.auth,"charging.command")
+        if settings.COW_HAL_V1_BASE_URL:
+            reject(409,"LEGACY_HAL_COMMAND_DISABLED","The old HAL command path cannot control the new Go HAL")
         def op():
             with transaction.atomic():
                 admission.fresh_admin(request.auth, "charging.command")

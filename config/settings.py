@@ -63,6 +63,44 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 COW_CORS_ORIGINS = frozenset(x.strip() for x in os.environ.get("COW_CORS_ORIGINS", "").split(",") if x.strip())
 COW_HAL_SHARED_SECRET = os.environ.get("COW_HAL_SHARED_SECRET", "")
 COW_HAL_BASE_URL = os.environ.get("COW_HAL_BASE_URL", "")
+
+# Dedicated CoW Go HAL v1 instance: NEVER reuse the new CMS HAL/database/tokens.
+def _cow_hal_strict_flag(name):
+    value = os.environ.get(name, 'false').lower()
+    if value not in {'true','false'}:
+        raise ValueError('Invalid boolean configuration: ' + name)
+    return value == 'true'
+
+COW_HAL_V1_BASE_URL = os.environ.get('COW_HAL_V1_BASE_URL', '')
+COW_HAL_V1_SCOPE_ID = os.environ.get('COW_HAL_V1_SCOPE_ID', '')
+COW_HAL_V1_CMS_BEARER_TOKEN = os.environ.get('COW_HAL_V1_CMS_BEARER_TOKEN', '')
+COW_HAL_V1_FACT_BEARER_TOKEN = os.environ.get('COW_HAL_V1_FACT_BEARER_TOKEN', '')
+COW_HAL_V1_TRACE_BEARER_TOKEN = os.environ.get('COW_HAL_V1_TRACE_BEARER_TOKEN', '')
+COW_HAL_V1_MAPPING_SYNC_ENABLED = _cow_hal_strict_flag('COW_HAL_V1_MAPPING_SYNC_ENABLED')
+COW_HAL_V1_ADMIN_OPERATIONS_ENABLED = _cow_hal_strict_flag('COW_HAL_V1_ADMIN_OPERATIONS_ENABLED')
+COW_HAL_V1_CONNECTION_STALE_SECONDS = checked_int(os.environ, 'COW_HAL_V1_CONNECTION_STALE_SECONDS', 900, 60, 86400)
+
+# Fail closed before startup if a CoW Go-HAL endpoint is configured without
+# an independently authenticated, stable charging network scope.
+if COW_HAL_V1_BASE_URL:
+    from uuid import UUID as _CowHALUUID
+    try:
+        _cow_hal_scope = _CowHALUUID(COW_HAL_V1_SCOPE_ID)
+        if _cow_hal_scope.int == 0 or str(_cow_hal_scope) != COW_HAL_V1_SCOPE_ID:
+            raise ValueError('noncanonical HAL scope')
+    except (TypeError, ValueError, AttributeError) as _exc:
+        raise ValueError('Dedicated CoW HAL scope must be canonical nonzero UUID') from _exc
+    _cow_hal_secrets = (COW_HAL_V1_CMS_BEARER_TOKEN, COW_HAL_V1_FACT_BEARER_TOKEN)
+    if any(len(secret) < 32 for secret in _cow_hal_secrets) or len(set(_cow_hal_secrets)) != 2:
+        raise ValueError('CoW HAL v1 requires distinct command and fact 32+ character tokens')
+    if COW_HAL_V1_TRACE_BEARER_TOKEN:
+        if len(COW_HAL_V1_TRACE_BEARER_TOKEN) < 32 or COW_HAL_V1_TRACE_BEARER_TOKEN in _cow_hal_secrets:
+            raise ValueError('CoW HAL trace token must be independently strong and distinct')
+        _cow_hal_secrets += (COW_HAL_V1_TRACE_BEARER_TOKEN,)
+    if COW_HAL_SHARED_SECRET and COW_HAL_SHARED_SECRET in _cow_hal_secrets:
+        raise ValueError('CoW HAL v1 cannot reuse the legacy HAL credential')
+if (COW_HAL_V1_MAPPING_SYNC_ENABLED or COW_HAL_V1_ADMIN_OPERATIONS_ENABLED) and not COW_HAL_V1_BASE_URL:
+    raise ValueError('Go HAL operations cannot be enabled without a dedicated CoW HAL endpoint')
 COW_SMTP_HOST = os.environ.get("SMTP_HOST", "")
 COW_SMTP_PORT = checked_int(os.environ, "SMTP_PORT", 587, 1, 65535)
 COW_SMTP_USER = os.environ.get("SMTP_USERNAME", "")

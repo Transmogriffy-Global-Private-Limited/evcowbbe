@@ -19,3 +19,6 @@ pytest-django>=4.9,<5
 pyright>=1.1,<2
 freezegun>=1.5,<2
 jsonschema>=4.22,<5
+
+# HAL v1 immutable cross-language JCS evidence (same digest as Go).
+rfc8785==0.1.4

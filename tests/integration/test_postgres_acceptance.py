@@ -80,6 +80,8 @@ EXPECTED_TRIGGERS = {
     "cow_driver_c2_profile_insert_guard",
     "cow_driver_c2_profile_guard",
     "cow_driver_c2_history_guard",
+    "cow_hal_v1_fact_receipt_protect",
+    "cow_hal_v1_trace_receipt_protect",
 }
 EXPECTED_FUNCTIONS = {
     "cow_zone_identity_guard",
@@ -102,6 +104,8 @@ EXPECTED_FUNCTIONS = {
     "cow_driver_c2_profile_initial_guard",
     "cow_driver_c2_profile_decision_required",
     "cow_driver_c2_history_immutable",
+    "cow_hal_v1_fact_receipt_guard",
+    "cow_hal_v1_trace_receipt_guard",
 }
 EXPECTED_PARTIAL_UNIQUE_INDEXES = {
     "cow_one_active_default_address",
@@ -276,5 +280,6 @@ def test_cow_migration_history_and_replay_are_stable():
         "0013_customer_module_0013",
         "0014_driver_duty_c3",
         "0015_c3_immutable_duty_history",
+        "0016_hal_v1_machine",
     )
     assert after == before

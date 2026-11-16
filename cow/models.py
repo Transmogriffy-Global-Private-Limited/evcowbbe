@@ -1099,3 +1099,90 @@ class DriverAssetMismatch(models.Model):
         ]
         indexes = [models.Index(fields=["duty", "-reported_at"],
                                 name="cow_c3_mismatch_duty_idx")]
+
+# HAL v1 machine integration: independent CoW HAL deployment / registry.
+class HALV1Mapping(Timestamped):
+    charger = models.OneToOneField('cow.Charger', primary_key=True, on_delete=models.PROTECT)
+    scope_id = models.UUIDField()
+    ocpp_identity = models.CharField(max_length=150)
+    snapshot = models.JSONField(default=dict)
+    state = models.CharField(max_length=32, default='PENDING')
+    attempted_at = models.DateTimeField(null=True, blank=True)
+    synchronized_at = models.DateTimeField(null=True, blank=True)
+    failure_code = models.CharField(max_length=64, default='', blank=True)
+    class Meta:
+        indexes = [models.Index(fields=['scope_id', 'state'], name='cow_v1_mapping_scope_idx')]
+        constraints = [models.CheckConstraint(condition=Q(state__in=['PENDING','ATTEMPTED','SYNCHRONIZED','RECONCILIATION_REQUIRED']), name='cow_v1_mapping_state_valid')]
+
+
+class HALV1ChargerOperation(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scope_id = models.UUIDField()
+    charger = models.ForeignKey('cow.Charger', on_delete=models.PROTECT)
+    connector = models.ForeignKey('cow.ChargerConnector', null=True, blank=True, on_delete=models.PROTECT)
+    actor = models.ForeignKey('cow.Principal', on_delete=models.PROTECT)
+    idempotency_key = models.CharField(max_length=128)
+    request_digest = models.CharField(max_length=64)
+    correlation_id = models.UUIDField()
+    trace_id = models.UUIDField()
+    kind = models.CharField(max_length=32)
+    snapshot = models.JSONField(default=dict)
+    state = models.CharField(max_length=32, default='PERSISTED')
+    hal_operation_id = models.UUIDField(null=True, blank=True)
+    attempted_at = models.DateTimeField(null=True, blank=True)
+    outcome_at = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution_ref = models.CharField(max_length=256, default='', blank=True)
+    failure_code = models.CharField(max_length=64, default='', blank=True)
+    provider_state = models.CharField(max_length=32, default='', blank=True)
+    provider_ocpp_result = models.CharField(max_length=80, default='', blank=True)
+    result_summary = models.JSONField(default=dict)
+    class Meta:
+        indexes = [models.Index(fields=['scope_id','state','created_at'], name='cow_v1_op_state_idx')]
+        constraints = [
+            models.UniqueConstraint(fields=['actor','idempotency_key'], name='cow_v1_op_actor_idem'),
+            models.CheckConstraint(condition=Q(state__in=['PERSISTED','DELIVERY_ATTEMPTED','RECEIPT_RECORDED','RECONCILIATION_REQUIRED','REJECTED','CANCELLED_UNSENT','RESOLVED']), name='cow_v1_op_state_valid'),
+        ]
+
+
+class HALV1ChargerRuntime(models.Model):
+    charger = models.OneToOneField('cow.Charger', primary_key=True, on_delete=models.PROTECT)
+    connection_state = models.CharField(max_length=20, default='UNKNOWN')
+    generation = models.BigIntegerField(default=0)
+    sequence = models.BigIntegerField(default=0)
+    observed_at = models.DateTimeField(null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class HALV1ConnectorRuntime(models.Model):
+    connector = models.OneToOneField('cow.ChargerConnector', primary_key=True, on_delete=models.PROTECT)
+    ocpp_status = models.CharField(max_length=40, default='Unknown')
+    sequence = models.BigIntegerField(default=0)
+    observed_at = models.DateTimeField(null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class HALV1FactReceipt(models.Model):
+    fact_id = models.UUIDField(primary_key=True)
+    scope_id = models.UUIDField()
+    charger = models.ForeignKey('cow.Charger', on_delete=models.PROTECT)
+    fact_type = models.CharField(max_length=64)
+    digest = models.CharField(max_length=64)
+    occurred_at = models.DateTimeField()
+    payload = models.JSONField()
+    processing_state = models.CharField(max_length=36, default='PENDING_BUSINESS')
+    received_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        indexes = [models.Index(fields=['scope_id','processing_state','received_at'], name='cow_v1_fact_work_idx')]
+
+
+class HALV1TraceReceipt(models.Model):
+    event_id = models.UUIDField(primary_key=True)
+    scope_id = models.UUIDField()
+    charger = models.ForeignKey('cow.Charger', on_delete=models.PROTECT)
+    digest = models.CharField(max_length=64)
+    event_type = models.CharField(max_length=80)
+    received_at = models.DateTimeField(auto_now_add=True)
+    payload = models.JSONField(default=dict)
+    class Meta:
+        indexes = [models.Index(fields=['charger','-received_at'], name='cow_v1_trace_charger_idx')]

@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from django.db import transaction
+from django.http import HttpResponse
 from ninja import NinjaAPI, Router, Schema
 from ninja.errors import AuthenticationError
 from ninja.errors import ValidationError as NinjaValidationError
@@ -15,6 +16,7 @@ from cow.common.contracts import AckEnvelope
 from cow.common.errors import DomainError, reject
 from cow.admin.fleet import fleet_router
 from cow.hal.ingress import accept_signed_fact
+from cow.hal.v1_ingress import ingest_fact as ingest_hal_v1_fact, ingest_trace as ingest_hal_v1_trace
 from cow.models import (
     Charger,
     HALCommand,
@@ -277,6 +279,21 @@ def verify_email(request,payload:TokenPayload):
 def hal_fact(request):
     return 202,{"data":accept_signed_fact(request.body,request.headers.get("X-HAL-Timestamp",""),
                                            request.headers.get("X-HAL-Signature",""))}
+
+
+# Independent Go HAL v1 service receivers; NOT customer/admin bearer routes.
+@api.post('/v1/internal/hal-v1/facts', auth=None, tags=['HAL Machine'],
+          operation_id='cowHALV1FactIngress', response={204: None})
+def hal_v1_fact_ingress(request):
+    ingest_hal_v1_fact(request)
+    return HttpResponse(status=204)
+
+
+@api.post('/v1/internal/hal-v1/trace-events', auth=None, tags=['HAL Machine'],
+          operation_id='cowHALV1TraceIngress', response={204: None})
+def hal_v1_trace_ingress(request):
+    ingest_hal_v1_trace(request)
+    return HttpResponse(status=204)
 
 
 # Second-stage auth contract: these operations intentionally require real mail transport.
