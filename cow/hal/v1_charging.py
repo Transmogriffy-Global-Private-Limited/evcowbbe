@@ -67,9 +67,9 @@ def _snapshot_mapping(permit, *, lock=False):
     return charger, connector, snapshot
 
 
-def _permit_contract(permit, now):
+def _permit_contract(permit, now, *, expected_state='RESERVED'):
     # This is an internal business-commit contract, NOT a user-supplied assertion.
-    if (permit.state != 'RESERVED' or permit.expires_at <= now or
+    if (permit.state != expected_state or permit.expires_at <= now or
         permit.scope_id != UUID(v1_machine.scope()) or
         permit.owner.plane != 'app' or permit.owner.status != 'ACTIVE' or
         permit.channel not in {'ROAMING','FIXED_QR'} or
@@ -85,6 +85,12 @@ def _permit_contract(permit, now):
         commercial.get('wallet_hold_state') != 'HELD'):
         reject(409,'HAL_CHARGE_COMMERCIAL_NOT_COMMITTED',
                'A verifiable, committed tariff/tax and wallet hold is required')
+    # Roaming starts are always owned by the booking financial authority.
+    # An altered source discriminator must never skip its wallet/buffer proof.
+    if (permit.channel == 'ROAMING' and
+        commercial.get('source') != 'COW_BOOKING_COMMERCIAL_V2'):
+        reject(409,'HAL_CHARGE_ROAMING_SOURCE_INVALID',
+               'Roaming requires the booked charging financial authority')
     if (not isinstance(permit.location_evidence,dict) or
         permit.location_evidence.get('verified') is not True or
         not isinstance(permit.operational_evidence,dict) or
@@ -106,10 +112,15 @@ def _permit_contract(permit, now):
             job_id=permit.job_id).first()
         if (allocation is None or booking is None or
             allocation.booking_id != booking.pk or
+            allocation.state != 'PREPARED' or
             booking.state != 'START_PENDING' or
             booking.snapshot_sha256 != stable_digest(booking.snapshot) or
             commercial.get('booking_digest') != booking.snapshot_sha256 or
             allocation.authorized_session_wh != permit.energy_limit_wh or
+            commercial.get('authorized_session_wh') != permit.energy_limit_wh or
+            commercial.get('mandatory_charging_paise') != booking.minimum_charging_paise or
+            commercial.get('tariff') != booking.snapshot.get('selected_tariff') or
+            commercial.get('tax') != booking.snapshot.get('selected_gst') or
             allocation.budget_gross_paise != commercial.get('budget_gross_paise') or
             allocation.authorized_total_wh != commercial.get('authorized_cumulative_wh') or
             allocation.authorized_prior_wh != commercial.get('previous_completed_wh') or
@@ -317,6 +328,44 @@ def command_view(cmd):
     }
 
 
+def _start_snapshot_matches_authority(cmd, permit):
+    """Fail closed if a persisted START wire payload differs from its authority.
+
+    Only the original staged key set is accepted. Never trust an extra dynamic
+    HAL limit, connector, customer, credential expiry or protocol identity.
+    This pure predicate is separately exercised by source-only tests.
+    """
+    snapshot=cmd.snapshot
+    mapping=cmd.intent.mapping_snapshot
+    if (cmd.kind!='START' or cmd.intent.permit_id!=permit.pk or
+        not isinstance(snapshot,dict) or not isinstance(mapping,dict)):
+        return False
+    identity=mapping.get('charger_ocpp_identity')
+    if not isinstance(identity,str) or not identity:
+        return False
+    expected={
+        'trace_id':str(cmd.trace_id),
+        'cms_command_id':str(cmd.pk),
+        'cms_start_intent_id':str(cmd.intent_id),
+        'cpo_id':v1_machine.scope(),
+        'customer_id':str(permit.owner_id),
+        'cms_charger_id':str(permit.charger_id),
+        'cms_connector_id':str(permit.connector_id),
+        'charger_ocpp_identity':identity,
+        'ocpp_connector_number':permit.connector.connector_number,
+        'credential_expires_at':_strtime(cmd.intent.credential_expires_at),
+        'command_expires_at':_strtime(cmd.intent.command_expires_at),
+        'limit_type':permit.limit_type,
+        'energy_limit_wh':permit.energy_limit_wh,
+        'energy_limit_source':permit.energy_limit_source,
+        'max_duration_seconds':permit.max_duration_seconds,
+        'duration_limit_source':permit.duration_limit_source,
+    }
+    return snapshot.keys()==expected.keys() and all(
+        type(snapshot[key]) is type(value) and snapshot[key]==value
+        for key,value in expected.items())
+
+
 def send_once(command_id):
     """One outbound attempt. Durable attempt flag first, then network OUTSIDE tx."""
     with transaction.atomic():
@@ -330,49 +379,6 @@ def send_once(command_id):
             if not getattr(settings,'COW_HAL_V1_NEW_STARTS_ENABLED',False):
                 reject(409,'HAL_V1_NEW_STARTS_DISABLED','New charging admission disabled')
             permit=cmd.intent.permit
-            if permit.commercial_snapshot.get('source') == 'COW_BOOKING_COMMERCIAL_V2':
-                # A permit may have been staged earlier. Before ANY network attempt,
-                # reconfirm the exact held booking, even if its job still says CHARGING.
-                from django.db.models import Sum
-                from cow.models import CoWBookingCommercialCommitment, CoWBookingChargingAllocation
-                booking = CoWBookingCommercialCommitment.objects.select_for_update().filter(
-                    pk=permit.commercial_snapshot.get('booking_id'),
-                    owner_id=permit.owner_id, job_id=permit.job_id).first()
-                allocation = CoWBookingChargingAllocation.objects.select_for_update().filter(
-                    permit=permit).first()
-                wallet = (booking.wallet.__class__.objects.select_for_update().filter(
-                    pk=booking.wallet_id, customer_id=permit.owner_id).first()
-                    if booking is not None else None)
-                all_held = (CoWBookingCommercialCommitment.objects.filter(wallet=wallet,
-                    state__in=('FUNDED','START_PENDING','IN_SERVICE','CLOSING','RECONCILIATION_REQUIRED'))
-                    .aggregate(total=Sum('reserved_paise'))['total'] or 0) if wallet is not None else 0
-                valid = (booking is not None and allocation is not None and wallet is not None and
-                    booking.state == 'START_PENDING' and
-                    booking.snapshot_sha256 == permit.commercial_snapshot.get('booking_digest') and
-                    allocation.authorized_session_wh == permit.energy_limit_wh and
-                    allocation.state == 'PREPARED' and
-                    wallet.currency == 'INR' and all_held <= wallet.balance_paise and
-                    booking.reserved_paise >= booking.fixed_fees_paise +
-                    booking.minimum_charging_paise + booking.protected_buffer_paise)
-                if not valid:
-                    cmd.state='RECONCILIATION_REQUIRED'
-                    cmd.failure_code='BOOKING_WALLET_OR_STATE_DRIFT_BEFORE_SEND'
-                    cmd.save(update_fields=['state','failure_code','updated_at'])
-                    cmd.intent.state='RECONCILIATION_REQUIRED'
-                    cmd.intent.save(update_fields=['state','updated_at'])
-                    permit.state='RECONCILIATION_REQUIRED'
-                    permit.save(update_fields=['state','updated_at'])
-                    return command_view(cmd)
-            if (permit.commercial_snapshot.get('source') == 'COW_BOOKING_COMMERCIAL_V2' and
-                (permit.job is None or permit.job.state not in {'SERVICE_PREPARING','CHARGING'})):
-                cmd.state='RECONCILIATION_REQUIRED'
-                cmd.failure_code='BOOKING_CLOSED_BEFORE_START_SEND'
-                cmd.save(update_fields=['state','failure_code','updated_at'])
-                cmd.intent.state='RECONCILIATION_REQUIRED'
-                cmd.intent.save(update_fields=['state','updated_at'])
-                permit.state='RECONCILIATION_REQUIRED'
-                permit.save(update_fields=['state','updated_at'])
-                return command_view(cmd)
             if permit.state!='BOUND' or permit.expires_at<=timezone.now():
                 cmd.state='EXPIRED';cmd.failure_code='HAL_PERMIT_NO_LONGER_VALID'
                 cmd.outcome_at=timezone.now()
@@ -383,6 +389,46 @@ def send_once(command_id):
                 if permit.state=='BOUND':
                     permit.state='RECONCILIATION_REQUIRED'
                     permit.save(update_fields=['state','updated_at'])
+                return command_view(cmd)
+            # The command may wait in the durable queue while its commercial,
+            # duty, wallet, and mapping authorities change. The same strict
+            # permit validator used at stage time now runs at the LAST durable
+            # pre-network boundary, with BOUND state expected instead of RESERVED.
+            # Do not reallocate energy or silently rewrite the frozen command.
+            try:
+                _permit_contract(permit,timezone.now(),expected_state='BOUND')
+                if not _start_snapshot_matches_authority(cmd,permit):
+                    reject(409,'HAL_CHARGE_START_SNAPSHOT_DRIFT',
+                           'Frozen START differs from its approved permit')
+                if permit.channel=='ROAMING':
+                    safety.assert_start_admissible(
+                        permit.job_id,permit.charger_id,permit.connector.connector_number,
+                        allow_followup=(permit.commercial_snapshot.get('source') ==
+                                        'COW_BOOKING_COMMERCIAL_V2'))
+                if (permit.commercial_snapshot.get('source') == 'COW_BOOKING_COMMERCIAL_V2' and
+                    not getattr(settings,'COW_BOOKING_COMMERCIAL_START_ENABLED',False)):
+                    reject(503,'BOOKING_CHARGING_STARTS_DISABLED',
+                           'Commercial booking new starts disabled')
+            except DomainError:
+                # Persistent uncertainty requires manual reconciliation, not
+                # a later automatic retry after a changed financial authority.
+                cmd.state='RECONCILIATION_REQUIRED'
+                cmd.failure_code='HAL_CHARGE_START_AUTHORITY_DRIFT_BEFORE_SEND'
+                cmd.save(update_fields=['state','failure_code','updated_at'])
+                cmd.intent.state='RECONCILIATION_REQUIRED'
+                cmd.intent.save(update_fields=['state','updated_at'])
+                permit.state='RECONCILIATION_REQUIRED'
+                permit.save(update_fields=['state','updated_at'])
+                return command_view(cmd)
+            if (permit.commercial_snapshot.get('source') == 'COW_BOOKING_COMMERCIAL_V2' and
+                (permit.job is None or permit.job.state not in {'SERVICE_PREPARING','CHARGING'})):
+                cmd.state='RECONCILIATION_REQUIRED'
+                cmd.failure_code='BOOKING_CLOSED_BEFORE_START_SEND'
+                cmd.save(update_fields=['state','failure_code','updated_at'])
+                cmd.intent.state='RECONCILIATION_REQUIRED'
+                cmd.intent.save(update_fields=['state','updated_at'])
+                permit.state='RECONCILIATION_REQUIRED'
+                permit.save(update_fields=['state','updated_at'])
                 return command_view(cmd)
             try:
                 _snapshot_mapping(permit,lock=True)
@@ -424,6 +470,11 @@ def send_once(command_id):
         if cmd.kind=='START':
             try:
                 frozen['id_tag']=_cipher().decrypt(cmd.intent.credential_ciphertext.encode()).decode('ascii')
+                if not hmac.compare_digest(
+                    hashlib.sha256(frozen['id_tag'].encode('ascii')).hexdigest(),
+                    cmd.intent.credential_sha256):
+                    reject(409,'HAL_CHARGE_CREDENTIAL_DIGEST_DRIFT',
+                           'Staged charging credential differs from approval')
             except (InvalidToken,UnicodeError,ValueError):
                 reject(409,'HAL_CHARGE_CREDENTIAL_UNREADABLE',
                        'Stored charging credential cannot be recovered; no send attempted')
