@@ -1,9 +1,9 @@
 """Independent authenticated Go HAL v1 fact and diagnostic trace receivers.
 
 Durable immutable receipts are the authority for later projection/replay. This
-slice projects only charger/connector operational observations; transaction
-and command facts remain durably PENDING_BUSINESS for future ChargingIntent
-materialization. No billing, wallet, job or physical command is inferred here.
+slice verifies and stores immutable Go facts and delegates charging projections
+to the CoW-owned v1 charging machine. Money remains upstream-owned and this
+receiver does not infer settlement or command effects from diagnostics.
 """
 from __future__ import annotations
 
@@ -93,16 +93,68 @@ def _verify(envelope):
     return digest
 
 
-def _mapping(payload):
-    """Require exact Go fact ownership and *current* CoW inventory parity."""
-    from cow.hal.v1_machine import mapping_payload, scope
+def _mapping(payload, fact_type=None):
+    """Resolve scope from immutable CoW command/intent and frozen charger identity.
+
+    Operational status must match current mapping. For transaction or command
+    evidence, an already-persisted frozen mapping can establish historical
+    ownership after authorized inventory changes; it never authorizes a new
+    remote command or lets a foreign fact choose another customer's session.
+    """
+    from cow.hal.v1_machine import scope
+    from cow.models import HALV1ChargingCommand, HALV1ChargingIntent
     scope_id=scope()
-    if _uuid(payload.get('cpo_id'),'cpo_id')!=scope_id:
-        reject(403,'HAL_V1_FOREIGN_SCOPE','Fact belongs to another HAL scope')
-    charger_id=_uuid(payload.get('cms_charger_id'),'cms_charger_id')
     identity=payload.get('charger_ocpp_identity')
     if not isinstance(identity,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,150}',identity):
         reject(422,'HAL_V1_CHARGER_ID_MISSING','Fact lacks exact OCPP identity')
+    if 'cpo_id' in payload and _uuid(payload['cpo_id'],'cpo_id')!=scope_id:
+        reject(403,'HAL_V1_FOREIGN_SCOPE','Fact belongs to another HAL scope')
+
+    is_charging=fact_type in {'command.updated','transaction.started',
+                             'transaction.meter','transaction.soc','transaction.completed'}
+    frozen=None
+    if fact_type=='command.updated':
+        command_id=_uuid(payload.get('cms_command_id'),'cms_command_id')
+        cmd=HALV1ChargingCommand.objects.select_related('intent__permit').filter(
+            pk=command_id,intent__permit__scope_id=scope_id).first()
+        if not cmd:
+            reject(422,'HAL_V1_COMMAND_NOT_OWNED','Command fact lacks an owned CoW command')
+        charger_id=str(cmd.intent.permit.charger_id)
+        frozen=cmd.intent.mapping_snapshot
+        if (payload.get('kind')!=cmd.kind or
+            payload.get('ocpp_connector_number')!=cmd.snapshot.get('ocpp_connector_number') or
+            payload.get('charger_ocpp_identity')!=cmd.snapshot.get('charger_ocpp_identity')):
+            reject(422,'HAL_V1_COMMAND_FACT_MISMATCH','Command kind or connector mismatch')
+    else:
+        charger_id=_uuid(payload.get('cms_charger_id'),'cms_charger_id')
+        if is_charging:
+            intent_id=_uuid(payload.get('cms_start_intent_id'),'cms_start_intent_id')
+            intent=HALV1ChargingIntent.objects.select_related('permit').filter(
+                pk=intent_id,permit__scope_id=scope_id,permit__charger_id=charger_id).first()
+            if not intent:
+                reject(422,'HAL_V1_INTENT_NOT_OWNED','Fact has no owned start-intent correlation')
+            frozen=intent.mapping_snapshot
+            if payload.get('cms_connector_id')!=str(intent.permit.connector_id):
+                reject(422,'HAL_V1_CONNECTOR_NOT_OWNED','Fact connector does not match intent')
+
+    if is_charging:
+        if (not isinstance(frozen,dict) or frozen.get('charger_ocpp_identity')!=identity or
+            frozen.get('cms_charger_id')!=charger_id or frozen.get('cpo_id')!=scope_id or
+            not any(isinstance(row,dict) and
+                    row.get('cms_connector_id')==(
+                        str(cmd.intent.permit.connector_id) if fact_type=='command.updated' else
+                        str(intent.permit.connector_id)) and
+                    row.get('ocpp_connector_number')==payload.get('ocpp_connector_number') and
+                    type(row.get('ocpp_connector_number')) is int and row['ocpp_connector_number']>0
+                    for row in frozen.get('connectors',[]))):
+            reject(409,'HAL_V1_FROZEN_MAPPING_MISMATCH','Fact cannot be tied to the approved frozen mapping')
+        m=HALV1Mapping.objects.select_related('charger').filter(
+            scope_id=scope_id,charger_id=charger_id).first()
+        if m is None:
+            reject(422,'HAL_V1_CHARGER_NOT_OWNED','No durable charger ownership mapping')
+        # Do not require live parity for a previously authorized physical transaction.
+        return m
+
     m=HALV1Mapping.objects.select_related('charger').filter(
         scope_id=scope_id,state='SYNCHRONIZED',charger_id=charger_id,
         ocpp_identity=identity).first()
@@ -135,7 +187,7 @@ def _trace_mapping(identity):
     return m
 
 
-def _project(fact_type,payload,mapping):
+def _project(fact_type,payload,mapping,occurred_at,fact_id):
     if fact_type=='charger.connection.updated':
         state=payload.get('connection_state')
         sequence=payload.get('connection_sequence')
@@ -163,8 +215,8 @@ def _project(fact_type,payload,mapping):
             row.ocpp_status=state;row.sequence=sequence;row.observed_at=observed
             row.save()
         return 'APPLIED'
-    # Store but do not interpret these as charging session or financial truth.
-    return 'PENDING_BUSINESS'
+    from cow.hal.v1_charging import apply_fact
+    return apply_fact(fact_type,payload,mapping,occurred_at,fact_id)
 
 
 def ingest_fact(request):
@@ -188,12 +240,13 @@ def ingest_fact(request):
             if prior.digest!=digest:
                 reject(409,'HAL_V1_FACT_ID_REUSE','Fact ID reused with changed content')
             return
-        mapping=_mapping(e['payload'])
-        state=_project(e['fact_type'],e['payload'],mapping)
+        mapping=_mapping(e['payload'],e['fact_type'])
+        state=_project(e['fact_type'],e['payload'],mapping,at,fact_id)
+        from cow.hal.v1_charging import seal_sensitive_payload
         HALV1FactReceipt.objects.create(
             fact_id=UUID(fact_id),scope_id=mapping.scope_id,charger=mapping.charger,
             fact_type=e['fact_type'],digest=digest,occurred_at=at,
-            payload=e['payload'],processing_state=state)
+            payload=seal_sensitive_payload(e['fact_type'],e['payload']),processing_state=state)
 
 
 def ingest_trace(request):

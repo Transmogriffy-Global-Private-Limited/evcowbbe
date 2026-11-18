@@ -846,7 +846,18 @@ def create_realtime_ticket(actor: Principal, subscriptions: list[str], resume_af
 # ============================================================================
 
 def format_wallet(w: WalletAccount) -> dict[str, Any]:
+    # Posted money stays unchanged until the job's single final debit.
+    # Pending booking funds are nonetheless unavailable to other spending.
+    from django.db import transaction
+    from cow.services import wallet_authority
+    with transaction.atomic():
+        w = wallet_authority.locked_wallet(w.pk)
+        held = wallet_authority.holds_locked(w)
     return {
+        "reserved_paise": held,
+        "reserved_inr": format_paise_to_inr_str(held),
+        "available_paise": w.balance_paise - held,
+        "available_inr": format_paise_to_inr_str(w.balance_paise - held),
         "balance_paise": w.balance_paise,
         "balance_inr": format_paise_to_inr_str(w.balance_paise),
         "currency": "INR",
@@ -1329,19 +1340,12 @@ def verify_and_credit_recharge(
             customer=actor,
             defaults={"balance_paise": 0, "currency": "INR", "version": 1},
         )
-        wallet.balance_paise += order.amount_paise
-        wallet.version += 1
-        wallet.save(update_fields=["balance_paise", "version", "updated_at"])
-
-        # Append immutable ledger transaction
-        WalletTransaction.objects.create(
-            wallet=wallet,
-            transaction_type="CREDIT_TOPUP",
-            amount_paise=order.amount_paise,
-            balance_after_paise=wallet.balance_paise,
-            reference_id=payment_id,
-            details=safe_evidence,
-        )
+        # Universal V3 wallet authority: verified capture, unique operation,
+        # reservation-aware and exactly-once ledger write in the same transaction.
+        from cow.services.wallet_authority import credit_captured_topup
+        credit_captured_topup(wallet, order.amount_paise,
+                              order.provider_order_id, payment_id, safe_evidence)
+        wallet.refresh_from_db(fields=['balance_paise','version','updated_at'])
 
         # Transition order to CAPTURED
         order.state = "CAPTURED"

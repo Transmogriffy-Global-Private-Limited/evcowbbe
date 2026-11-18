@@ -1186,3 +1186,315 @@ class HALV1TraceReceipt(models.Model):
     payload = models.JSONField(default=dict)
     class Meta:
         indexes = [models.Index(fields=['charger','-received_at'], name='cow_v1_trace_charger_idx')]
+
+
+# HAL v1 charging projection. This is separate from legacy HALCommand/ChargingSession.
+# A committed commercial permit is required; its issuance is NOT a user API.
+class HALV1ChargingPermit(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scope_id = models.UUIDField()
+    owner = models.ForeignKey('cow.Principal', on_delete=models.PROTECT)
+    channel = models.CharField(max_length=12, choices=[(v, v) for v in ('ROAMING', 'FIXED_QR')])
+    job = models.ForeignKey('cow.ServiceJob', null=True, blank=True, on_delete=models.PROTECT)
+    charger = models.ForeignKey('cow.Charger', on_delete=models.PROTECT)
+    connector = models.ForeignKey('cow.ChargerConnector', on_delete=models.PROTECT)
+    wallet_hold_reference = models.CharField(max_length=160, unique=True)
+    commercial_snapshot = models.JSONField()
+    location_evidence = models.JSONField()
+    operational_evidence = models.JSONField()
+    limit_type = models.CharField(max_length=8)
+    energy_limit_wh = models.BigIntegerField(default=0)
+    energy_limit_source = models.CharField(max_length=24, default='NONE')
+    max_duration_seconds = models.BigIntegerField(default=0)
+    duration_limit_source = models.CharField(max_length=24, default='NONE')
+    expires_at = models.DateTimeField()
+    state = models.CharField(max_length=32, default='RESERVED')
+    class Meta:
+        indexes = [models.Index(fields=['scope_id','state'], name='cow_v1_permit_scope_idx')]
+        constraints = [models.CheckConstraint(condition=Q(state__in=['RESERVED','BOUND','SETTLEMENT_PENDING','RELEASED','SETTLED','RECONCILIATION_REQUIRED']), name='cow_v1_permit_state_valid')]
+
+
+class HALV1ChargingIntent(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    permit = models.OneToOneField('cow.HALV1ChargingPermit', on_delete=models.PROTECT)
+    idempotency_key = models.CharField(max_length=128)
+    state = models.CharField(max_length=32, default='PERSISTED')
+    credential_ciphertext = models.TextField()
+    credential_sha256 = models.CharField(max_length=64)
+    credential_expires_at = models.DateTimeField()
+    command_expires_at = models.DateTimeField()
+    mapping_snapshot = models.JSONField()
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(state__in=['PERSISTED','DELIVERY_ATTEMPTED','ACCEPTED_FOR_DELIVERY','PROTOCOL_ACKNOWLEDGED','ACTUALLY_STARTED','REJECTED','EXPIRED','RECONCILIATION_REQUIRED']), name='cow_v1_intent_state_valid')]
+
+
+class HALV1ChargingSession(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    intent = models.OneToOneField('cow.HALV1ChargingIntent', on_delete=models.PROTECT)
+    charger = models.ForeignKey('cow.Charger', on_delete=models.PROTECT)
+    connector = models.ForeignKey('cow.ChargerConnector', on_delete=models.PROTECT)
+    hal_transaction_id = models.UUIDField(unique=True)
+    ocpp_transaction_id = models.BigIntegerField()
+    state = models.CharField(max_length=32, default='ACTIVE')
+    started_at = models.DateTimeField()
+    last_meter_wh = models.BigIntegerField()
+    meter_start_wh = models.BigIntegerField()
+    meter_end_wh = models.BigIntegerField(null=True, blank=True)
+    meter_sequence = models.BigIntegerField(default=0)
+    meter_observed_at = models.DateTimeField(null=True, blank=True)
+    latest_soc_percent = models.CharField(max_length=8, blank=True, default='')
+    soc_sequence = models.BigIntegerField(default=0)
+    soc_observed_at = models.DateTimeField(null=True, blank=True)
+    stopped_at = models.DateTimeField(null=True, blank=True)
+    stop_reason = models.CharField(max_length=100, blank=True, default='')
+    completion_fact_id = models.UUIDField(null=True, blank=True, unique=True)
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(state__in=['ACTIVE','PHYSICALLY_COMPLETED','RECONCILIATION_REQUIRED','SETTLED']), name='cow_v1_session_state_valid'),
+            models.UniqueConstraint(fields=['connector'],condition=Q(state__in=['ACTIVE','RECONCILIATION_REQUIRED']),name='cow_v1_connector_live_guard')]
+
+
+class HALV1ChargingCommand(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    intent = models.ForeignKey('cow.HALV1ChargingIntent', on_delete=models.PROTECT)
+    session = models.ForeignKey('cow.HALV1ChargingSession', on_delete=models.PROTECT, null=True, blank=True)
+    kind = models.CharField(max_length=5, choices=[('START','START'),('STOP','STOP')])
+    idempotency_key = models.CharField(max_length=128)
+    state = models.CharField(max_length=32, default='PERSISTED')
+    snapshot = models.JSONField()
+    trace_id = models.UUIDField(default=uuid.uuid4)
+    correlation_id = models.UUIDField(default=uuid.uuid4)
+    hal_command_id = models.UUIDField(null=True, blank=True)
+    provider_state = models.CharField(max_length=32, blank=True, default='')
+    attempted_at = models.DateTimeField(null=True, blank=True)
+    outcome_at = models.DateTimeField(null=True, blank=True)
+    failure_code = models.CharField(max_length=64, blank=True, default='')
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['intent','kind'], name='cow_v1_intent_cmd_kind_unique'),
+            models.CheckConstraint(condition=Q(state__in=['PERSISTED','DELIVERY_ATTEMPTED','ACK_RECORDED','PROTOCOL_ACKNOWLEDGED','MATERIALIZED','REJECTED','EXPIRED','RECONCILIATION_REQUIRED']), name='cow_v1_charge_cmd_state_valid'),
+        ]
+        indexes = [models.Index(fields=['state','created_at'], name='cow_v1_charge_cmd_queue_idx')]
+
+# CoW booking-commercial V2: a single job guarantee and many physical starts.
+# All wallet holds are durable; they do not mutate posted wallet balance.
+class CoWMinimumChargingSchedule(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy = models.OneToOneField('cow.PricingPolicy', on_delete=models.PROTECT,
+                                  related_name='cow_minimum_charging')
+    inside_slabs = models.JSONField()
+    outside_slabs = models.JSONField(null=True, blank=True)
+    schedule_sha256 = models.CharField(max_length=64)
+    authorized_by = models.ForeignKey('cow.Principal', on_delete=models.PROTECT)
+    authorization_ref = models.CharField(max_length=200)
+    class Meta:
+        constraints = [models.CheckConstraint(condition=~Q(schedule_sha256=''),
+                                              name='cow_min_schedule_digest_present')]
+
+
+class CoWBookingCommercialCommitment(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.OneToOneField('cow.ServiceJob', on_delete=models.PROTECT,
+                               related_name='commercial_commitment')
+    owner = models.ForeignKey('cow.Principal', on_delete=models.PROTECT)
+    wallet = models.ForeignKey('cow.WalletAccount', on_delete=models.PROTECT,
+                               related_name='cow_booking_commitments')
+    booking_key = models.CharField(max_length=128)
+    request_sha256 = models.CharField(max_length=64)
+    snapshot = models.JSONField()
+    snapshot_sha256 = models.CharField(max_length=64)
+    fixed_fees_paise = models.PositiveBigIntegerField()
+    minimum_charging_paise = models.PositiveBigIntegerField()
+    protected_buffer_paise = models.PositiveBigIntegerField()
+    reserved_paise = models.PositiveBigIntegerField()
+    approved_distance_m = models.PositiveBigIntegerField()
+    currency = models.CharField(max_length=3, default='INR')
+    state = models.CharField(max_length=28, default='FUNDED')
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['owner','booking_key'],
+                                    name='cow_book_key_per_owner'),
+            models.CheckConstraint(condition=Q(state__in=[
+                'FUNDED','START_PENDING','IN_SERVICE','CLOSING','RECONCILIATION_REQUIRED',
+                'SETTLED','CANCELLED']), name='cow_book_commercial_state'),
+            models.CheckConstraint(condition=Q(reserved_paise__gte=0),
+                                   name='cow_book_reserve_nonnegative'),
+        ]
+        indexes = [models.Index(fields=['wallet','state'], name='cow_book_wallet_state_idx')]
+
+
+class CoWBookingChargingAllocation(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.ForeignKey('cow.CoWBookingCommercialCommitment',
+        on_delete=models.PROTECT, related_name='allocations')
+    permit = models.OneToOneField('cow.HALV1ChargingPermit', on_delete=models.PROTECT,
+        related_name='cow_booking_allocation')
+    start_key = models.CharField(max_length=128)
+    start_sha256 = models.CharField(max_length=64)
+    authorized_prior_wh = models.PositiveBigIntegerField()
+    authorized_session_wh = models.PositiveBigIntegerField()
+    authorized_total_wh = models.PositiveBigIntegerField()
+    budget_gross_paise = models.PositiveBigIntegerField()
+    proof_sha256 = models.CharField(max_length=64)
+    state = models.CharField(max_length=22, default='PREPARED')
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['booking','start_key'], name='cow_book_start_key_once'),
+            models.CheckConstraint(condition=Q(authorized_session_wh__gt=0),
+                                   name='cow_book_session_positive'),
+            models.CheckConstraint(condition=Q(state__in=[
+                'PREPARED','STARTED','COMPLETED','CANCELLED_UNSENT','RECONCILIATION_REQUIRED']),
+                                   name='cow_book_allocation_state'),
+        ]
+
+
+class CoWBookingFinancialSettlement(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.OneToOneField('cow.CoWBookingCommercialCommitment',
+        on_delete=models.PROTECT, related_name='financial_settlement')
+    final_gross_paise = models.PositiveBigIntegerField()
+    fixed_fees_paise = models.PositiveBigIntegerField()
+    charging_gross_paise = models.PositiveBigIntegerField()
+    minimum_adjustment_paise = models.PositiveBigIntegerField()
+    delivered_wh = models.PositiveBigIntegerField()
+    final_snapshot = models.JSONField()
+    final_sha256 = models.CharField(max_length=64)
+    wallet_transaction = models.OneToOneField('cow.WalletTransaction',
+        on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cow_booking_settlement')
+    state = models.CharField(max_length=30, default='POSTED')
+    reason = models.CharField(max_length=100, blank=True, default='')
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(state__in=[
+            'POSTED','RECONCILIATION_REQUIRED']), name='cow_book_settlement_state')]
+
+
+# CoW V3 financial authority and maps-independent operations.
+# Historical migrations remain immutable; 0019 owns these tables.
+class CoWWalletOperation(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey('cow.WalletAccount', on_delete=models.PROTECT,
+                               related_name='cow_wallet_operations')
+    operation_key = models.CharField(max_length=128)
+    kind = models.CharField(max_length=32)
+    amount_paise = models.PositiveBigIntegerField()
+    request_sha256 = models.CharField(max_length=64)
+    wallet_transaction = models.OneToOneField('cow.WalletTransaction',
+        on_delete=models.PROTECT, related_name='cow_authorized_operation')
+    state = models.CharField(max_length=16, default='POSTED')
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['wallet','operation_key'],name='cow_wallet_op_key_once'),
+            models.CheckConstraint(condition=Q(amount_paise__gt=0),name='cow_wallet_op_positive'),
+            models.CheckConstraint(condition=Q(state='POSTED'),name='cow_wallet_op_posted'),
+        ]
+
+
+class CoWLocationObservation(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey('cow.ServiceJob', on_delete=models.PROTECT,
+                             related_name='cow_location_observations')
+    actor = models.ForeignKey('cow.Principal', on_delete=models.PROTECT)
+    client_event_id = models.UUIDField()
+    sequence = models.PositiveBigIntegerField()
+    latitude = models.DecimalField(max_digits=10, decimal_places=7)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7)
+    accuracy_m = models.PositiveIntegerField()
+    observed_at = models.DateTimeField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    payload_sha256 = models.CharField(max_length=64)
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['job','actor','client_event_id'],name='cow_loc_event_unique'),
+            models.UniqueConstraint(fields=['job','actor','sequence'],name='cow_loc_sequence_unique'),
+            models.CheckConstraint(condition=Q(latitude__gte=-90)&Q(latitude__lte=90),name='cow_loc_lat_valid'),
+            models.CheckConstraint(condition=Q(longitude__gte=-180)&Q(longitude__lte=180),name='cow_loc_lon_valid'),
+            models.CheckConstraint(condition=Q(accuracy_m__gt=0)&Q(accuracy_m__lte=200),name='cow_loc_accuracy_valid'),
+            models.CheckConstraint(condition=Q(sequence__gt=0),name='cow_loc_sequence_positive'),
+        ]
+        indexes=[models.Index(fields=['job','actor','-sequence'],name='cow_loc_job_actor_seq_idx')]
+
+
+class CoWBookingPreviewTicket(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey('cow.Principal', on_delete=models.PROTECT)
+    request = models.ForeignKey('cow.ServiceRequest', on_delete=models.PROTECT)
+    zone = models.ForeignKey('cow.ServiceZone', on_delete=models.PROTECT)
+    token_sha256 = models.CharField(max_length=64, unique=True)
+    proof_snapshot = models.JSONField()
+    summary_sha256 = models.CharField(max_length=64)
+    acceptance_digest = models.CharField(max_length=64)
+    state = models.CharField(max_length=16,default='ISSUED')
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True,blank=True)
+    class Meta:
+        constraints=[models.CheckConstraint(condition=Q(state__in=['ISSUED','CONSUMED']),
+                                            name='cow_preview_token_state')]
+
+
+class CoWHandoverTicket(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.ForeignKey('cow.CoWBookingCommercialCommitment',on_delete=models.PROTECT,
+                                related_name='cow_handover_tickets')
+    owner = models.ForeignKey('cow.Principal',on_delete=models.PROTECT,
+                              related_name='cow_handover_owner')
+    driver = models.ForeignKey('cow.Principal',on_delete=models.PROTECT,
+                               related_name='cow_handover_driver')
+    duty = models.ForeignKey('cow.DutySession',on_delete=models.PROTECT)
+    issue_key = models.CharField(max_length=128)
+    otp_digest = models.CharField(max_length=64)
+    connector = models.ForeignKey('cow.ChargerConnector',null=True,blank=True,on_delete=models.PROTECT)
+    consent_token_sha256 = models.CharField(max_length=64,blank=True,default='')
+    state = models.CharField(max_length=24,default='ISSUED')
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    verified_at = models.DateTimeField(null=True,blank=True)
+    arrival_ref = models.CharField(max_length=160,blank=True,default='')
+    consent_ref = models.CharField(max_length=160,blank=True,default='')
+    class Meta:
+        constraints=[
+            models.UniqueConstraint(fields=['booking','issue_key'],name='cow_handover_issue_once'),
+            models.CheckConstraint(condition=Q(state__in=['ISSUED','DRIVER_VERIFIED','CONSENT_READY','CONSUMED','EXPIRED']),name='cow_handover_state_valid'),
+        ]
+        indexes=[models.Index(fields=['booking','state'],name='cow_handover_booking_idx')]
+
+
+class CoWCompletionReview(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.OneToOneField('cow.CoWBookingCommercialCommitment',on_delete=models.PROTECT,
+                                   related_name='cow_completion_review')
+    driver = models.ForeignKey('cow.Principal',on_delete=models.PROTECT,
+                               related_name='cow_driver_closures')
+    driver_ref = models.CharField(max_length=160)
+    state = models.CharField(max_length=24,default='DRIVER_PROPOSED')
+    reviewed_by = models.ForeignKey('cow.Principal',null=True,blank=True,on_delete=models.PROTECT,
+                                    related_name='cow_reviewed_closures')
+    review_ref = models.CharField(max_length=160,blank=True,default='')
+    review_reason = models.CharField(max_length=500,blank=True,default='')
+    class Meta:
+        constraints=[models.CheckConstraint(condition=Q(state__in=['DRIVER_PROPOSED','APPROVED','REJECTED']),
+                                            name='cow_completion_review_state')]
+
+
+class CoWWalletRefund(Timestamped):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    settlement = models.ForeignKey('cow.CoWBookingFinancialSettlement',on_delete=models.PROTECT,
+                                  related_name='cow_wallet_refunds')
+    amount_paise = models.PositiveBigIntegerField()
+    request_key = models.CharField(max_length=128)
+    reason = models.CharField(max_length=500)
+    evidence_ref = models.CharField(max_length=160)
+    requested_by = models.ForeignKey('cow.Principal',on_delete=models.PROTECT,
+                                     related_name='cow_requested_refunds')
+    approved_by = models.ForeignKey('cow.Principal',null=True,blank=True,on_delete=models.PROTECT,
+                                    related_name='cow_approved_refunds')
+    approval_ref = models.CharField(max_length=160,blank=True,default='')
+    state = models.CharField(max_length=16,default='REQUESTED')
+    wallet_transaction = models.OneToOneField('cow.WalletTransaction',null=True,blank=True,
+                                              on_delete=models.PROTECT)
+    class Meta:
+        constraints=[
+            models.UniqueConstraint(fields=['settlement','request_key'],name='cow_wallet_refund_key'),
+            models.CheckConstraint(condition=Q(amount_paise__gt=0),name='cow_wallet_refund_positive'),
+            models.CheckConstraint(condition=Q(state__in=['REQUESTED','POSTED','REJECTED']),
+                                   name='cow_wallet_refund_state'),
+        ]

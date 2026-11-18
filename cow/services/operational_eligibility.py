@@ -21,7 +21,9 @@ from django.utils import timezone
 from cow.common.errors import reject
 from cow.models import (
     Charger, ChargerConnector, ChargerMaintenancePeriod, ChargingSession,
-    DriverProfile, DutySession, HALCommand, HALV1ChargerOperation, HALV1Mapping, ServiceJob, ServiceVehicle,
+    DriverProfile, DutySession, HALCommand, HALV1ChargerOperation, HALV1Mapping,
+    HALV1ChargingSession, HALV1ChargingIntent, HALV1ChargingCommand,
+    ServiceJob, ServiceVehicle,
     VehicleChargerPairing, VehicleMaintenancePeriod,
 )
 
@@ -74,6 +76,19 @@ def _blocking_activity(*, vehicle_id=None, charger_id=None, include_pairing=Fals
     if charger_id is not None:
         if ChargingSession.objects.filter(charger_id=charger_id, state="ACTIVE").exists():
             blockers.append("ACTIVE_CHARGING_SESSION")
+        if HALV1ChargingSession.objects.filter(charger_id=charger_id,state__in=(
+            'ACTIVE','RECONCILIATION_REQUIRED')).exists():
+            blockers.append('ACTIVE_HAL_V1_CHARGING_SESSION')
+        if HALV1ChargingIntent.objects.filter(permit__charger_id=charger_id,state__in=(
+            'PERSISTED','DELIVERY_ATTEMPTED','ACCEPTED_FOR_DELIVERY',
+            'PROTOCOL_ACKNOWLEDGED','ACTUALLY_STARTED','RECONCILIATION_REQUIRED')).exclude(
+                state='ACTUALLY_STARTED',halv1chargingsession__state__in=(
+                    'PHYSICALLY_COMPLETED','SETTLED')).exists():
+            blockers.append('UNRESOLVED_HAL_V1_START_INTENT')
+        if HALV1ChargingCommand.objects.filter(intent__permit__charger_id=charger_id,
+            state__in=('PERSISTED','DELIVERY_ATTEMPTED','ACK_RECORDED',
+                       'PROTOCOL_ACKNOWLEDGED','RECONCILIATION_REQUIRED')).exists():
+            blockers.append('UNRESOLVED_HAL_V1_CHARGING_COMMAND')
         if HALCommand.objects.filter(charger_id=charger_id, state__in=BUSY_COMMAND_STATES).exists():
             blockers.append("UNRESOLVED_HAL_COMMAND")
         pending_v1 = HALV1ChargerOperation.objects.filter(
@@ -135,7 +150,7 @@ def _in_maintenance(model, owner_id_name: str, owner_id, instant: datetime) -> b
 
 
 def assert_start_admissible(job_id, charger_id, connector_number: int, *,
-                            existing_command_id=None) -> ServiceJob:
+                            existing_command_id=None, allow_followup=False) -> ServiceJob:
     """Validate current operational facts AFTER lock_gate(), before command IO.
 
     Existing command is excluded only during a second, mandatory pre-send
@@ -146,8 +161,8 @@ def assert_start_admissible(job_id, charger_id, connector_number: int, *,
     job = ServiceJob.objects.select_for_update().filter(pk=job_id).first()
     if job is None:
         reject(404, "NOT_FOUND", "Job not found")
-    if job.state != "SERVICE_PREPARING":
-        reject(409, "JOB_STATE_CONFLICT", "Job not in physical preparation")
+    if job.state != "SERVICE_PREPARING" and not (allow_followup is True and job.state == "CHARGING"):
+        reject(409, "JOB_STATE_CONFLICT", "Job not in physical preparation or authorized follow-up")
     if job.driver_duty_id is None:
         reject(409, "DUTY_NOT_ACTIVE", "Assigned operational duty required")
     duty = DutySession.objects.select_for_update().filter(pk=job.driver_duty_id).first()
@@ -188,6 +203,9 @@ def assert_start_admissible(job_id, charger_id, connector_number: int, *,
         charger_id=charger_id, connector_number=connector_number, state="ACTIVE"
     ).exists():
         reject(409, "CONNECTOR_IN_USE", "Physical connector is occupied")
+    if HALV1ChargingSession.objects.filter(charger_id=charger_id,
+        connector__connector_number=connector_number,state__in=('ACTIVE','RECONCILIATION_REQUIRED')).exists():
+        reject(409,'CONNECTOR_IN_USE','CoW HAL has unresolved physical charging')
     pending = HALCommand.objects.filter(
         job_id=job.pk, action="StartCharging", state__in=BUSY_COMMAND_STATES
     )

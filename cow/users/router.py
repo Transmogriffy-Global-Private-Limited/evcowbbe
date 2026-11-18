@@ -324,5 +324,7 @@ def build_router(auth_backend, mount_identity, mount_otp) -> Router:
     register_customer_routes(router)
     register_charging_routes(router)
     register_user_feature_routes(router)
+    from cow.users.nomap_routes import register as register_nomap_customer_routes
+    register_nomap_customer_routes(router)
     mount_otp(router, "app")
     return router

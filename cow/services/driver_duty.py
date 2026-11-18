@@ -307,6 +307,20 @@ def _live_work(duty):
     if HALCommand.objects.filter(job__driver_duty=duty,
                                  state__in=safety.BUSY_COMMAND_STATES).exists():
         blockers.append("UNRESOLVED_DUTY_HAL")
+    from cow.models import HALV1ChargingIntent, HALV1ChargingSession, HALV1ChargingCommand
+    if HALV1ChargingIntent.objects.filter(permit__job__driver_duty=duty,
+        state__in=("PERSISTED","DELIVERY_ATTEMPTED","ACCEPTED_FOR_DELIVERY",
+                   "PROTOCOL_ACKNOWLEDGED","ACTUALLY_STARTED","RECONCILIATION_REQUIRED")).exclude(
+            state="ACTUALLY_STARTED",halv1chargingsession__state__in=(
+                "PHYSICALLY_COMPLETED","SETTLED")).exists():
+        blockers.append("UNRESOLVED_DUTY_HAL_V1_INTENT")
+    if HALV1ChargingSession.objects.filter(intent__permit__job__driver_duty=duty,
+        state__in=("ACTIVE","RECONCILIATION_REQUIRED")).exists():
+        blockers.append("UNRESOLVED_DUTY_HAL_V1_SESSION")
+    if HALV1ChargingCommand.objects.filter(intent__permit__job__driver_duty=duty,
+        state__in=("PERSISTED","DELIVERY_ATTEMPTED","ACK_RECORDED",
+                   "PROTOCOL_ACKNOWLEDGED","RECONCILIATION_REQUIRED")).exists():
+        blockers.append("UNRESOLVED_DUTY_HAL_V1_COMMAND")
     return blockers
 
 

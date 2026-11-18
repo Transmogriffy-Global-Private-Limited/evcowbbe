@@ -131,6 +131,8 @@ class TracePageEnvelope(Strict):
 
 
 def register(router):
+    from cow.admin.hal_v1_charging_routes import register_hal_v1_charging_routes
+    register_hal_v1_charging_routes(router)
     @router.get('/hal-v1/chargers/{charger_id}/mapping',
                 operation_id='cowHALV1MappingGet',response=MappingEnvelope)
     def mapping_get(request,charger_id:UUID):

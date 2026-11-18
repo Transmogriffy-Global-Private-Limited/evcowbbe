@@ -15,6 +15,8 @@ if ENV not in {"development", "staging", "production", "test"}:
 # plaintext Django/Fernet secret is required in the existing env files.
 SECRET_KEY = derive_key(os.environ, "django-signing")
 COW_EMAIL_CIPHER_KEY = derive_key(os.environ, "encrypted-outbox", urlsafe=True)
+# Domain-separated from email ciphertext; same accepted pepper source, different key.
+COW_HAL_V1_CHARGE_CIPHER_KEY = derive_key(os.environ, "hal-v1-one-use-credential", urlsafe=True)
 COW_OTP_PEPPER = os.environ["OTP_HMAC_PEPPER"]
 PASSWORD_PEPPER = os.environ["PASSWORD_PEPPER"]
 DEBUG = False
@@ -78,7 +80,13 @@ COW_HAL_V1_FACT_BEARER_TOKEN = os.environ.get('COW_HAL_V1_FACT_BEARER_TOKEN', ''
 COW_HAL_V1_TRACE_BEARER_TOKEN = os.environ.get('COW_HAL_V1_TRACE_BEARER_TOKEN', '')
 COW_HAL_V1_MAPPING_SYNC_ENABLED = _cow_hal_strict_flag('COW_HAL_V1_MAPPING_SYNC_ENABLED')
 COW_HAL_V1_ADMIN_OPERATIONS_ENABLED = _cow_hal_strict_flag('COW_HAL_V1_ADMIN_OPERATIONS_ENABLED')
+# Source-only: new customer charging starts remain OFF until approved commerce,
+# location proof, operational authorization and live integration gates pass.
+COW_HAL_V1_NEW_STARTS_ENABLED = _cow_hal_strict_flag('COW_HAL_V1_NEW_STARTS_ENABLED')
 COW_HAL_V1_CONNECTION_STALE_SECONDS = checked_int(os.environ, 'COW_HAL_V1_CONNECTION_STALE_SECONDS', 900, 60, 86400)
+COW_HAL_V1_METER_STALE_SECONDS = checked_int(os.environ, 'COW_HAL_V1_METER_STALE_SECONDS', 120, 10, 3600)
+COW_HAL_V1_SOC_STALE_SECONDS = checked_int(os.environ, 'COW_HAL_V1_SOC_STALE_SECONDS', 120, 10, 3600)
+COW_HAL_V1_CONNECTOR_STALE_SECONDS = checked_int(os.environ, 'COW_HAL_V1_CONNECTOR_STALE_SECONDS', 900, 60, 86400)
 
 # Fail closed before startup if a CoW Go-HAL endpoint is configured without
 # an independently authenticated, stable charging network scope.
@@ -99,7 +107,7 @@ if COW_HAL_V1_BASE_URL:
         _cow_hal_secrets += (COW_HAL_V1_TRACE_BEARER_TOKEN,)
     if COW_HAL_SHARED_SECRET and COW_HAL_SHARED_SECRET in _cow_hal_secrets:
         raise ValueError('CoW HAL v1 cannot reuse the legacy HAL credential')
-if (COW_HAL_V1_MAPPING_SYNC_ENABLED or COW_HAL_V1_ADMIN_OPERATIONS_ENABLED) and not COW_HAL_V1_BASE_URL:
+if (COW_HAL_V1_MAPPING_SYNC_ENABLED or COW_HAL_V1_ADMIN_OPERATIONS_ENABLED or COW_HAL_V1_NEW_STARTS_ENABLED) and not COW_HAL_V1_BASE_URL:
     raise ValueError('Go HAL operations cannot be enabled without a dedicated CoW HAL endpoint')
 COW_SMTP_HOST = os.environ.get("SMTP_HOST", "")
 COW_SMTP_PORT = checked_int(os.environ, "SMTP_PORT", 587, 1, 65535)
@@ -108,3 +116,59 @@ COW_SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 COW_SMTP_FROM = os.environ.get("MAIL_FROM_ADDRESS", "")
 COW_SMTP_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "TransEV")
 COW_SMTP_TLS_MODE = smtp_mode(os.environ)
+
+if COW_HAL_V1_NEW_STARTS_ENABLED and not COW_HAL_V1_MAPPING_SYNC_ENABLED:
+    raise ValueError('New CoW HAL charging requires explicit mapping-synchronization capability')
+
+# Source-only CoW booking commercialization. All independent release gates OFF.
+# The trust provider is a server-side module object with externally persisted
+# location, consumed OTP, customer assent, driver completion and legal evidence.
+COW_BOOKING_TRUST_PROVIDER = os.environ.get('COW_BOOKING_TRUST_PROVIDER','')
+COW_BOOKING_COMMERCIAL_ACCEPT_ENABLED = _cow_hal_strict_flag('COW_BOOKING_COMMERCIAL_ACCEPT_ENABLED')
+COW_BOOKING_COMMERCIAL_START_ENABLED = _cow_hal_strict_flag('COW_BOOKING_COMMERCIAL_START_ENABLED')
+COW_BOOKING_COMMERCIAL_SETTLEMENT_ENABLED = _cow_hal_strict_flag('COW_BOOKING_COMMERCIAL_SETTLEMENT_ENABLED')
+COW_HAL_V1_FINANCIAL_POSTING_ENABLED = _cow_hal_strict_flag('COW_HAL_V1_FINANCIAL_POSTING_ENABLED')
+if (COW_BOOKING_COMMERCIAL_ACCEPT_ENABLED or COW_BOOKING_COMMERCIAL_START_ENABLED or
+    COW_BOOKING_COMMERCIAL_SETTLEMENT_ENABLED) and not COW_BOOKING_TRUST_PROVIDER:
+    raise ValueError('Booking acceptance/charging/settlement requires an approved trust provider')
+if COW_BOOKING_COMMERCIAL_START_ENABLED and not COW_HAL_V1_NEW_STARTS_ENABLED:
+    raise ValueError('Booking charging starts require the dedicated Go HAL V1 start gate')
+if COW_BOOKING_COMMERCIAL_SETTLEMENT_ENABLED and not COW_HAL_V1_FINANCIAL_POSTING_ENABLED:
+    raise ValueError('Booking settlement requires a separate financial posting release gate')
+
+
+# CoW V3: maps-free operations, deliberately independent feature gates.
+# Provider adapters remain optional: use NONE for geometry/OTP/tracking core.
+COW_MAPS_ROUTING_PROVIDER = os.environ.get('COW_MAPS_ROUTING_PROVIDER', 'NONE')
+COW_LOCATION_MODE = os.environ.get('COW_LOCATION_MODE', 'DISABLED')
+if COW_LOCATION_MODE not in {'DISABLED','DEVICE_GPS_WITH_OTP','PROVIDER_VERIFIED'}:
+    raise ValueError('Unknown COW_LOCATION_MODE')
+COW_LOCATION_RECEIVE_ENABLED = _cow_hal_strict_flag('COW_LOCATION_RECEIVE_ENABLED')
+COW_HANDOVER_OTP_ENABLED = _cow_hal_strict_flag('COW_HANDOVER_OTP_ENABLED')
+COW_DRIVER_WORKFLOW_ENABLED = _cow_hal_strict_flag('COW_DRIVER_WORKFLOW_ENABLED')
+COW_ADMIN_CLOSURE_APPROVAL_ENABLED = _cow_hal_strict_flag('COW_ADMIN_CLOSURE_APPROVAL_ENABLED')
+COW_WALLET_REFUND_POST_ENABLED = _cow_hal_strict_flag('COW_WALLET_REFUND_POST_ENABLED')
+COW_HANDOVER_HMAC_KEY = os.environ.get('COW_HANDOVER_HMAC_KEY', '')
+COW_ARRIVAL_RADIUS_M = checked_int(os.environ,'COW_ARRIVAL_RADIUS_M',100,25,500)
+COW_LOCATION_FRESH_SECONDS = checked_int(os.environ,'COW_LOCATION_FRESH_SECONDS',90,15,120)
+COW_LOCATION_MAX_ACCURACY_M = checked_int(os.environ,'COW_LOCATION_MAX_ACCURACY_M',50,5,200)
+COW_BOOKING_SESSION_CEILING_WH = checked_int(os.environ,'COW_BOOKING_SESSION_CEILING_WH',100000,100,500000)
+# This buffer is a POLICY decision; acceptance cannot enable on the zero default.
+COW_BOOKING_PROTECTED_BUFFER_PAISE = checked_int(os.environ,'COW_BOOKING_PROTECTED_BUFFER_PAISE',0,0,10000000)
+if COW_MAPS_ROUTING_PROVIDER != 'NONE' and (not isinstance(COW_MAPS_ROUTING_PROVIDER,str) or '.' not in COW_MAPS_ROUTING_PROVIDER):
+    raise ValueError('Routing provider must be NONE or a dotted, approved adapter path')
+if COW_HANDOVER_OTP_ENABLED:
+    if COW_LOCATION_MODE != 'DEVICE_GPS_WITH_OTP' or not COW_LOCATION_RECEIVE_ENABLED:
+        raise ValueError('Handover OTP requires independent maps-free location ingestion')
+    if len(COW_HANDOVER_HMAC_KEY) < 32:
+        raise ValueError('Handover OTP requires server-only 32+ character HMAC secret')
+if COW_BOOKING_TRUST_PROVIDER == 'cow.services.booking_trust_nomap.provider':
+    if COW_LOCATION_MODE != 'DEVICE_GPS_WITH_OTP':
+        raise ValueError('No-map trust provider requires DEVICE_GPS_WITH_OTP mode')
+    if (COW_BOOKING_COMMERCIAL_ACCEPT_ENABLED or COW_BOOKING_COMMERCIAL_START_ENABLED):
+        if COW_BOOKING_PROTECTED_BUFFER_PAISE <= 0 or not COW_HANDOVER_OTP_ENABLED:
+            raise ValueError('No-map charging requires approved positive buffer and OTP workflow')
+if COW_ADMIN_CLOSURE_APPROVAL_ENABLED and not COW_DRIVER_WORKFLOW_ENABLED:
+    raise ValueError('Admin closure approval requires the driver workflow release gate')
+if COW_WALLET_REFUND_POST_ENABLED and not COW_HAL_V1_FINANCIAL_POSTING_ENABLED:
+    raise ValueError('Wallet refunds require a separate financial-posting release gate')

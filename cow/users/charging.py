@@ -20,6 +20,8 @@ class ServiceRequestPayload(Schema):
 
 
 def register_charging_routes(router):
+    from cow.users.hal_v1_routes import register_hal_v1_charging_routes
+    register_hal_v1_charging_routes(router)
     @router.post("/service-requests",response={201:dict},operation_id="cow_api_request_service")
     def request_service(request,payload:ServiceRequestPayload):
         p=payload.model_dump(mode="json")
