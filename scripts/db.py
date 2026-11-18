@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Schema-first developer CLI for one Django ORM schema and one migration ledger.
 
-`check`, `generate` and `status` without --test-db NEVER contact a database.
+`check` and `status` without --test-db NEVER contact a database. `generate` invokes Django makemigrations against a deliberately unreachable loopback target and can attempt a database history check.
 Every database-related operation is confined to the operator-marked disposable
 PostgreSQL acceptance database, not to VPS2 or the application's database.
 """
@@ -71,11 +71,19 @@ def offline_manage(*args: str) -> None:
     require(p.returncode == 0, f"Django command failed: {args[0]}")
 
 
+def offline_parity_check() -> None:
+    # Django's own migration autodetector, with no DB connection/history probe.
+    p = subprocess.run(
+        [sys.executable, "-B", "scripts/check_migration_parity_offline.py"],
+        env=offline_env(), cwd=ROOT,
+    )
+    require(p.returncode == 0, "Offline Django migration parity failed")
+
+
 def offline_model_check() -> None:
     assert_models()
     offline_manage("check")
-    offline_manage("makemigrations", "cow", "--check", "--dry-run", "--noinput")
-    print("MODEL_MIGRATION_PARITY=PASS")
+    offline_parity_check()
 
 
 def status_offline() -> None:
