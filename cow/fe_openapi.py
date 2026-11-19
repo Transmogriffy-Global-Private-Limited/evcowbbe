@@ -92,6 +92,7 @@ TAG_DESCRIPTIONS = {
     "34 | Customer support": "Customer support tickets, messages and thread reopening.",
     "35 | Customer notifications": "Customer in-app notifications and delivery preferences.",
     "36 | Customer realtime": "SSE ticket allocation and event streaming (subject to server streaming configuration).",
+    "37 | Admin booking closure and wallet refunds": "Admin-authorized financial closure and internal wallet-credit refund operations; not payment-provider reversals or physical charger proof.",
     "22 | HAL internal ingress": "HMAC-signed backend-to-backend facts; not for frontend direct invocation, and not physical acceptance evidence by itself.",
     "23 | Other development endpoints": "Present in the running implementation; review source and actual typed schemas before depending on undeclared behavior.",
 }
@@ -234,6 +235,8 @@ def _tag(path: str) -> str:
         return "32 | Admin Driver recruitment"
     if path.startswith("/api/v1/admin/drivers"):
         return "30 | Admin drivers"
+    if path in _V3_ADMIN_FINANCIAL_OPERATIONS:
+        return "37 | Admin booking closure and wallet refunds"
     if path.startswith("/api/v1/admin/commercial/"):
         if path.endswith('/preview'):
             return "28 | Admin commercial preview"
@@ -363,9 +366,69 @@ def _add_customer_etag(path: str, method: str, operation: dict) -> None:
             })
 
 
+
+
+# CoW V3 finance is a distinct business domain from tariff/GST configuration.
+# This is an exact source-verified registry; unknown financial paths must fail.
+_V3_ADMIN_FINANCIAL_OPERATIONS = {
+    '/api/v1/admin/commercial/bookings/{booking_id}/approve-completion': (
+        'cowV3AdminApproveBookingCompletion',
+        '**Financial closure:** Admin approval follows verified driver completion, requires jobs.manage and payments.manage, and is independently release-gated. It does not itself establish a charger stop or capture a payment.'),
+    '/api/v1/admin/commercial/wallet-refunds': (
+        'cowV3AdminRequestWalletRefund',
+        '**Wallet credit refund:** Requires refunds.manage and the wallet-refund posting gate. This is an internal wallet-credit workflow, not a reversal to the originating PSP.'),
+    '/api/v1/admin/commercial/wallet-refunds/{refund_id}/approve': (
+        'cowV3AdminApproveWalletRefund',
+        '**Refund approval:** Requires refunds.manage and the wallet-refund posting gate. Independent approval is required before a customer wallet credit; no PSP reversal is implied.'),
+}
+
 def _enrich_commercial_operation(path: str, method: str, operation: dict) -> None:
     """Annotate actual commercial wire requirements; do not synthesize routes."""
     if not path.startswith('/api/v1/admin/commercial/'):
+        return
+    v3_finance = _V3_ADMIN_FINANCIAL_OPERATIONS.get(path)
+    if v3_finance is not None:
+        operation_id, note = v3_finance
+        if method != 'post' or operation.get('operationId') != operation_id:
+            raise ValueError('Unexpected V3 Admin finance operation contract: ' + path)
+        if not operation.get('security'):
+            raise ValueError('V3 Admin finance route lacks Admin bearer security: ' + path)
+        if operation.get('x-fe-schema-detail') != 'declared':
+            raise ValueError('V3 Admin finance response not fully typed: ' + path)
+        if 'application/json' not in operation.get('requestBody', {}).get('content', {}):
+            raise ValueError('V3 Admin finance route lacks JSON request contract: ' + path)
+        params = operation.setdefault('parameters', [])
+        headers = [p for p in params if isinstance(p, dict) and
+                   p.get('in') == 'header' and p.get('name') == 'Idempotency-Key']
+        if len(headers) > 1:
+            raise ValueError('Ambiguous V3 Admin finance idempotency headers: ' + path)
+        if headers:
+            if headers[0].get('required') is not True:
+                raise ValueError('V3 Admin finance idempotency header not required: ' + path)
+        else:
+            params.append({
+                'in': 'header', 'name': 'Idempotency-Key', 'required': True,
+                'description': '16-128 character key; retry only the exact same logical mutation.',
+                'schema': {'type': 'string', 'minLength': 16, 'maxLength': 128},
+                'example': 'cow-v3-finance-mutation-0001',
+            })
+        operation['description'] = '\n\n'.join(filter(None,
+            [operation.get('description', ''), note]))
+        from cow.common.contracts import GO_ERROR_ENVELOPE_SCHEMA
+        for status, label in {
+            '401': 'Admin authentication required',
+            '403': 'Admin permission denied',
+            '404': 'Financial record not found',
+            '409': 'Financial state conflict',
+            '422': 'Invalid financial request',
+            '428': 'Missing Idempotency-Key',
+            '503': 'Finance workflow release gate disabled',
+        }.items():
+            operation.setdefault('responses', {}).setdefault(status, {
+                'description': label,
+                'content': {'application/json': {
+                    'schema': deepcopy(GO_ERROR_ENVELOPE_SCHEMA)}},
+            })
         return
     if not str(operation.get('operationId', '')).startswith('adminCommercial'):
         raise ValueError('Unknown commercial operation: ' + path)
@@ -403,7 +466,6 @@ def _enrich_commercial_operation(path: str, method: str, operation: dict) -> Non
         note += ('\n\n**GST:** Tax classification, supply grouping and seller identity require '
                  'independent legal review, not GPS or a pricing Group.')
     operation['description'] = '\n\n'.join(filter(None, [operation.get('description',''), note]))
-    from copy import deepcopy
     from cow.common.contracts import GO_ERROR_ENVELOPE_SCHEMA
     error_codes = {'401':'Invalid Admin bearer token', '403':'Capability denied',
                    '404':'Commercial resource not found', '409':'State or assignment conflict',

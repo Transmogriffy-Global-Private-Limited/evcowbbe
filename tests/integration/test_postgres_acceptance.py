@@ -281,5 +281,9 @@ def test_cow_migration_history_and_replay_are_stable():
         "0014_driver_duty_c3",
         "0015_c3_immutable_duty_history",
         "0016_hal_v1_machine",
+        "0017_hal_v1_charging_source",
+        "0018_cow_booking_commercial",
+        "0019_cow_wallet_location_operational",
+        "0020_cow_uuid_pk_serialization_state",
     )
     assert after == before
